@@ -1,12 +1,15 @@
 import html
 from datetime import date, datetime, timedelta
 
+from dataclasses import replace
+
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QToolButton, QWidget
+from PySide6.QtWidgets import QMessageBox, QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QToolButton, QWidget
 
 from chrono_mail.pim.times import in_local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError
+from chrono_mail.ui.plainboxes import plain_box
 from chrono_mail.engine.commands_calendar import EVENT_ADD, EVENT_EDIT, EventInfo
 from chrono_mail.engine.commands_calendar import AddParameters as EventAdd
 from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
@@ -20,9 +23,10 @@ from chrono_mail.core.words import digits
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.3.502"
+__version__ = "eventeditor.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: Asks whether the attendees hear of a change, new attendees are invited (D-310)
 # v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
 # v4.0.378: built from its Qt Designer form (ui/forms/event_editor.ui, D-276); its sizes follow the size factor
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; a first reminder at a set time shows as "At a set time" (it showed "No reminder", and choosing that
@@ -60,6 +64,7 @@ class EventEditor(QDialog):
     """Makes an event or changes one (the series, or one occurrence of it). The commands do the saving."""
 
     saved = Signal(str)
+    mail_ready = Signal(str, str, str)  # a mail to the attendees, ready to send: account, folder, message
 
     def __init__(
         self, backend: Backend, calendars: list[CollectionSummary], known_tags: list[str], event: EventInfo | None = None, collection: str = "", occurrence: str = "",
@@ -126,8 +131,10 @@ class EventEditor(QDialog):
         self.all_day.toggled.connect(self._all_day_changed)
         self.start.dateTimeChanged.connect(self._start_changed)
         self._length: int = 3600
+        self._told_before: tuple[object, ...] = ()
         if event is not None:
             self._fill(event, start, end)
+            self._told_before = self._told_fields(self.parameters())
         elif start:
             all_day = len(start) == 10
             self.all_day.setChecked(all_day)
@@ -260,6 +267,21 @@ class EventEditor(QDialog):
             item=self._item or "", occurrence=self._occurrence or "", clear=tuple(clear),
         )
 
+    @staticmethod
+    def _told_fields(values: EventEdit) -> tuple[object, ...]:
+        """What attendees see of a meeting: a change of anything else tells them nothing new."""
+        return values.summary, values.start, values.end, values.location, values.description, values.rrule, values.attendee
+
+    def _tell(self, values: EventEdit) -> bool | None:
+        """Whether the attendees hear of this change (D-310). New attendees are invited; None: the person went back to the window."""
+        original = self._original
+        if original is None or not original.yours or not values.attendee or self._told_fields(values) == self._told_before:
+            return bool(values.attendee) and original is not None and not original.attendees
+        box = plain_box(QMessageBox.Icon.Question, self, "Change meeting", "Send the attendees a mail about this change?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
+        answer = QMessageBox.StandardButton(box.exec())
+        return None if answer == QMessageBox.StandardButton.Cancel else answer == QMessageBox.StandardButton.Yes
+
     def _save(self) -> None:
         values = self.parameters()
         if not values.summary:
@@ -268,11 +290,17 @@ class EventEditor(QDialog):
         if not self.all_day.isChecked() and self.end.dateTime() < self.start.dateTime() or self.all_day.isChecked() and self.end.date() < self.start.date():
             self.result_label.setText(f"<span style='color:{red()}'>The event cannot end before it starts.</span>")
             return
+        tell = self._tell(values)
+        if tell is None:
+            return
+        values = replace(values, tell=tell)
         self.save_button.setEnabled(False)
         self.result_label.setText("Saving…")
 
         def done(result: EventInfo) -> None:
             self.saved.emit(result.item)
+            if result.draft.message:
+                self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message)
             self.accept()
 
         def failed(error: ChronoMailError) -> None:

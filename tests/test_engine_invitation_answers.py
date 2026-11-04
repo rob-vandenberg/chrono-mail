@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.517"
+__version__ = "test_engine_invitation_answers.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: who_mails moved to meetingmail.py
 # v4.4.517: A Decline or a Delegate is remembered on the mail, Change my answer takes it off (D-310)
 # v4.4.516: Change my answer on a date takes only that date, and the date comes back with a new answer (D-310)
 # v4.4.514: the server can be chosen without its word (D-310)
@@ -327,7 +328,7 @@ def test_a_shared_item_is_kept_as_sent(setup: Setup) -> None:
 def test_a_calendar_only_account_follows_its_choice(setup: Setup) -> None:
     """Step 2 review round 2: an account of calendars only has no address, so the server never counted as answering for it."""
     from chrono_mail.core import CollectionInfo
-    from chrono_mail.engine.commands_invitations import _server_answers  # noqa: PLC2701 - the rule itself
+    from chrono_mail.engine.meetingmail import _server_answers  # noqa: PLC2701 - the rule itself
 
     on_server = CollectionInfo("d" * 32, CollectionKind.EVENTS, "Work", server=(("href", "/calendars/work/"),))
     here = CollectionInfo("e" * 32, CollectionKind.EVENTS, "Here")

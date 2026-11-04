@@ -3,9 +3,11 @@ from datetime import date, datetime, timedelta
 from email.utils import parseaddr
 from typing import Literal
 
+from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
-from chrono_mail.engine.pimaccess import located, open_collection, open_pim, palette_for, pim_account_ids
+from chrono_mail.engine.meetingmail import MeetingDraft, copy_for, delete_copy, meeting_mail, organizer_from, organizing_account, quiet, who_mails, your_addresses_lower
+from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
@@ -15,9 +17,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.513"
+__version__ = "commands_calendar.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: A meeting you make names you as organizer and invites its attendees, a change or cancellation tells them when you say so (D-310)
 # v4.4.513: a series that picks its days by position (BYSETPOS) takes its skipped and changed dates along to another hour (D-310)
 # v4.4.506: moved_like_the_start lives in pim/times.py: a proposal for a whole series moves its dates the same way (D-310)
 # v4.2.385: event.import builds the text afresh as before and keeps from the text given only the time zones the event uses (VTIMEZONE), its
@@ -122,6 +125,8 @@ class EventInfo:
     changed_occurrences: tuple[ChangedOccurrence, ...]
     colour_id: str = ""  # the colour of its calendar's palette (empty: the calendar's own)
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
+    yours: bool = False  # event.show: a meeting you organize, so its attendees can be told of a change
+    draft: MeetingDraft = MeetingDraft()  # the mail to the attendees, ready to send
 
 
 def colour_of(palette: tuple[PaletteColour, ...], colour_id: str, other: str) -> str:
@@ -260,6 +265,11 @@ class ItemParameters:
     item: str = field(metadata=option("The event id (see event.list)"))
 
 
+def _organizes(engine: Engine, event: Event) -> bool:
+    """A meeting you organize: it has attendees, and its organizer is you or nobody yet (made here before a meeting named its organizer)."""
+    return bool(event.attendees) and (event.organizer is None or event.organizer.address.strip().lower() in your_addresses_lower(engine))
+
+
 def _series(text: str) -> EventSeries:
     parsed = parse_events(text)
     if not parsed:
@@ -269,7 +279,8 @@ def _series(text: str) -> EventSeries:
 
 def event_show(engine: Engine, parameters: ItemParameters) -> EventInfo:
     with located(engine, parameters.item, CollectionKind.EVENTS) as found:
-        return _info(parameters.item, found.account, found.item.collection, _series(found.store.get(found.item.collection, parameters.item)))
+        series = _series(found.store.get(found.item.collection, parameters.item))
+        return replace(_info(parameters.item, found.account, found.item.collection, series), yours=_organizes(engine, series.master))
 
 
 # --- writing ------------------------------------------------------------------------------------------------------------------------------
@@ -489,6 +500,10 @@ class AddParameters(EventFields):
     calendar: str = field(metadata=option("The calendar id (see collection.list)"))
 
 
+def _with_organizer(event: Event, settings: AccountSettings | None) -> Event:
+    return replace(event, organizer=organizer_from(settings)) if event.organizer is None and settings is not None else event
+
+
 def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
     if parameters.summary is None or parameters.start is None:
         raise UsageError("An event needs a summary and a start")
@@ -499,10 +514,16 @@ def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
                 raise UsageError("This calendar is read-only")
             if parameters.colour is not None:
                 event = _with_colour(event, palette_for(engine.config().find(account), info), parameters.colour.strip())
-            series = EventSeries(event)
+            you = organizing_account(engine, account) if _organizes(engine, event) else None
+            series = EventSeries(_with_organizer(event, you))
+            text = events_to_text(series)
+            mails = who_mails(engine, (account, info), account, you.account.email_address.strip().lower(), answers=False) if you is not None else None
             with item_writer(engine, account, store) as writer:
-                item = writer.put(info, events_to_text(series))
-            return _info(item, account, info.collection_id, series)
+                item = writer.put(info, copy_for(text, mails) if mails is not None else text)
+            draft = MeetingDraft()
+            if you is not None and mails is not None and mails.chrono:
+                draft = meeting_mail(engine, you, text, event.summary, "REQUEST", "Invitation", f"You are invited to {event.summary or 'a meeting'}.\n")
+            return replace(_info(item, account, info.collection_id, series), draft=draft)
     except StorageError as error:
         raise UsageError(str(error)) from None
 
@@ -514,6 +535,7 @@ class EditParameters(EventFields):
     clear: tuple[str, ...] = field(default=(), metadata=option("Lists to empty: reminder, attendee, tag (repeat)"))
     add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
     remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
+    tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees of this change"))
 
 
 def _in_event_zone(moment: Moment, start: Moment) -> Moment:
@@ -555,6 +577,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 raise UsageError("This calendar is read-only")
             original = found.store.get(found.item.collection, parameters.item)
             series = _series(original)
+            moment: Moment | None = None
             if parameters.occurrence:
                 try:
                     moment = _in_event_zone(parse_moment(parameters.occurrence), series.master.start)
@@ -578,9 +601,27 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if parameters.colour is not None:
                     master = _with_colour(master, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 series = _following_the_start(series, master)
+            if not _organizes(engine, series.master):
+                with item_writer(engine, found.account, found.store) as writer:
+                    writer.put(found.collection, events_to_text(series, original), parameters.item)
+                return _info(parameters.item, found.account, found.item.collection, series)
+            you = organizing_account(engine, found.account)
+            series = replace(series, master=_with_organizer(series.master, you))
+            if parameters.tell and moment is not None:
+                series = replace(series, overrides=tuple(replace(o, sequence=o.sequence + 1) if o.recurrence_id == moment else o for o in series.overrides))
+            elif parameters.tell:  # a higher number: the attendees' programs take it as the newer version (RFC 5546)
+                series = replace(series, master=replace(series.master, sequence=series.master.sequence + 1))
+            text = events_to_text(series, original)
+            address = you.account.email_address.strip().lower() if you is not None else ""
+            mails = who_mails(engine, (found.account, found.collection), found.account, address, answers=False)
+            mails = mails if parameters.tell else quiet(mails)
             with item_writer(engine, found.account, found.store) as writer:
-                writer.put(found.collection, events_to_text(series, original), parameters.item)
-            return _info(parameters.item, found.account, found.item.collection, series)
+                writer.put(found.collection, copy_for(text, mails), parameters.item)
+            draft = MeetingDraft()
+            if you is not None and mails.chrono:
+                dates = (moment,) if moment is not None else ()
+                draft = meeting_mail(engine, you, text, series.master.summary, "REQUEST", "Changed", f"{series.master.summary or 'The meeting'} has changed.\n", dates)
+            return replace(_info(parameters.item, found.account, found.item.collection, series), draft=draft)
     except StorageError as error:
         raise UsageError(str(error)) from None
 
@@ -589,12 +630,37 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
 class DeleteParameters:
     item: str = field(metadata=option("The event id"))
     occurrence: str = field(default="", metadata=option("For a repeating event: only this occurrence (the 'occurrence' of event.list); empty deletes the whole event"))
+    tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees it is cancelled"))
 
 
 @dataclass(frozen=True, slots=True)
 class DeleteResult:
     item: str
     deleted: bool  # false when only one occurrence was taken out of a series
+    draft: MeetingDraft = MeetingDraft()  # the cancellation to the attendees, ready to send
+
+
+def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) -> DeleteResult:
+    """The whole event goes; a damaged one too, which nothing can be said about. Your meeting: the attendees hear of it as the person said."""
+    try:
+        original = found.store.get(found.item.collection, parameters.item)
+        parsed = parse_events(original)
+    except StorageError:
+        original, parsed = "", list[EventSeries]()
+    you = organizing_account(engine, found.account) if parsed and _organizes(engine, parsed[0].master) else None
+    if you is None:
+        with item_writer(engine, found.account, found.store) as writer:
+            writer.delete(found.collection, parameters.item)
+        return DeleteResult(parameters.item, True)
+    mails = who_mails(engine, (found.account, found.collection), found.account, you.account.email_address.strip().lower(), parameters.item, answers=False)
+    mails = mails if parameters.tell else quiet(mails)
+    with item_writer(engine, found.account, found.store) as writer:
+        delete_copy(writer, found.collection, parameters.item, original, mails)
+    draft = MeetingDraft()
+    if mails.chrono:
+        title = parsed[0].master.summary
+        draft = meeting_mail(engine, you, original, title, "CANCEL", "Cancelled", f"{title or 'The meeting'} is cancelled.\n")
+    return DeleteResult(parameters.item, True, draft)
 
 
 def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
@@ -604,9 +670,7 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
             if found.collection.read_only:
                 raise UsageError("This calendar is read-only")
             if not parameters.occurrence:
-                with item_writer(engine, found.account, found.store) as writer:
-                    writer.delete(found.collection, parameters.item)
-                return DeleteResult(parameters.item, True)
+                return _delete_whole(engine, parameters, found)
             original = found.store.get(found.item.collection, parameters.item)
             series = _series(original)
             try:
@@ -617,9 +681,20 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
                 raise UsageError("This event does not repeat")
             master = replace(series.master, exdates=tuple(dict.fromkeys((*series.master.exdates, moment))))
             overrides = tuple(o for o in series.overrides if o.recurrence_id != moment)
+            text = events_to_text(replace(series, master=master, overrides=overrides), original)
+            you = organizing_account(engine, found.account) if _organizes(engine, series.master) else None
+            if you is None:
+                with item_writer(engine, found.account, found.store) as writer:
+                    writer.put(found.collection, text, parameters.item)
+                return DeleteResult(parameters.item, False)
+            mails = who_mails(engine, (found.account, found.collection), found.account, you.account.email_address.strip().lower(), answers=False)
+            mails = mails if parameters.tell else quiet(mails)
             with item_writer(engine, found.account, found.store) as writer:
-                writer.put(found.collection, events_to_text(replace(series, master=master, overrides=overrides), original), parameters.item)
-            return DeleteResult(parameters.item, False)
+                writer.put(found.collection, copy_for(text, mails), parameters.item)
+            draft = MeetingDraft()
+            if mails.chrono:
+                draft = meeting_mail(engine, you, original, series.master.summary, "CANCEL", "Cancelled", f"One date of {series.master.summary or 'the meeting'} is cancelled.\n", (moment,))
+            return DeleteResult(parameters.item, False, draft)
     except StorageError as error:
         raise UsageError(str(error)) from None
 

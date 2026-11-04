@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.516"
+__version__ = "itip.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: request_of: a date of a series that has no changed version of its own is made an item, so a mail about it never speaks for the series
 # v4.4.516: without_dates: dates out of a copy until they are answered again; an answered date comes back (D-310)
 # v4.4.515: text_items remembers the last text it read; ready_to_delete: a copy as the server should hold it before its delete, also when that delete waits for the connection (D-310)
 # v4.4.514: text_items reads every calendar of a text, an item takes along every time zone used anywhere inside it, as its own calendar defines it; a delegator's answer adds whoever they name as not answered yet (D-310)
@@ -1184,7 +1185,8 @@ def request_of(stored: str, now: datetime, method: str = "REQUEST", occurrences:
     kept = _parse(stored)
     if kept is None or not _items_of(kept):
         return None
-    chosen = [each for each in _items_of(kept) if any(_same_moment(_moment(each, "RECURRENCE-ID"), moment) for moment in occurrences)]
+    main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    chosen = [each for each in (_date_item(kept, main, stored, moment) for moment in occurrences) if each is not None and each is not main]
     if chosen:  # (none: a meeting that does not repeat, where that date is the meeting)
         kept.subcomponents = [each for each in kept.subcomponents if each.name not in ("VEVENT", "VTODO") or any(each is other for other in chosen)]
     kept.pop("METHOD", None)

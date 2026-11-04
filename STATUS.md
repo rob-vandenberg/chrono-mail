@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.517 (A Decline or Delegate is remembered on the mail, so every computer shows it as handled)*
+*Last updated: 2026-11-04, version 4.4.518 (A meeting you make invites its attendees, a change or cancellation tells them when you say so, and the box covers only your answers)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.518 done (D-310, items 1 and 2 of the changelist after the review).** To check by the owner: make a meeting with an attendee and Save: the invitation opens in the composer, ready to send; on a calendar whose server mails, nothing opens. Change the time, or delete it: Chrono Mail asks whether to mail the attendees. Accept proposal asks the same. Untick the box of the account that got an invite: Accept sends no answer, also into a calendar of another account. Still to do: changelist items 3, 8 to 19, 21 to 25.
 
 **4.4.517 done (D-310, item 4 of the changelist after the review).** To check by the owner: Decline an invite: the four answers give way to "You declined." and Change my answer, also after a restart and on a second computer; Change my answer asks nothing when no appointment is in a calendar and brings the four answers back. A mail with several calendar items and an .ics file keep no such mark. Still to do: changelist items 1 to 3, 8 to 19, 21 to 25.
 

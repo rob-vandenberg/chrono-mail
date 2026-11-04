@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.517"
+__version__ = "readingpane.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: Accept proposal asks whether the attendees are told (D-310)
 # v4.4.517: Change my answer asks nothing when no copy is in a calendar (D-310)
 # v4.4.516: Change my answer, confirmed first (D-310)
 # v4.4.515: the blocks of a big text come as the person scrolls; after a click only that block changes, the place in the list stays (D-310)
@@ -565,7 +566,15 @@ class ReadingPane(QObject):
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
             self._show_again(reader, place)
 
-        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen)
+        tell = True
+        if chosen == "accept_proposal":
+            box = plain_box(QMessageBox.Icon.Question, self._parent, "Accept proposal", "Send the attendees a mail about this change?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
+            answer = QMessageBox.StandardButton(box.exec())
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            tell = answer == QMessageBox.StandardButton.Yes
+        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen, mail=tell)
         self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._status.report(f"Could not change your {item}", error), owner=self)
 
     def _delegate_in_pane(self) -> None:

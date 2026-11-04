@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.507"
+__version__ = "mainwindow.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: The calendar page opens mails to attendees in the composer (D-310)
 # v4.4.507: open_calendar_file: a calendar file given at the start or by a second start, once the window has started (D-310 step 4)
 # v4.3.498: the Sync conflicts window is closed when the program closes, so its size is remembered then too (the owner)
 # v4.2.481: the status line says how many sync conflicts the check at start settled (D-308)
@@ -468,6 +469,9 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.content_stack)
         self.contacts_page = ContactsPage(self.backend, self.settings, self)
         self.pages: dict[str, PimPage] = {CALENDAR: CalendarPage(self.backend, self.settings, self), TASKS: TasksPage(self.backend, self.settings, self), CONTACTS: self.contacts_page}
+        calendar_page = self.pages[CALENDAR]
+        if isinstance(calendar_page, CalendarPage):
+            calendar_page.mail_ready.connect(self.composing.open_draft)
         for page in self.pages.values():
             self.side_stack.addWidget(page.side)
             self.content_stack.addWidget(page.content)

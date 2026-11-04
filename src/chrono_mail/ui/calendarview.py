@@ -2,7 +2,7 @@ import dataclasses
 from datetime import date, datetime, timedelta
 from typing import override
 
-from PySide6.QtCore import SignalInstance, QDate, QEvent, QLocale, QPoint, QRect, QSettings, Qt, QTimer
+from PySide6.QtCore import Signal, SignalInstance, QDate, QEvent, QLocale, QPoint, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFontMetrics, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QCalendarWidget,
@@ -23,7 +23,8 @@ from chrono_mail.engine.changes import Change
 from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, EventInfo, EventList
+from chrono_mail.ui.plainboxes import plain_box
+from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, DeleteResult, EventInfo, EventList
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
@@ -44,9 +45,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.3.502"
+__version__ = "calendarview.py 4.4.518"
 
 # --- Version history ----------------------------------------------------
+# v4.4.518: Deleting your meeting asks whether the attendees are told; the mail opens through mail_ready (D-310)
 # v4.3.502: the event editor gets the settings, for the width of Event colours (the owner)
 # v4.2.438: an entry is filled when its calendar's account says so (UR-02, D-297)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
@@ -157,6 +159,7 @@ class TimeGridPanel(QWidget):
 
 
 class CalendarPage(PimPage):
+    mail_ready = Signal(str, str, str)  # a mail to the attendees, ready to send: account, folder, message
     """Calendars (with ticks) and a small month on the left; the days, the weeks, the month or the agenda on the right."""
 
     kind = "events"
@@ -458,6 +461,7 @@ class CalendarPage(PimPage):
     def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "") -> None:
         editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings)
         editor.saved.connect(self._saved)
+        editor.mail_ready.connect(self.mail_ready)
         editor.exec()
 
     @override
@@ -524,10 +528,31 @@ class CalendarPage(PimPage):
                 return
             if scope == "occurrence":
                 values = EventDelete(values.item, row.occurrence)
-        elif QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
+
+        def asked(result: EventInfo) -> None:
+            self._delete_chosen(entry, values, result)
+
+        self._backend.ask(EVENT_SHOW, EventItem(row.item), asked, lambda _: self._delete_chosen(entry, values, None), owner=self)  # a damaged event can still go
+
+    def _delete_chosen(self, entry: Entry, values: EventDelete, event: EventInfo | None) -> None:
+        """Your own meeting: the attendees hear of it as the person says (D-310); anything else asks only when it is the whole event."""
+        if event is not None and event.yours:
+            box = plain_box(QMessageBox.Icon.Question, self.content, "Delete", f"Send the attendees a mail that “{entry.summary}” is cancelled?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
+            answer = QMessageBox.StandardButton(box.exec())
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            values = dataclasses.replace(values, tell=answer == QMessageBox.StandardButton.Yes)
+        elif not entry.row.repeats and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
             return
         self.selected = None
-        self._backend.ask(EVENT_DELETE, values, lambda result: self._saved(""), self._failed, owner=self)
+
+        def deleted(result: DeleteResult) -> None:
+            self._saved("")
+            if result.draft.message:
+                self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message)
+
+        self._backend.ask(EVENT_DELETE, values, deleted, self._failed, owner=self)
 
     def _saved(self, item: str) -> None:
         """An event was saved or deleted: its blocks followed the fact (D-146)."""
