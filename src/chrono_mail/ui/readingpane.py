@@ -7,6 +7,7 @@ from typing import Literal
 from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QVBoxLayout, QWidget
+from shiboken6 import isValid
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import MessageRow
@@ -38,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.510"
+__version__ = "readingpane.py 4.4.511"
 
 # --- Version history ----------------------------------------------------
+# v4.4.511: after an answer every open window of that mail or file shows the new card; Choose a calendar opens on the main window when the card window is gone, and the answer finishes (D-310)
 # v4.4.510: the answer follows the account, no longer the tick of Settings > Calendar (D-310)
 # v4.4.508: a text with several items: every button of a block works on its own item, Add all asks for a calendar and a task list and to
 #           Replace or Skip what is there already; a card window closes when everything in it is added (D-310)
@@ -100,6 +102,7 @@ class ReadingPane(QObject):
         self.shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
         self.message_windows: list[MessageWindow] = []
+        self._card_windows: list[tuple[InvitationWindow, CalendarSource]] = []  # the windows of a calendar attachment or file, with what they show
         self.card_windows: list[InvitationWindow] = []  # calendar attachments and files, each a card in a window of its own
         self.mark_read_timer: QTimer = QTimer(self)
         self.mark_read_timer.setSingleShot(True)
@@ -401,6 +404,7 @@ class ReadingPane(QObject):
 
         def shown(info: InvitationInfo) -> None:
             window = InvitationWindow(info, title, self.open_link, self._prefs.settings)
+            self._card_windows = [*(each for each in self._card_windows if isValid(each[0])), (window, source)]
 
             def on_block() -> CalendarSource:
                 return changed(source, item=window.card.pressed_item)
@@ -534,10 +538,38 @@ class ReadingPane(QObject):
         self._backend.ask(INVITATION_APPLY, self._parameters(place), applied,
                           lambda error: self._status.report(f"Could not change your {home}", error), owner=self)
 
+    def _parent_of(self, reader: ReaderWidget | InvitationWindow) -> QWidget:
+        """The window a question opens on: the reader's, or the main window when that one was closed meanwhile, so the answer still finishes (D-310)."""
+        return reader.window() if isValid(reader) and reader.isVisible() else self.reader.window()
+
+    def _refresh_others(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
+        """Every other open window of that mail or file says what your calendar holds now (D-310): the reading pane, message windows, card windows."""
+        where = (place.account, place.folder, place.message)
+        for window, source in self._card_windows:
+            if isValid(window) and window is not reader and (source.account, source.folder, source.message, source.file) == (*where, place.file):
+                self._backend.ask(INVITATION_CARD, SourceParameters(source.account, source.folder, source.message, part=source.part, file=source.file), window.show_card, lambda error: None, owner=window)
+        views = [self.reader] if self.shown == where else []
+        views += [window.reader for window in self.message_windows if window.where == where]
+        views = [view for view in views if view is not reader]
+        if not place.message or not views:
+            return
+
+        def again(shown: ShowResult) -> None:
+            for view in views:
+                if view is self.reader and self.shown != where:
+                    continue  # another message was chosen meanwhile: it stays on screen
+                if isValid(view) and view.invitation is not None and shown.invitation is not None and view.invitation.uid == shown.invitation.uid:
+                    view.show_message(shown)
+
+        self._backend.ask(MESSAGE_SHOW, MessageParameters(*where), again, lambda error: None, owner=self)
+
     def _show_again(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, kept: bool = False, everything: bool = False) -> None:
         """The message shown again in its reader, when it still shows it: the card says what your calendar holds now. kept: something was just
         added (everything: all of it), and a window of a calendar file closes when everything in it is added (D-310)."""
         account, folder, message_id = place.account, place.folder, place.message
+        self._refresh_others(reader, place)
+        if not isValid(reader):
+            return  # closed meanwhile: there is nothing to show it in
         if isinstance(reader, InvitationWindow):  # (a file gone meanwhile: its card stays as it is)
             def again_in_window(info: InvitationInfo) -> None:
                 reader.show_card(info)
@@ -549,6 +581,8 @@ class ReadingPane(QObject):
         uid = reader.invitation.uid if reader.invitation is not None else ""
 
         def again(shown: ShowResult) -> None:
+            if not isValid(reader):
+                return  # its window was closed meanwhile
             if reader is self.reader and self.shown != (account, folder, message_id):
                 return  # another message was chosen meanwhile: it stays on screen
             if reader.invitation is not None and reader.invitation.uid == uid and shown.invitation is not None and shown.invitation.uid == uid:
@@ -571,19 +605,19 @@ class ReadingPane(QObject):
 
         def listed(choices: ChoicesResult) -> None:
             if choices.stored:  # your calendar holds it now (asked afresh: it may have gone since the card was shown)
-                self._send_answer(reader, place, answer, "")
+                self._send_answer(reader, place, answer, "", info)
                 return
-            dialog = InvitationCalendarDialog(choices, task=info.kind == "task", parent=reader.window())
+            dialog = InvitationCalendarDialog(choices, task=info.kind == "task", parent=self._parent_of(reader))
             if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
-                self._send_answer(reader, place, answer, dialog.chosen)
+                self._send_answer(reader, place, answer, dialog.chosen, info)
 
         self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._status.report("Could not read the invitation", error), owner=self)
 
-    def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str) -> None:
+    def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str, card: InvitationInfo | None = None) -> None:
         chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
         parameters = AnswerParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, answer=chosen, calendar=calendar)
 
-        info = self._card_of(reader, place)
+        info = card or (self._card_of(reader, place) if isValid(reader) else None)  # card: as it was asked, the window may be closed by now
         shared = info is not None and info.method == "PUBLISH"
         home = home_word(info) if info is not None else "calendar"
 
@@ -607,7 +641,7 @@ class ReadingPane(QObject):
 
         def chosen_for(task: bool, then: Callable[[str], None]) -> None:
             def listed(choices: ChoicesResult) -> None:
-                dialog = InvitationCalendarDialog(choices, task=task, parent=reader.window())
+                dialog = InvitationCalendarDialog(choices, task=task, parent=self._parent_of(reader))
                 if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
                     then(dialog.chosen)
 

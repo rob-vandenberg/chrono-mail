@@ -21,9 +21,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 4.4.507"
+__version__ = "messagewindow.py 4.4.511"
 
 # --- Version history ----------------------------------------------------
+# v4.4.511: where: what the window shows, for the windows that follow an answer (D-310)
 # v4.4.507: Open attachment on an .ics file asks for its card in a window of its own (calendar_open_requested), D-310 step 4
 # v4.2.394: Reply, Reply all and Forward act once per press: holding the key opens no more windows (D-266)
 # v2.0.302: Open attachment from the attachment row and the pictures (D-236)
@@ -82,6 +83,11 @@ class MessageWindow(QMainWindow):
         self.reader.link_hovered.connect(self.status_line.show_link)
         self.reader.attachment_save_requested.connect(self._save_attachment)
         self.reader.attachment_open_requested.connect(self._open_attachment)
+
+    @property
+    def where(self) -> tuple[str, str, str]:
+        """The account, folder and message this window shows."""
+        return self._where
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.510 (Send confirmation emails via Chrono Mail or the server, per account; Chrono Mail sends when the server cannot; a delegate's answer says who they replace; before it 4.4.509: Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
+*Last updated: 2026-11-04, version 4.4.511 (Every open window of a mail follows an answer; Choose a calendar opens on the main window when the card window is gone; before it 4.4.510: Send confirmation emails via Chrono Mail or the server, per account; Chrono Mail sends when the server cannot; a delegate's answer says who they replace; before it 4.4.509: Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
 
 ## Where we are
 
@@ -15,7 +15,7 @@
 
 ## Next task
 
-**4.4.510 done (D-310, B3, A8, A10).** To check by the owner: Edit account > Calendars and contacts shows the box and dropdown, greyed with its (i) on Kerio after a synchronisation; with the box off Accept and Decline make no mail. Left of lists A and B: A2, A7, B1, B4, A4.
+**4.4.510 done (D-310, B3, A8, A10).** To check by the owner: Edit account > Calendars and contacts shows the box and dropdown, greyed with its (i) on Kerio after a synchronisation; with the box off Accept and Decline make no mail. **4.4.511 done (A7, B4):** Accept in a message window updates the card in the reading pane too. Left of lists A and B: A2, B1, A4.
 
 **4.4.509 done (D-310, A3, A9).** To check by the owner: Take their answer on a mail with several attendee lines changes only the sender's; a calendar mail in iso-8859-1 shows its accents. Still to do: group 2 (B3, A8, A10), group 3 (A2, A7, B1, B4), A4: see `scratchpad/HANDOVER-INVITATIONS-STEP2.md`.
 
