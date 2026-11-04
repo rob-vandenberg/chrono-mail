@@ -50,9 +50,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.515"
+__version__ = "reader.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: Change my answer reaches the reading pane (D-310)
 # v4.4.515: the card can be reached (card); its height follows the blocks that came (D-310)
 # v4.4.508: Add all on the card reaches the reading pane; pressed_item: which block of the card was pressed (D-310)
 # v4.4.507: Send my busy times… on the card reaches the reading pane (invitation_busy_requested), D-310 step 4
@@ -1047,6 +1048,7 @@ class ReaderWidget(QWidget):
     invitation_answer_requested = Signal(str)  # Accept, Tentative, Decline or Add to calendar on the invitation card (D-310)
     invitation_apply_requested = Signal()  # Update calendar, Remove from calendar, Request (D-310)
     invitation_delegate_requested = Signal()  # Delegate… on the invitation card
+    invitation_change_requested = Signal()  # Change my answer on the invitation card
     invitation_organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest (D-310 step 3)
     invitation_busy_requested = Signal()  # Send my busy times… on the card (D-310 step 4)
     invitation_add_all_requested = Signal()  # Add all on the card of a text with several items (D-310)
@@ -1121,6 +1123,7 @@ class ReaderWidget(QWidget):
         self._card.answer_requested.connect(self.invitation_answer_requested)
         self._card.apply_requested.connect(self.invitation_apply_requested)
         self._card.delegate_requested.connect(self.invitation_delegate_requested)
+        self._card.change_requested.connect(self.invitation_change_requested)
         self._card.organize_requested.connect(self.invitation_organize_requested)
         self._card.busy_requested.connect(self.invitation_busy_requested)
         self._card.add_all_requested.connect(self.invitation_add_all_requested)

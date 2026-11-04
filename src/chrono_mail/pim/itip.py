@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.515"
+__version__ = "itip.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: without_dates: dates out of a copy until they are answered again; an answered date comes back (D-310)
 # v4.4.515: text_items remembers the last text it read; ready_to_delete: a copy as the server should hold it before its delete, also when that delete waits for the connection (D-310)
 # v4.4.514: text_items reads every calendar of a text, an item takes along every time zone used anywhere inside it, as its own calendar defines it; a delegator's answer adds whoever they name as not answered yet (D-310)
 # v4.4.512: an ADD can be answered: answered_added, added_dates, and the answer and the delegate's invitation name the date as an occurrence (D-310)
@@ -236,6 +237,9 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
         return None
     kept.pop("METHOD", None)
     lower = address.strip().lower()
+    series = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    if occurrence is not None and series is not None and answer != "DECLINED":
+        _without_moment(series, "EXDATE", occurrence)  # a date taken out by Change my answer comes back with its answer
 
     if occurrence is None and take_message:
         _keep_own_answers(kept, message, lower)
@@ -477,6 +481,34 @@ def without_occurrence(stored: str, occurrence: Moment) -> str | None:
     elif not _items_of(kept):
         return ""  # that occurrence was all the copy held: the item goes
     return kept.to_ical().decode("utf-8")
+
+
+def _without_moment(item: icalendar.Component, key: str, moment: Moment) -> None:
+    """One date out of a list of dates of an item (EXDATE, RDATE)."""
+    dates = _moments(item, key)
+    if any(_same_moment(each, moment) for each in dates):
+        item.pop(key, None)
+        for each in dates:
+            if not _same_moment(each, moment):
+                item.add(key, each)
+
+
+def without_dates(stored: str, moments: Iterable[Moment]) -> str | None:
+    """The copy without these dates, for as long as they are not answered (Change my answer): an extra date goes from the list of extra dates, a
+    date of the rule is skipped, and their own items go. "" when nothing is left (the item goes); None when it cannot be read."""
+    kept = _parse(stored)
+    if kept is None:
+        return None
+    main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    for moment in moments:
+        kept.subcomponents = [each for each in kept.subcomponents if not (each.name in ("VEVENT", "VTODO") and _same_moment(_moment(each, "RECURRENCE-ID"), moment))]
+        if main is None:
+            continue
+        if any(_same_moment(each, moment) for each in _moments(main, "RDATE")):
+            _without_moment(main, "RDATE", moment)
+        elif not any(_same_moment(each, moment) for each in _moments(main, "EXDATE")):
+            main.add("EXDATE", moment)
+    return kept.to_ical().decode("utf-8") if _items_of(kept) else ""
 
 
 def with_added(stored: str, message_text: str) -> str | None:

@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.515"
+__version__ = "invitationcard.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: handled: Change my answer instead of the answer buttons; a meeting you never answered says so (D-310)
 # v4.4.515: every item of a text gets its block, built as the person scrolls near it (blocks_wanted, add_blocks); update_blocks changes only some blocks (D-310)
 # v4.4.514: all_kept is gone: a window never closes by itself (D-310)
 # v4.4.512: a date added to a series you have shows the four answers; of a series you do not have: the text, and only the button Request (D-310)
@@ -173,8 +174,17 @@ def status_text(info: InvitationInfo) -> str:
         return ""
     if info.version == "older":
         return f"A newer version is in {info.stored_in}."
-    answer = _YOU.get(info.your_answer, "")
+    asks = info.method in ("REQUEST", "ADD") and not (info.organizer is not None and info.organizer.you)
+    answer = _YOU.get(info.your_answer, "You have not answered yet." if asks else "")
     return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" or info.method == "ADD" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
+
+
+def is_handled(info: InvitationInfo) -> bool:
+    """An invitation counts as handled when you answered it, not when it merely is in a calendar: its answer buttons give way to Change my answer.
+    An update that asks a new answer is not handled yet."""
+    if info.method == "ADD":  # (occurrence_kept: dates are still to add)
+        return bool(info.stored_in) and not info.occurrence_kept and info.your_answer in _ANSWERED
+    return bool(info.stored_in) and info.occurrence_kept and info.your_answer in _ANSWERED and info.version == "same"
 
 
 def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
@@ -252,6 +262,7 @@ class InvitationCard(QFrame):
     organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
     busy_requested = Signal()  # Send my busy times…
     add_all_requested = Signal()  # Add all
+    change_requested = Signal()  # Change my answer
     blocks_wanted = Signal(int)  # the person came near the end of the blocks built so far: the blocks from this place on, for add_blocks
     blocks_changed = Signal()  # blocks came or changed: the card has another height
 
@@ -327,6 +338,9 @@ class InvitationCard(QFrame):
         self.delegate_button = QPushButton("Delegate…", answers)  # made after the answers: Tab goes along the row as it reads
         self.delegate_button.clicked.connect(self.delegate_requested)
         row.addWidget(self.delegate_button)
+        self.change_button = QPushButton("Change my answer", answers)
+        self.change_button.clicked.connect(self.change_requested)
+        row.addWidget(self.change_button)
         self.request_label = QLabel("Request to resend the original invite:", answers)
         row.addWidget(self.request_label)
         self.apply_button = QPushButton("Update calendar", answers)
@@ -365,6 +379,7 @@ class InvitationCard(QFrame):
         block.organize_requested.connect(pressed(self.organize_requested))
         block.apply_requested.connect(pressed(self.apply_requested))
         block.delegate_requested.connect(pressed(self.delegate_requested))
+        block.change_requested.connect(pressed(self.change_requested))
         block.busy_requested.connect(pressed(self.busy_requested))
         block.link_activated.connect(self.link_activated)
         block.link_hovered.connect(self.link_hovered)
@@ -431,7 +446,7 @@ class InvitationCard(QFrame):
         margin = px_for(self, 24)
         self._answer_row.setContentsMargins(margin, px_for(self, 16), margin, px_for(self, 16))
         self._answer_row.setSpacing(px_for(self, 12))
-        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button):
+        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.change_button, self.add_button, self.apply_button):
             button.setMinimumWidth(px_for(self, 120))
         margin = px_for(self, 24)
         for layout in self._sections:
@@ -590,8 +605,10 @@ class InvitationCard(QFrame):
         shared = info.method == "PUBLISH" and not busy
         wants_busy = info.method == "REQUEST" and not yours and busy
         self.busy_button.setVisible(wants_busy)
+        handled = asks and is_handled(info)
+        self.change_button.setVisible(handled)
         for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button):
-            button.setVisible(asks)
+            button.setVisible(asks and not handled)
         self.add_button.setText(f"Add to {home_word(info)}")
         self.add_button.setVisible(shared and not info.stored_in)
         apply = apply_text(info) if not yours else ""
@@ -608,7 +625,7 @@ class InvitationCard(QFrame):
         self._answer_line.setVisible(shown)
         outdated = info.version == "older"
         reason = f"A newer version of this {item_word(info)} is in your {home_word(info)}: this message is out of date." if outdated else (organize_reason(info) if choices else "")
-        buttons = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button, *self.organize_buttons)
+        buttons = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.change_button, self.add_button, self.apply_button, *self.organize_buttons)
         for button in buttons:
             button.setEnabled(not reason)
         if not reason and "accept_proposal" in self._organize_actions and not info.proposal_usable:

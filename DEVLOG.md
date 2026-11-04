@@ -3826,3 +3826,8 @@ Built: itip ready_to_delete; davsync ItemLink.before_delete, _prepared_delete; d
 Measured: a file of 5,000 items is read in 0.94 s, once; the next 20 blocks take 3 ms of reading.
 Tests: tests/test_engine_invitation_mailing.py, test_engine_invitation_files.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.514, except the one for a meeting changed on the server while the Decline waited, which guards what already held.
 Open: changelist items 1 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.516: handled and not handled (the owner, D-310, items 5, 6, 7)
+Built: invitations _yours_as_kept; invitation.reopen; invitationcard is_handled, change_button, "You have not answered yet."; readingpane change_answer.
+Tests: tests/test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.515.
+Open: item 4 (a Decline remembered on the mail), items 1 to 3, 8 to 19, 21 to 25.

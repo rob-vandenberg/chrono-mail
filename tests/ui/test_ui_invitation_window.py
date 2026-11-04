@@ -26,9 +26,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.515"
+__version__ = "test_ui_invitation_window.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: handled and not handled: Change my answer, your own answer on your line, a meeting you never answered (D-310)
 # v4.4.515: every item of a big file gets its block as the person scrolls, and a click changes only its block, the place in the list stays (D-310)
 # v4.4.514: a window stays open until the person closes it (D-310)
 # v4.4.512: a date added to a series is answered, it has no button of its own (D-310)
@@ -133,6 +134,55 @@ def calendar_file(tmp_path: Path, text: str = CALENDAR_FILE) -> str:
     return str(path)
 
 
+def test_an_answered_invitation_shows_change_my_answer_instead_of_the_answers(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
+    card = reader.card
+    reader.show()
+    card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer="ACCEPTED", occurrence_kept=True, version="same"))
+    assert not card.change_button.isHidden() and all(button.isHidden() for button in (card.accept_button, card.tentative_button, card.decline_button, card.delegate_button))
+    assert status_text(card.info) == "You accepted. In Personal (Me)."  # type: ignore[arg-type]
+
+
+def test_a_meeting_in_your_calendar_you_never_answered_says_so_and_can_be_answered(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
+    card = reader.card
+    reader.show()
+    for answer in ("", "NEEDS-ACTION"):
+        card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer=answer, occurrence_kept=True))
+        assert not card.accept_button.isHidden() and card.change_button.isHidden()
+        assert status_text(card.info) == "You have not answered yet. In Personal (Me)."  # type: ignore[arg-type]
+
+
+def test_an_update_that_asks_a_new_answer_is_not_handled(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
+    reader.show()
+    reader.card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer="ACCEPTED", occurrence_kept=True, version="newer"))
+    assert not reader.card.accept_button.isHidden() and reader.card.change_button.isHidden()
+
+
+def test_change_my_answer_asks_first_and_then_the_four_answers_return(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = opened_file(world, qtbot, calendar_file(tmp_path, REQUEST_FILE))
+    first_choice(monkeypatch)
+    window.card.accept_button.click()
+    qtbot.waitUntil(lambda: window.card.change_button.isVisible(), timeout=5000)
+    assert window.invitation is not None and [person.answer for person in window.invitation.attendees if person.you] == ["ACCEPTED"]  # never "Not answered yet" beside "You accepted"
+    asked: list[str] = []
+
+    def cancelled(box: QMessageBox) -> int:
+        asked.append(box.text())
+        return QMessageBox.StandardButton.Cancel.value
+
+    def confirmed(box: QMessageBox) -> int:
+        return QMessageBox.StandardButton.Ok.value
+
+    monkeypatch.setattr(QMessageBox, "exec", cancelled)
+    window.card.change_button.click()
+    assert asked == ["Changing the status of the invitation will remove the appointment from your calendar until you make a new choice."]
+    assert kept_items(world, CollectionKind.EVENTS) == 1
+    monkeypatch.setattr(QMessageBox, "exec", confirmed)
+    window.card.change_button.click()
+    qtbot.waitUntil(lambda: window.card.accept_button.isVisible(), timeout=5000)
+    assert kept_items(world, CollectionKind.EVENTS) == 0 and not window.card.change_button.isVisible()
+    window.close()
+
+
 def test_only_an_ics_name_is_a_calendar_file() -> None:
     assert is_calendar_file("Agenda.ICS") and not is_calendar_file("agenda.ics.exe") and not is_calendar_file("")
 
@@ -191,6 +241,9 @@ def test_several_items_show_a_block_each_with_add_all_at_the_top(world: World, q
     assert all(block.add_button.isVisible() and not block.intro.isVisible() for block in card.blocks)
     assert not card.title.isVisible() and not card.add_button.isVisible()
     window.close()
+
+
+REQUEST_FILE = CALENDAR_FILE.replace("BEGIN:VEVENT", "METHOD:REQUEST\r\nBEGIN:VEVENT", 1).replace("END:VEVENT", "ORGANIZER:mailto:olivia@example.org\r\nATTENDEE:mailto:me@example.com\r\nEND:VEVENT", 1)
 
 
 def many_items(count: int) -> str:

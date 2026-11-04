@@ -13,9 +13,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.514"
+__version__ = "test_engine_invitation_answers.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: Change my answer on a date takes only that date, and the date comes back with a new answer (D-310)
 # v4.4.514: the server can be chosen without its word (D-310)
 # v4.4.512: a date added to a series is answered (D-310)
 # v4.4.510: a server that announces nothing never counts as mailing (D-310)
@@ -44,6 +45,38 @@ def drafts(setup: Setup) -> list[bytes]:
 
 def answer(setup: Setup, message: str, what: str, calendar: str = "", mail: bool = True):  # noqa: ANN201 - the command's own answer
     return call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer=what, calendar=calendar, mail=mail)
+
+
+def reopened(setup: Setup, message: str) -> None:
+    assert call(setup.engine, "invitation.reopen", account=setup.account_id, folder="Inbox", message=message).removed
+
+
+def test_change_my_answer_on_one_date_keeps_the_series_and_the_date_comes_back(setup: Setup) -> None:
+    calendar = local_calendar(setup)
+    stored(setup, calendar_text(method="", answer="ACCEPTED").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
+    message = deliver(setup, invitation_mail(calendar_text().replace("SUMMARY:", "RECURRENCE-ID:20261029T100000Z\r\nSUMMARY:", 1)))
+    answer(setup, message, "TENTATIVE", calendar)
+    reopened(setup, message)
+    (text,) = kept(setup)
+    assert "RRULE" in text and "EXDATE" in text and "RECURRENCE-ID" not in text
+    answer(setup, message, "ACCEPTED", calendar)
+    (text,) = kept(setup)
+    assert "EXDATE" not in text and "RECURRENCE-ID" in text
+
+
+def test_change_my_answer_on_an_added_date_keeps_the_series_and_the_date_comes_back(setup: Setup) -> None:
+    calendar = local_calendar(setup)
+    stored(setup, calendar_text(method="", answer="ACCEPTED").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
+    added = calendar_text(method="ADD", sequence=1).replace("DTSTART:20261029T100000Z", "DTSTART:20261231T100000Z").replace("DTEND:20261029T103000Z", "DTEND:20261231T103000Z")
+    message = deliver(setup, invitation_mail(added))
+    answer(setup, message, "ACCEPTED", calendar)
+    assert "RDATE" in kept(setup)[0]
+    reopened(setup, message)
+    (text,) = kept(setup)
+    assert "RRULE" in text and "RDATE" not in text and "EXDATE" not in text and "RECURRENCE-ID" not in text
+    answer(setup, message, "ACCEPTED", calendar)
+    (text,) = kept(setup)
+    assert "RDATE" in text and "EXDATE" not in text and "RECURRENCE-ID" in text
 
 
 def test_accept_keeps_the_meeting_with_your_answer_and_makes_the_answer_to_send(setup: Setup) -> None:

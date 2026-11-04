@@ -17,9 +17,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.515"
+__version__ = "test_engine_invitation_mailing.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: Change my answer tells nobody (D-310)
 # v4.4.515: a Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict (D-310)
 # v4.4.510: Initial tests: who mails the answer to an invitation (D-310): the server, Chrono Mail or nobody, never two and never none unless chosen
 
@@ -125,6 +126,32 @@ def test_another_address_on_a_server_that_always_mails_gets_one_correct_answer(s
     assert writes(server) == ["PUT", "DELETE"] and on_server(server) == []
     bare = without_organizer(calendar_text())
     assert bare is not None and "ORGANIZER" not in bare and "ATTENDEE" not in bare and "SUMMARY:Choice of colours" in bare
+
+
+def reopen(setup: Setup, message: str):  # noqa: ANN201, F811 - the command's own answer
+    return call(setup.engine, "invitation.reopen", account=setup.account_id, folder="Inbox", message=message)
+
+
+def test_change_my_answer_removes_the_meeting_without_a_word_to_the_organizer(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    sent = put_texts(server, monkeypatch)
+    server.requests.clear()
+    assert reopen(setup, message).removed
+    assert writes(server) == ["PUT", "DELETE"] and "SCHEDULE-AGENT=CLIENT" in sent[0]  # told to stay silent first, though it mails your answers
+    assert on_server(server) == [] and calendar_items(setup) == [] and drafts(setup) == []
+    assert not reopen(setup, message).removed
+    answer(setup, message, "TENTATIVE", calendar_id(setup))
+    assert "TENTATIVE" in calendar_items(setup)[0]
+
+
+def test_change_my_answer_takes_the_organizer_off_a_server_that_mails_whatever_it_is_told(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    settings(setup, dav_always_answers=True)
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    sent = put_texts(server, monkeypatch)
+    reopen(setup, message)
+    assert "ORGANIZER" not in sent[0] and on_server(server) == []
 
 
 def test_a_refused_delete_leaves_the_meeting_as_it_was(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811

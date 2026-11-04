@@ -16,7 +16,7 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
+from chrono_mail.engine.commands_invitations import INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
 from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.515"
+__version__ = "readingpane.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: Change my answer, confirmed first (D-310)
 # v4.4.515: the blocks of a big text come as the person scrolls; after a click only that block changes, the place in the list stays (D-310)
 # v4.4.514: a window never closes by itself: the person closes it; every dialog of an invite belongs to the main window (D-310)
 # v4.4.512: a date added to a series is answered, never added by a button of its own; it asks for no calendar (D-310)
@@ -119,6 +120,7 @@ class ReadingPane(QObject):
         self.reader.link_hovered.connect(status.line.show_link)
         self.reader.invitation_answer_requested.connect(self._answer_in_pane)
         self.reader.card.blocks_wanted.connect(self._more_in_pane)
+        self.reader.invitation_change_requested.connect(self._change_in_pane)
         self.reader.invitation_apply_requested.connect(self._apply_in_pane)
         self.reader.invitation_delegate_requested.connect(self._delegate_in_pane)
         self.reader.invitation_organize_requested.connect(self._organize_in_pane)
@@ -356,6 +358,11 @@ class ReadingPane(QObject):
 
                 reader.invitation_delegate_requested.connect(delegate_in_window)
 
+                def change_in_window() -> None:
+                    self.change_answer(found, on_block())
+
+                reader.invitation_change_requested.connect(change_in_window)
+
                 def organize_in_window(action: str) -> None:
                     self.organize_invitation(found, on_block(), action)
 
@@ -389,6 +396,22 @@ class ReadingPane(QObject):
     def _in_pane(self) -> CalendarSource | None:
         """The message in the reading pane, as the source of its card."""
         return CalendarSource(*self.shown, item=self.reader.pressed_item) if self.shown is not None else None
+
+    def _change_in_pane(self) -> None:
+        self.change_answer(self.reader, self._in_pane())
+
+    def change_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
+        """Change my answer: after the person confirmed, the appointment goes and the invitation asks for an answer again (D-310)."""
+        info = self._card_of(reader, place) if place is not None else None
+        if place is None or info is None:
+            return
+        what, home = ("task", "task list") if info.kind == "task" else ("appointment", "calendar")
+        text = f"Changing the status of the invitation will remove the {what} from your {home} until you make a new choice."
+        box = plain_box(QMessageBox.Icon.Question, self._parent, "Change my answer", text, QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+        if QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:
+            return
+        parameters = SourceParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
+        self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._status.report("Could not change your answer", error), owner=self)
 
     def _more_in_pane(self, first: int) -> None:
         if self.shown is not None:
@@ -469,6 +492,11 @@ class ReadingPane(QObject):
             window.card.answer_requested.connect(answer_here)
             window.card.apply_requested.connect(apply_here)
             window.card.delegate_requested.connect(delegate_here)
+
+            def change_here() -> None:
+                self.change_answer(window, on_block())
+
+            window.card.change_requested.connect(change_here)
             window.card.organize_requested.connect(organize_here)
             window.card.busy_requested.connect(busy_here)
 

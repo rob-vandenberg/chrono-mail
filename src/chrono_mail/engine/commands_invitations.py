@@ -20,16 +20,17 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
+    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, without_occurrence, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.515"
+__version__ = "commands_invitations.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: invitation.reopen: Change my answer (D-310)
 # v4.4.515: invitation.blocks: the cards of a big text step by step; a Decline that waits for the connection says what the server's copy needs first; refused twice, the meeting stays here with a sync conflict (D-310)
 # v4.4.514: Add all puts each item in as it was written, so an export comes back identical; a public calendar counts as yours again, a private one first (D-310)
 # v4.4.512: an added date is answered like an invitation: Accept and Tentative add it with your answer, Decline adds nothing, Delegate passes it on; invitation.apply only asks for a series you do not have (D-310)
@@ -802,6 +803,39 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     return OrganizeResult(done, stored_in, server, own.account.account_id, saved.folder, saved.message_id)
 
 
+@dataclass(frozen=True, slots=True)
+class ReopenResult:
+    removed: bool  # false: it was not in your calendar any more
+
+
+def invitation_reopen(engine: Engine, parameters: SourceParameters) -> ReopenResult:
+    """Change my answer: your copy goes without a word to the organizer, so the invitation can be answered anew (D-310). A date of a series, or
+    dates added to it: only those dates go."""
+    opened = _opened(engine, parameters)
+    message = opened.message
+    _not_yours(engine, opened)
+    you = _you(engine, opened)
+    stored = _stored(engine, _kind(message), message.uid)
+    if stored is None:
+        return ReopenResult(False)
+    text = ""  # the whole copy goes
+    if message.occurrence is not None or message.method == "ADD":
+        text = without_dates(stored.text, added_dates(opened.text) if message.method == "ADD" else occurrences_of(opened.text))
+        if text is None:
+            raise UsageError("Your copy could not be read")
+    mails = _who_mails(engine, (stored.account, stored.info), you.account, you.address, "" if text else stored.item)
+    silent = replace(mails, server=False, chrono=False, bare=mails.bare or (mails.server and not mails.told))  # nobody is told: a new answer follows
+    try:
+        with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
+            if text:
+                writer.put(stored.info, _copy_for(text, silent), stored.item)
+            else:
+                _delete(writer, stored.info, stored.item, stored.text, silent)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+    return ReopenResult(True)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BlocksParameters(SourceParameters):
     first: int = field(metadata=option("The place of the first item wanted"))
@@ -928,6 +962,7 @@ def invitation_busy(engine: Engine, parameters: BusyParameters) -> BusyResult:
 
 
 INVITATION_CARD: TypedCommand[SourceParameters, InvitationInfo] = TypedCommand("invitation.card", SourceParameters, InvitationInfo)
+INVITATION_REOPEN: TypedCommand[SourceParameters, ReopenResult] = TypedCommand("invitation.reopen", SourceParameters, ReopenResult)
 INVITATION_BLOCKS: TypedCommand[BlocksParameters, BlocksResult] = TypedCommand("invitation.blocks", BlocksParameters, BlocksResult)
 INVITATION_BUSY: TypedCommand[BusyParameters, BusyResult] = TypedCommand("invitation.busy", BusyParameters, BusyResult)
 INVITATION_CHOICES: TypedCommand[ChoicesParameters, ChoicesResult] = TypedCommand("invitation.choices", ChoicesParameters, ChoicesResult)
@@ -940,6 +975,7 @@ INVITATION_ORGANIZE: TypedCommand[OrganizeParameters, OrganizeResult] = TypedCom
 
 def register(registry: CommandRegistry) -> None:
     registry.register(INVITATION_CARD.id, "The card of a calendar attachment or file", SourceParameters, invitation_card, doing="Reading the calendar file")
+    registry.register(INVITATION_REOPEN.id, "Change my answer: your copy goes, without a word to the organizer", SourceParameters, invitation_reopen, doing="Changing your answer")
     registry.register(INVITATION_BLOCKS.id, "The cards of some items of a calendar text with several items", BlocksParameters, invitation_blocks, doing="Reading the calendar file")
     registry.register(INVITATION_BUSY.id, "Answer a request for your busy times from these calendars: a draft to send", BusyParameters, invitation_busy,
                       doing="Working out your busy times")

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.515 (A Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict, every item of a calendar file gets its block as you scroll, a click keeps your place in the list)*
+*Last updated: 2026-11-04, version 4.4.516 (An answered invite shows Change my answer instead of the four answers, your own name shows your real answer, a meeting you never answered says so)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.516 done (D-310, items 5, 6, 7 of the changelist after the review).** To check by the owner: Accept an invite: the four answers give way to Change my answer and your own name has the green tick; Change my answer asks first, the appointment goes, nothing is mailed, the four answers return. A meeting in your calendar you never answered says "You have not answered yet." Still to do for item 7: a declined invite, which needs item 4 (the mark on the mail). Next: item 4, then items 1 to 3, 8 to 19, 21 to 25.
 
 **4.4.515 done (D-310, decisions 4, 6, 7, item 20 of the changelist after the review).** To check by the owner: Decline a meeting with the server unreachable: with Server chosen the server mails once the connection is back and Chrono Mail sends nothing; with Chrono Mail chosen one mail goes and the server stays silent. Open an .ics file with hundreds of items: it opens at once, the blocks come as you scroll, a click on one block changes only that block. Next: changelist items 1 to 3, 4 to 19, 21 to 25.
 

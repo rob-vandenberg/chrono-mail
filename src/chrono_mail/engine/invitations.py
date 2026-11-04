@@ -16,9 +16,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.515"
+__version__ = "invitations.py 4.4.516"
 
 # --- Version history ----------------------------------------------------
+# v4.4.516: your own line shows the answer in your copy (D-310)
 # v4.4.515: no limit of 50 blocks: blocks_of gives the cards of a text step by step, so every item gets its block and a huge file stays fast (D-310)
 # v4.4.514: a public calendar counts as holding your meeting again, a private one first; only one shared by someone else does not; your_calendars opens each store once per card (D-310)
 # v4.4.512: only your own calendars count as holding a meeting: is_yours, a public or shared one no longer does; an ADD shows your answer to its dates (D-310)
@@ -149,6 +150,11 @@ def _person(person: Attendee, addresses: frozenset[str]) -> InvitationPerson:
     return InvitationPerson(person.address, person.name, person.status, person.address.strip().lower() in addresses)
 
 
+def _yours_as_kept(person: InvitationPerson, answer: str) -> InvitationPerson:
+    """Your own line says your real answer, as your copy holds it, whatever the mail says."""
+    return replace(person, answer=answer) if person.you and answer else person
+
+
 def your_addresses(engine: Engine) -> frozenset[str]:
     """The addresses of the person's accounts, in lower case."""
     return frozenset(address for settings in engine.config().accounts if (address := settings.account.email_address.strip().lower()))
@@ -271,7 +277,7 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
     repeats = event.repeats if event is not None else bool(task is not None and task.rrule)
     return InvitationInfo(
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
-        _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_person(each, addresses) for each in message.attendees),
+        _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
         busy=message.busy, plain=plain,
     )
