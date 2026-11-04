@@ -12,9 +12,10 @@ from chrono_mail.pim.itip import is_newer, read_calendar_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitations.py 4.4.504"
+__version__ = "test_engine_invitations.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: a calendar part in the character set the mail states (D-310)
 # v4.4.504: Initial tests: a calendar message in a mail is read for its card, its part is not offered as a file, an empty text gives way
 #           to the card, the copy in a calendar is found by its uid with your answer, an older message is told apart (D-310); a part
 #           without a name gets its extension only from Chrono Mail's own list (D-311)
@@ -282,3 +283,17 @@ def test_a_remote_background_picture_counts_as_shown() -> None:
     assert shows_text('<div style="background:url(https://example.com/a.png);height:300px"></div>', None) == (True, False)
     assert shows_text("<style>body { background-image: url(cid:x) }</style><p></p>", None) == (True, False)
     assert shows_text("<style>p { color: red }</style><p>&nbsp;</p>", " ") == (False, False)
+
+
+def test_a_calendar_part_is_read_in_the_character_set_the_mail_states(setup: Setup) -> None:
+    calendar = calendar_text().replace("Choice of colours", "Caf\u00e9 ouvert").encode("iso-8859-1")
+    mail = invitation_mail("X").replace(b"charset=utf-8; method=REQUEST", b"charset=iso-8859-1; method=REQUEST").replace(base64.b64encode(b"X"), base64.b64encode(calendar))
+    shown = call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=deliver(setup, mail))
+    assert shown.invitation.title == "Caf\u00e9 ouvert"
+
+
+@pytest.mark.parametrize("name", ["nonsense", "undefined", "idna"])
+def test_an_unusable_character_set_is_read_as_utf_8(setup: Setup, name: str) -> None:
+    mail = invitation_mail(calendar_text()).replace(b"charset=utf-8; method=REQUEST", f"charset={name}; method=REQUEST".encode())
+    shown = call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=deliver(setup, mail))
+    assert shown.invitation.title == "Choice of colours"

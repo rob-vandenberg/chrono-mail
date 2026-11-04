@@ -13,9 +13,10 @@ from chrono_mail.pim.ical import Attendee
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.508"
+__version__ = "invitations.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: calendar_text: a calendar part is read with the character set the mail states (D-310)
 # v4.4.508: a text with several items has a card per item (parts), of every kind, and says what it holds: events, tasks, journal entries and
 #           damaged items left out (D-310)
 # v4.4.507: busy times have a card (kind freebusy, busy); card_of: the card of any calendar text, also of a file that asks nothing (plain,
@@ -118,13 +119,21 @@ def shows_text(html_text: str | None, plain_text: str | None) -> tuple[bool, boo
     return reader.found, plain
 
 
+def calendar_text(attachment: Attachment) -> str:
+    """The text of a calendar part, in the character set the mail states; UTF-8, as iCalendar's own, when it states none or an unknown one."""
+    try:
+        return attachment.data.decode(attachment.charset or "utf-8", "replace")
+    except (LookupError, ValueError):  # an unknown name, or one Python refuses to use (hostile input)
+        return attachment.data.decode("utf-8", "replace")
+
+
 def calendar_part(attachments: tuple[Attachment, ...] | list[Attachment]) -> tuple[int, CalendarMessage] | None:
     """The first part of a message that is a calendar message (one with a method, RFC 6047), with its place, or None. A calendar file that asks
     nothing (no method) stays an ordinary attachment."""
     for position, attachment in enumerate(attachments):
         if attachment.content_type.lower() not in CALENDAR_TYPES:
             continue
-        message = read_calendar_message(attachment.data)
+        message = read_calendar_message(calendar_text(attachment))
         if message is not None and message.method and message.kind in ("event", "task", "freebusy"):
             return position, message
     return None
@@ -195,7 +204,7 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     found = calendar_part(attachments)
     if found is None:
         return None
-    return card_of(engine, found[0], attachments[found[0]].data.decode("utf-8", "replace"))
+    return card_of(engine, found[0], calendar_text(attachments[found[0]]))
 
 
 def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:

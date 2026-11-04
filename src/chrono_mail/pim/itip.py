@@ -17,9 +17,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.508"
+__version__ = "itip.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: with_attendee_answer takes only the line of the attendee who answered (D-310)
 # v4.4.508: text_items: a calendar text split into its items, of every kind, each a text of its own (items_text: some of them together);
 #           journal entries and damaged items counted; a shared item without a UID gets a lasting one; item_count is gone (D-310)
 # v4.4.507: busy times (VFREEBUSY): read from a message (BusyPeriod), made from your calendars (busy_periods) and written as an answer
@@ -701,9 +702,9 @@ def _take_line(target: icalendar.Component, person: Any) -> None:  # noqa: ANN40
         line.params["DELEGATED-TO"] = person.params["DELEGATED-TO"]
 
 
-def with_attendee_answer(stored: str, reply: str) -> str | None:
+def with_attendee_answer(stored: str, reply: str, who: str) -> str | None:
     """Your meeting with an attendee's answer (a REPLY, RFC 5546 section 3.2.3): per item of the answer (one occurrence, or the meeting), each of
-    its attendee lines into yours: their PARTSTAT and DELEGATED-TO; a line not on your list (a delegate, someone it was passed on to) added. An answer
+    the line of `who` (the attendee who answered: nobody answers for someone else) into yours: their PARTSTAT and DELEGATED-TO; a line not on your list (a delegate, someone it was passed on to) added. An answer
     to the series goes onto the dates that followed it too; one they answered otherwise keeps that. None when the meeting holds nothing it is about."""
     kept = _parse(stored)
     answer = _parse(reply)
@@ -719,8 +720,8 @@ def with_attendee_answer(stored: str, reply: str) -> str | None:
         props: Any = item.get("ATTENDEE")
         for person in props if isinstance(props, list) else ([props] if props is not None else []):
             address = _address_of(person)
-            if not address or any(character.isspace() for character in address) or not _partstat(person):
-                continue  # an empty or damaged line names nobody; an answer that is none changes nothing
+            if address.strip().lower() != who.strip().lower() or any(character.isspace() for character in address) or not _partstat(person):
+                continue  # someone else's line, or a damaged one; an answer that is none changes nothing
             following: list[icalendar.Component] = []
             if moment is None and main is not None:
                 series_answer = _your_answer(main, address)

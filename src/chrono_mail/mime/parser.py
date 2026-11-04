@@ -18,9 +18,10 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 4.4.505"
+__version__ = "parser.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: the character set a calendar part states is kept (D-310)
 # v4.4.505: a calendar part keeps its method parameter (Attachment.method, RFC 6047, D-310)
 # v3.4.344: a date outside 2 January of year 2 to 30 December 9998 is unreadable: it could not be turned into another time zone (RV-34, RV-118)
 # v2.0.301: inline means shown in the text: only a part the HTML text refers to by cid:; every other part is an attachment, whatever its
@@ -285,6 +286,14 @@ def _calendar_method(part: MIMEPart) -> str:
     return method if method.isascii() and method.isalpha() and len(method) <= 20 else ""
 
 
+def _calendar_charset(part: MIMEPart) -> str:
+    """The character set a calendar part states; "" when it has none, or a damaged one."""
+    try:
+        return str(part.get_content_charset() or "")
+    except Exception:  # noqa: BLE001 - a damaged header is a missing parameter
+        return ""
+
+
 def _content_type(part: MIMEPart) -> str:
     try:
         return scrub(part.get_content_type())
@@ -396,6 +405,7 @@ def _extract_body(root: MIMEPart, collector: _Collector) -> tuple[str | None, st
                     False,  # decided below, once the HTML text is known
                     data,
                     _calendar_method(part) if content_type == "text/calendar" else "",
+                    _calendar_charset(part) if content_type in ("text/calendar", "application/ics") else "",
                 )
             )
     return text_body, html_body, _mark_shown_parts(html_body, attachments)

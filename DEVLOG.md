@@ -3790,3 +3790,8 @@ Open: the Windows check of the file association; a card window closed between Ac
 Built: pim/itip.py text_items and items_text read a text once, every item of every kind its own text (a shared item without a UID gets a lasting one, journal entries and damaged items counted); every invitation command takes `item`; invitation.add adds all items that ask no answer, events to a calendar, tasks to a task list, those already there replaced or skipped; the card shows a block per item (at most 50) with Add all at the top; a card window closes when everything is added.
 Tests: tests/test_engine_invitation_files.py, tests/ui/test_ui_invitation_window.py; 24 fail on 4.4.507 (one of them only for a missing folder in the copy), all related tests pass; Pyrefly 0 (Linux, win32), layer check kept; review round 1 found nothing of the four kinds.
 Open: a file of several VCALENDARs one after the other is still refused; a time zone used only inside a VALARM is not carried along; closing after Accept in a card window.
+
+## 2026-11-04, 4.4.509: only the sender's answer, and the stated character set (the owner, D-310, A3, A9)
+Built: Take their answer takes only the line of the attendee who wrote the mail, else the only line there is, else it refuses; a calendar part is read in the character set the mail states, an unusable name as UTF-8.
+Tests: tests/test_engine_invitation_organizer.py, tests/test_engine_invitations.py; the new tests fail on 4.4.508; Pyrefly 0 (Linux, win32), layer check kept; review round 1 found a crash on charset=undefined, fixed.
+Open: A4 and groups 2 and 3 of the list.

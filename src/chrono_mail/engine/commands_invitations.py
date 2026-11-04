@@ -12,7 +12,7 @@ from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS, I
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, card_of, your_addresses
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, your_addresses
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -27,9 +27,10 @@ from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.508"
+__version__ = "commands_invitations.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: Take their answer takes only the line of the attendee who wrote it; a calendar part in the character set the mail states (D-310)
 # v4.4.508: a text with several items: every command works on one item (`item`), of whatever kind; invitation.add: all items that ask no
 #           answer, events into the chosen calendar, tasks into the chosen task list, those already there replaced or skipped (D-310)
 # v4.4.507: every command also takes an attachment or a file (SourceParameters), invitation.card shows one; several items of a shared text
@@ -140,7 +141,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
             found = calendar_part(parsed.attachments) if parameters.part < 0 else None
             if parameters.part < 0 and found is None:
                 raise UsageError("This message holds no calendar message")
-            data = parsed.attachments[found[0] if found is not None else parameters.part].data
+            data = calendar_text(parsed.attachments[found[0] if found is not None else parameters.part]).encode("utf-8")
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
@@ -602,6 +603,18 @@ def _sender(opened: _Opened, yours: Iterable[str]) -> str:
     return found
 
 
+def _answering(opened: _Opened) -> str:
+    """The attendee whose answer this is: the mail's sender when it has a line (also another account of yours), else the only line there is."""
+    lines = [person.address for person in opened.message.attendees if person.address]
+    senders = {address.strip().lower() for address in opened.senders}
+    found = next((address for address in lines if address.strip().lower() in senders), None)
+    if found is None and len(lines) == 1:
+        return lines[0]
+    if found is None:
+        raise UsageError("This answer does not show whose it is")
+    return found
+
+
 def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> OrganizeResult:
     """You are the organizer: an attendee's answer, proposal or request for the latest version, into your meeting or answered (D-310 step 3).
     Everything is checked before anything is written; your meeting is written server first."""
@@ -621,7 +634,7 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
             raise UsageError(f"This {item_word} is not in your {home}")
     elif stored.info.read_only:
         raise UsageError(f"This {home} is read-only")
-    attendee = _sender(opened, yours) if parameters.action != "take" else ""  # (an answer may come from another account of yours)
+    attendee = _answering(opened) if parameters.action == "take" else _sender(opened, yours)  # (an answer may come from another account of yours)
     kept = (read_calendar_message(stored.text, None) or read_calendar_message(stored.text)) if stored is not None else None
     same = read_calendar_message(stored.text, message.occurrence) if stored is not None and message.occurrence is not None else None
     base = same or kept  # a date is compared with its own version when it has one, else with its series (as invitation.answer and the card)
@@ -642,7 +655,7 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     to: tuple[str, ...] = ()
     word = ""
     if parameters.action == "take":
-        text = with_attendee_answer(stored.text, opened.text) if stored is not None else None
+        text = with_attendee_answer(stored.text, opened.text, attendee) if stored is not None else None
         done = "taken"
     elif parameters.action == "accept_proposal":
         text = countered(stored.text, opened.text, organizer.address if organizer is not None else "") if stored is not None else None

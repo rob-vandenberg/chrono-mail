@@ -11,9 +11,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.506"
+__version__ = "test_engine_invitation_organizer.py 4.4.509"
 
 # --- Version history ----------------------------------------------------
+# v4.4.509: Take their answer takes only the line of the attendee who wrote it (D-310)
 # v4.4.506: Initial tests: you are the organizer: an attendee's answer into your meeting, a proposal accepted or declined, the latest version
 #           sent to whoever asks; only the organizer can (D-310 step 3)
 
@@ -40,6 +41,22 @@ def test_an_attendees_answer_goes_into_your_meeting(setup: Setup) -> None:
     result = organize(setup, deliver(setup, from_sam(meeting("REPLY", sam="ACCEPTED"))), "take")
     (text,) = kept(setup)
     assert result.done == "taken" and "PARTSTAT=ACCEPTED" in text and drafts(setup) == []
+
+
+def test_an_answer_changes_only_the_line_of_who_wrote_it(setup: Setup) -> None:
+    stored(setup, meeting())
+    other = "ATTENDEE;PARTSTAT=DECLINED:mailto:alice@example.net\r\nEND:VEVENT"
+    organize(setup, deliver(setup, from_sam(meeting("REPLY", sam="ACCEPTED").replace("END:VEVENT", other))), "take")
+    (text,) = kept(setup)
+    assert "PARTSTAT=ACCEPTED" in text and "alice@example.net" not in text
+
+
+def test_an_answer_with_several_lines_from_someone_else_is_refused(setup: Setup) -> None:
+    stored(setup, meeting())
+    other = "ATTENDEE;PARTSTAT=DECLINED:mailto:alice@example.net\r\nEND:VEVENT"
+    message = deliver(setup, invitation_mail(meeting("REPLY", sam="ACCEPTED").replace("END:VEVENT", other)))
+    with pytest.raises(UsageError, match="whose it is"):
+        organize(setup, message, "take")
 
 
 def test_an_answer_to_an_older_version_is_refused(setup: Setup) -> None:
@@ -240,7 +257,7 @@ def test_an_answer_for_a_date_you_removed_adds_nothing(setup: Setup) -> None:
     with pytest.raises(UsageError, match="not in your meeting"):
         organize(setup, message, "take")
     assert "RECURRENCE-ID" not in kept(setup)[0]
-    assert with_attendee_answer(kept(setup)[0], for_date(meeting("REPLY", sam="DECLINED"), "20261105T100000Z")) is None
+    assert with_attendee_answer(kept(setup)[0], for_date(meeting("REPLY", sam="DECLINED"), "20261105T100000Z"), "sam@example.net") is None
 
 
 def test_a_series_keeps_its_zone_so_its_skipped_dates_stay_skipped(setup: Setup) -> None:
@@ -324,7 +341,7 @@ def test_a_proposal_for_one_date_cannot_end_it_before_its_start() -> None:
 def test_a_damaged_attendee_line_is_left_out(setup: Setup) -> None:
     """Step 3 review: a line with a line break crashed Take; on the meeting it moved the meeting and then failed to make the mail."""
     damaged = 'ATTENDEE;CN=Kim:mailto:"a b"@c.d\r\nSUMMARY:'
-    assert with_attendee_answer(meeting(), meeting("REPLY", sam="ACCEPTED").replace("mailto:sam@example.net", "mailto:a b@c.d", 1)) is not None
+    assert with_attendee_answer(meeting(), meeting("REPLY", sam="ACCEPTED").replace("mailto:sam@example.net", "mailto:a b@c.d", 1), "sam@example.net") is not None
     stored(setup, meeting().replace("SUMMARY:", damaged, 1))
     organize(setup, deliver(setup, from_sam(proposal())), "accept_proposal")
     assert [address.address for address in parse_message(drafts(setup)[0]).to_addresses] == ["sam@example.net"]
@@ -408,16 +425,16 @@ def test_an_answer_to_a_meeting_kept_as_single_dates_goes_onto_those_dates(setup
 
 def test_a_newer_answer_ends_an_earlier_delegation() -> None:
     delegated = meeting(sam="DELEGATED").replace("RSVP=TRUE", "DELEGATED-TO=\"mailto:kim@example.net\"", 1)
-    text = with_attendee_answer(delegated, meeting("REPLY", sam="ACCEPTED"))
+    text = with_attendee_answer(delegated, meeting("REPLY", sam="ACCEPTED"), "sam@example.net")
     assert text is not None and "DELEGATED-TO" not in text and "PARTSTAT=ACCEPTED" in text
 
 
 def test_an_attendee_who_is_no_mail_address_stays_as_written() -> None:
     answer = meeting("REPLY", sam="ACCEPTED").replace("mailto:sam@example.net", "urn:uuid:12", 1)
-    text = with_attendee_answer(meeting(), answer)
+    text = with_attendee_answer(meeting(), answer, "urn:uuid:12")
     assert text is not None and "urn:uuid:12" in text and "mailto:urn" not in text
     empty = meeting("REPLY", sam="ACCEPTED").replace("mailto:sam@example.net", "", 1)
-    assert "mailto:\r\n" not in (with_attendee_answer(meeting(), empty) or "")
+    assert "mailto:\r\n" not in (with_attendee_answer(meeting(), empty, "sam@example.net") or "")
 
 
 def test_a_proposal_for_a_series_and_one_of_its_dates_takes_both() -> None:
@@ -449,7 +466,7 @@ def test_a_far_date_on_a_frequent_rule_takes_no_time() -> None:
 
 def test_a_date_of_a_meeting_that_does_not_repeat_is_the_meeting() -> None:
     """Step 3 review: an answer naming the start of a single meeting left its attendee line unanswered."""
-    text = with_attendee_answer(meeting(), for_date(meeting("REPLY", sam="ACCEPTED"), "20261029T100000Z"))
+    text = with_attendee_answer(meeting(), for_date(meeting("REPLY", sam="ACCEPTED"), "20261029T100000Z"), "sam@example.net")
     assert text is not None and "RECURRENCE-ID" not in text and "PARTSTAT=ACCEPTED" in text
 
 
@@ -493,7 +510,7 @@ def test_a_proposal_that_moves_a_series_off_its_days_is_not_usable() -> None:
 
 def test_an_answer_that_is_none_changes_nothing() -> None:
     for bad in ("ACCEPTED,DECLINED", "FOO"):
-        text = with_attendee_answer(meeting(), meeting("REPLY", sam=bad))
+        text = with_attendee_answer(meeting(), meeting("REPLY", sam=bad), "sam@example.net")
         assert text is not None and "FOO" not in text and "[" not in text and "PARTSTAT=NEEDS-ACTION" in text
 
 
@@ -554,5 +571,5 @@ def test_who_passed_it_on_stays_so_when_the_meeting_moves() -> None:
 def test_an_answer_to_the_series_goes_onto_the_dates_that_followed_it() -> None:
     kept_series = with_date(series(), changed_date("20261105T100000Z", "20261105T100000Z", "20261105T103000Z"))
     other = changed_date("20261112T100000Z", "20261112T100000Z", "20261112T103000Z").replace("PARTSTAT=ACCEPTED", "PARTSTAT=TENTATIVE")
-    text = with_attendee_answer(with_date(kept_series, other), meeting("REPLY", sam="DECLINED"))
+    text = with_attendee_answer(with_date(kept_series, other), meeting("REPLY", sam="DECLINED"), "sam@example.net")
     assert text is not None and text.count("PARTSTAT=DECLINED") == 2 and text.count("PARTSTAT=TENTATIVE") == 1

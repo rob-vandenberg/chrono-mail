@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.508 (a file or attachment with several items: one block per item, Add all, Replace and Skip, the window closes when all is added).*
+*Last updated: 2026-11-04, version 4.4.509 (Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.509 done (D-310, A3, A9).** To check by the owner: Take their answer on a mail with several attendee lines changes only the sender's; a calendar mail in iso-8859-1 shows its accents. Still to do: group 2 (B3, A8, A10), group 3 (A2, A7, B1, B4), A4: see `scratchpad/HANDOVER-INVITATIONS-STEP2.md`.
 
 **4.4.508 done (D-310, list A and B, group 1 of 4: A1, B2, A5, A6).** To check by the owner: open an .ics file with events and tasks: the top says what it holds (journal entries left out, counted), one block per item with its own button, Add all asks for a calendar and a task list, items already there ask Replace or Skip, and the window closes when everything is added. Next: group 2 (B3, A8, A10), group 3 (A2, A7, B1, B4), group 4 (A3, A4, A9): see `scratchpad/HANDOVER-INVITATIONS-STEP2.md`.
 
