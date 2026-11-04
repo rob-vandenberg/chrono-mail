@@ -68,10 +68,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.540"
+__version__ = "mainwindow.py 4.4.541"
 
 # --- Version history ----------------------------------------------------
-# v4.4.540: closeEvent: the window goes first, and closing waits for no server (Quit anyway stood still for a minute on a silent server)
+# v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.538: the status line says "Renaming folder…" and "Renaming folder, updating mail rules…" while a folder is renamed (working)
 # v4.4.536: The reminders are watched while the window runs (D-313)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -924,13 +924,12 @@ class MainWindow(QMainWindow):
         self.prefs.keep(changed(self.prefs.read(), auto_check=self.act_auto.isChecked()))
         view = self.mail_state.view
         self.memory.remember_view(view.account or "", view.path, view.key_kind)
-        self.hide()  # the window goes at once: what follows is tidying up, and no server may hold it on the screen
-        self.tray.set_visible(False)
         self.checking.stop()
         self.backend.engine.stop_event.set()  # waits for new mail end now
         interrupt_downloads(self.backend.engine)  # a download of an update stops at once, never waited for
-        self.backend.wind_down(3000)
-        self.backend.engine.leave_imap_links()  # log out of the connections kept open for the actions on the server
+        self.backend.wait_for_done(3000)
+        self.backend.engine.close_imap_links()  # log out of the connections kept open for the actions on the server
+        self.tray.set_visible(False)
         event.accept()
         self.closed_for_good.emit()
 
