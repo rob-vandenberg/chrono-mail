@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.535"
+__version__ = "test_ui_calendar.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Reminder rows (round 4)
 # v4.4.535: The window's new fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a hidden event's menu (D-310); open_calendar waits for the anchor's own event, never for what the view of today still shows
@@ -142,7 +143,7 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
         assert editor.summary.text() == "" and editor.start_moment().toString("yyyy-MM-dd HH:mm") == "2026-10-15 15:00" and editor.end_moment().toString("HH:mm") == "16:00"
         editor.summary.setText("Planning")
         editor.location.setPlainText("Room 4")
-        editor.reminder.setCurrentIndex(editor.reminder.findData("15"))
+        editor.reminders.add()
         editor.choose_tag("Work", True)
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(make))
@@ -163,10 +164,10 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
     assert free.all_day and (free.start, free.end) == ("2026-10-17", "2026-10-18")
 
     def change(editor: EventEditor) -> None:
-        assert editor.summary.text() == "Planning" and editor.location.toPlainText() == "Room 4" and editor.reminder.currentData() == "15" and editor.tags.text() == "Work"
+        assert editor.summary.text() == "Planning" and editor.location.toPlainText() == "Room 4" and [row.number.value() for row in editor.reminders.rows] == [15] and editor.tags.text() == "Work"
         editor.summary.setText("Planning (moved)")
         editor.set_start(editor.start_moment().addSecs(3600))
-        editor.reminder.setCurrentIndex(0)
+        editor.reminders.remove(editor.reminders.rows[0])
         editor.choose_tag("Work", False)
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(change))
@@ -541,8 +542,8 @@ def test_a_reminder_at_a_set_time_shows_as_that_never_as_no_reminder(world: Worl
     at_a_time = dataclasses.replace(shown, reminders=(ReminderInfo(None, "2026-10-15T07:00:00+00:00", "DISPLAY", False),))
     editor = EventEditor(world.backend, page._calendars(), [], event=at_a_time, collection=calendar_id(world))  # noqa: SLF001
     qtbot.addWidget(editor)
-    assert editor.reminder.currentText() == "At a set time"
-    editor.reminder.setCurrentIndex(editor.reminder.findData(""))  # No reminder
+    assert editor.reminders.rows[0].fixed.text().startswith("At ")
+    editor.reminders.remove(editor.reminders.rows[0])  # No reminder
     assert "reminder" in editor.parameters().clear
 
 

@@ -41,3 +41,4 @@ See also: [[sync-conflicts]]
 - [[D-301]] Imported calendar accounts
 - [[D-310]] Calendar messages in mail (iTIP)
 - [[D-312]] The appointment window
+- [[D-313]] Reminders fire from Chrono Mail

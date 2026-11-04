@@ -7,7 +7,7 @@ from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QToolButton, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QToolButton, QVBoxLayout, QWidget
 
 from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
 from chrono_mail.pim.times import in_local_zone, local_zone
@@ -23,17 +23,17 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventattendees import AttendeesDialog, Person
+from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.eventrepeat import RepeatDialog
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
-from chrono_mail.core.words import counted
-from chrono_mail.core.words import digits
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.535"
+__version__ = "eventeditor.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Reminders: up to 5, each Notification or Email with a number and a unit (round 4)
 # v4.4.535: A saved appointment opens read-only with an Edit button; attendees one per line, changed in a dialog of their own; tags picked from a list; the location has several lines; the repeat list follows the date, with Custom; date and times are separate fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.518: Asks whether the attendees hear of a change, new attendees are invited (D-310)
@@ -51,10 +51,6 @@ __version__ = "eventeditor.py 4.4.535"
 # v0.0.64: Initial editor for an event
 
 CUSTOM: str = "custom"  # the last line of the repeat list: it opens the Custom window
-REMINDERS: tuple[tuple[str, str], ...] = (
-    ("", "No reminder"), ("0", "At the start"), ("5", "5 minutes before"), ("15", "15 minutes before"), ("30", "30 minutes before"), ("60", "1 hour before"),
-    ("1440", "1 day before"), ("10080", "1 week before"),
-)
 DATE_FORMAT: str = "yyyy-MM-dd"
 TIME_FORMAT: str = "HH:mm"
 
@@ -94,7 +90,6 @@ class EventEditor(QDialog):
         self._backend: Backend = backend
         self._settings: QSettings | None = settings  # handed to Event colours
         self._original: EventInfo | None = event
-        self._reminder_before: str = ""  # the reminder choice as the event had it: the reminders are sent only when it changed (RV-18)
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
         self._reading: bool = reading  # a saved appointment read: nothing can be changed until Edit
@@ -143,9 +138,7 @@ class EventEditor(QDialog):
         self._repeat_index: int = 0
         self._show_repeats(0)
         self.repeat.activated.connect(self._repeat_chosen)
-        self.reminder: QComboBox = part(form, QComboBox, "reminder")
-        for value, label in REMINDERS:
-            self.reminder.addItem(label, value)
+        self.reminders = ReminderList(part(form, QVBoxLayout, "reminderRows"), part(form, QPushButton, "addReminder"))
         self.busy: QComboBox = part(form, QComboBox, "busy")
         self.busy.addItem("Busy", True)
         self.busy.addItem("Free", False)
@@ -213,15 +206,7 @@ class EventEditor(QDialog):
         self._rule_before = event.rrule
         self._all_day_before = all_day
         self._show_rule(event.rrule)
-        reminders = tuple(event.reminders)
-        minutes = (str(reminders[0].minutes_before) if reminders[0].minutes_before is not None else "at") if reminders else ""
-        index = self.reminder.findData(minutes)
-        if index < 0 and minutes:  # one the list does not have: shown as it is (a reminder at a set time is never "No reminder")
-            label = "At a set time" if minutes == "at" else f"{counted(int(minutes), 'minute')} before" if digits(minutes) else f"{minutes} minutes before"
-            self.reminder.addItem(label, minutes)
-            index = self.reminder.count() - 1
-        self.reminder.setCurrentIndex(max(0, index))
-        self._reminder_before = str(self.reminder.currentData())
+        self.reminders.show_reminders(tuple(event.reminders))
         self.busy.setCurrentIndex(0 if event.busy else 1)
         self.set_people([Person(person.address, person.name, person.address) for person in event.attendees])
         self.chosen_tags = list(event.tags)
@@ -234,8 +219,9 @@ class EventEditor(QDialog):
         for text in (self.location, self.description):
             text.setReadOnly(reading)
         self.summary.setReadOnly(reading)
-        for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.reminder, self.busy, self.attendees_button, self.tags):
+        for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.busy, self.attendees_button, self.tags):
             field.setEnabled(not reading)
+        self.reminders.set_enabled(not reading)
         self.repeat.setEnabled(not reading and not self._occurrence)  # one occurrence has no rule of its own
         self._show_colours()
         calendar = self._current_calendar()
@@ -478,14 +464,11 @@ class EventEditor(QDialog):
             end = self.end_moment().toString("yyyy-MM-dd'T'HH:mm")
         attendees = tuple(person.given for person in self.people)
         tags = tuple(self.chosen_tags)
-        reminder = (str(self.reminder.currentData()),) if self.reminder.currentData() != "" else ()
         original = self._original
-        reminder_changed = original is None or str(self.reminder.currentData()) != self._reminder_before
-        if not reminder_changed:  # the window shows one reminder: the others (a second alarm, one at a fixed time) stay as they are (RV-18)
-            reminder = ()
+        reminder = self.reminders.values() if self.reminders.changed() else ()  # sent only when changed; one left alone is kept whole (keep:, RV-18)
         clear: list[str] = []
         for parameter, entries, had in (("attendee", attendees, original is not None and bool(original.attendees)), ("tag", tags, original is not None and bool(original.tags)),
-                                        ("reminder", reminder, original is not None and bool(original.reminders) and reminder_changed)):
+                                        ("reminder", reminder, original is not None and bool(original.reminders) and self.reminders.changed())):
             if not entries and had:
                 clear.append(parameter)
         chosen = "" if self.colour_id == OWN_COLOUR_ID else self.colour_id

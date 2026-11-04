@@ -6,8 +6,9 @@ from PySide6.QtCore import QDate, QPoint, Qt, QTime
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.engine.commands_calendar import EVENT_SHOW, EventInfo
+from chrono_mail.engine.commands_calendar import EVENT_SHOW, EventInfo, ReminderInfo
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
+from chrono_mail.engine.commands_reminders import ReminderNote
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.calendarwidgets import one_line
 from chrono_mail.ui.eventattendees import AttendeesDialog, Person
@@ -15,12 +16,14 @@ from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.eventrepeat import RepeatDialog
 
 from tests.ui.test_ui_calendar import calendar_id, open_calendar
+from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appointment_window.py 4.4.535"
+__version__ = "test_ui_appointment_window.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Reminders (round 4)
 # v4.4.535: Initial version: read-only with Edit, attendees, tags, location (round 4)
 
 
@@ -275,3 +278,46 @@ def test_a_double_click_in_the_day_view_starts_at_that_time_with_all_day_off(wor
     page._slot_activated(page.anchor, 14 * 60)  # noqa: SLF001
     page._slot_activated(page.anchor, -1)  # noqa: SLF001
     assert seen == [(False, f"{page.anchor.isoformat()}T14:00"), (True, page.anchor.isoformat())]
+
+
+def test_reminders_are_rows_of_a_kind_a_number_and_a_unit_at_most_five_and_each_can_go(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot)
+    editor = new_editor(world, qtbot, page, "2026-11-10T10:00", "2026-11-10T11:00")
+    assert editor.parameters().reminder == ()
+    for _ in range(5):
+        editor.reminders.add_button.click()
+    assert not editor.reminders.add_button.isEnabled() and len(editor.reminders.rows) == 5
+    row = editor.reminders.rows[1]
+    row.kind.setCurrentIndex(1)
+    row.number.setValue(2)
+    row.unit.setCurrentIndex(row.unit.findText("hours"))
+    editor.reminders.rows[0].remove.click()
+    assert editor.reminders.add_button.isEnabled()
+    assert editor.parameters().reminder == ("email:120", "15", "15", "15")
+
+
+def test_a_reminder_left_alone_stays_whole_and_one_from_elsewhere_is_shown_as_it_is(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot)
+    event = lunch(world, qtbot, page)
+    kept = (ReminderInfo(120, "", "DISPLAY", False), ReminderInfo(30, "", "DISPLAY", True), ReminderInfo(None, "2030-01-01T09:00:00", "DISPLAY", False))
+    editor = EventEditor(world.backend, page._calendars(), [], dataclasses.replace(event, reminders=kept), event.collection)  # noqa: SLF001
+    qtbot.addWidget(editor)
+    rows = editor.reminders.rows
+    assert (rows[0].number.value(), rows[0].unit.currentText()) == (2, "hours")
+    assert rows[1].fixed.text() == "30 minutes before the end" and rows[2].fixed.text() == "At 2030-01-01 09:00"
+    assert editor.parameters().reminder == ()  # nothing changed, nothing sent
+    rows[0].number.setValue(3)
+    assert editor.parameters().reminder == ("180", "keep:1", "keep:2")
+
+
+def test_a_reminder_goes_to_the_tray_with_its_time_and_place(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    told: list[tuple[str, str]] = []
+
+    def tray(title: str, text: str) -> bool:
+        told.append((title, text))
+        return True
+
+    monkeypatch.setattr(world.window.tray, "notify", tray)
+    world.window.reminders.show_note(ReminderNote("Dentist", "2026-11-10 10:00", "Room 4"))
+    assert told == [("Reminder: Dentist", "2026-11-10 10:00\nRoom 4")]

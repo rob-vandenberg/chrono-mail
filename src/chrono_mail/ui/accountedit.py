@@ -44,9 +44,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.514"
+__version__ = "accountedit.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Send reminder emails via Chrono Mail or Server, per account on this computer (D-313)
 # v4.4.514: Send confirmation emails via: greyed only when certain beyond doubt; a server that does not announce it can be chosen (D-310)
 # v4.4.510: Send confirmation emails via Chrono Mail or Server replaces the two radio buttons (D-310)
 # v4.4.505: Calendars and contacts: "Answers to invitations are sent by: the server / Chrono Mail", starting on what the server announces;
@@ -102,7 +103,7 @@ class AccountEditDialog(QDialog):
         kind = kind_of(account)
         calendars_only = kind is AccountKind.DAV  # no mail: only its name and its calendar server can be changed
         self.setWindowTitle(f"Account: {account.email_address or account.shown_name}")
-        form = forms.fill(self, "account_edit", {"servers": self._server_fields, "davFolders": FolderTicks, **info_marks("answersInfo")})  # D-276
+        form = forms.fill(self, "account_edit", {"servers": self._server_fields, "davFolders": FolderTicks, **info_marks("answersInfo", "remindersInfo")})  # D-276
         self.tabs: QTabWidget = part(form, QTabWidget, "tabs")
 
         general = part(form, QFormLayout, "generalForm")
@@ -164,6 +165,16 @@ class AccountEditDialog(QDialog):
         self.answers_send.toggled.connect(self._answers_warning)
         self.dav_url.textChanged.connect(self._answers_warning)
         self._answers_warning()
+        self.reminders_send: QCheckBox = part(form, QCheckBox, "remindersSend")
+        self.reminders_by: QComboBox = part(form, QComboBox, "remindersBy")
+        self.reminders_info: InfoMark = part(form, InfoMark, "remindersInfo")
+        self.reminders_by.addItem("Chrono Mail", "chrono")
+        self.reminders_by.addItem("Server", "server")
+        self.reminders_send.setChecked(account.reminder_emails != "none")
+        self.reminders_by.setCurrentIndex(self.reminders_by.findData("server" if account.reminder_emails == "server" else "chrono"))
+        self.reminders_send.toggled.connect(self._reminders_follow)
+        self.dav_url.textChanged.connect(self._reminders_follow)
+        self._reminders_follow()
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
         self.dav_check_button.clicked.connect(self._check_dav)
 
@@ -318,6 +329,19 @@ class AccountEditDialog(QDialog):
         self.answers_by.setEnabled(not reason and self.answers_send.isChecked())
         self.answers_info.explain("Confirmation emails", reason, self.answers_by)
 
+    def _reminders_follow(self) -> None:
+        """Greyed only when certain (D-313): without a calendar server only Chrono Mail can send them, and the box stays free."""
+        has_server = bool(self.dav_url.text().strip())
+        if not has_server:
+            self.reminders_by.setCurrentIndex(self.reminders_by.findData("chrono"))
+        self.reminders_by.setEnabled(has_server and self.reminders_send.isChecked())
+        self.reminders_info.explain("Reminder emails", "" if has_server else "This account has no calendar server: Chrono Mail sends these mails.", self.reminders_by)
+
+    def _reminders_value(self) -> str | None:
+        """Who sends the reminder emails, when the person changed it."""
+        chosen = str(self.reminders_by.currentData()) if self.reminders_send.isChecked() else "none"
+        return None if chosen == self._account.reminder_emails else chosen
+
     def _answers_value(self) -> str | None:
         """Who mails the answers, when the person changed it from what the account has now (empty: as the server announces)."""
         account = self._account
@@ -354,6 +378,7 @@ class AccountEditDialog(QDialog):
             outgoing_same_login=differing(self.same_login.isChecked(), account.outgoing_same_login),
             junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
             invitation_answers=self._answers_value(),
+            reminder_emails=self._reminders_value(),
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
 

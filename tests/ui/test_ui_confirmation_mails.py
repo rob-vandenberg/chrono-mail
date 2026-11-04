@@ -7,9 +7,10 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from tests.ui.world import REGISTRY, World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_confirmation_mails.py 4.4.514"
+__version__ = "test_ui_confirmation_mails.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Send reminder emails via (D-313)
 # v4.4.514: not certain: everything free (D-310)
 # v4.4.510: Initial tests: Edit account > Calendars and contacts: "Send confirmation emails via" with Chrono Mail or the server (D-310)
 
@@ -61,3 +62,18 @@ def test_a_server_typed_in_this_window_changes_the_reason_at_once(world: World, 
     assert dialog.answers_send.isEnabled()  # no server here now: its word from earlier does not count
     dialog.dav_url.setText(URL)
     assert not dialog.answers_send.isEnabled() and dialog.answers_by.currentData() == "server"
+
+
+def test_reminder_emails_default_to_chrono_mail_and_server_can_be_chosen_with_a_calendar_server(world: World, qtbot: QtBot) -> None:
+    dialog = window(world, qtbot, dav_url=URL)
+    assert dialog.reminders_send.isChecked() and dialog.reminders_by.currentData() == "chrono" and dialog.reminders_by.isEnabled()
+    assert dialog._reminders_value() is None  # noqa: SLF001 - nothing changed
+    dialog.reminders_by.setCurrentIndex(dialog.reminders_by.findData("server"))
+    assert dialog._reminders_value() == "server"  # noqa: SLF001
+    dialog.reminders_send.setChecked(False)
+    assert not dialog.reminders_by.isEnabled() and dialog._reminders_value() == "none"  # noqa: SLF001
+
+
+def test_without_a_calendar_server_only_the_reminder_dropdown_is_greyed_on_chrono_mail(world: World, qtbot: QtBot) -> None:
+    dialog = window(world, qtbot, dav_url="", reminder_emails="server")
+    assert dialog.reminders_by.currentData() == "chrono" and not dialog.reminders_by.isEnabled() and dialog.reminders_send.isEnabled()

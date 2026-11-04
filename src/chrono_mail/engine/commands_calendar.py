@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.532"
+__version__ = "commands_calendar.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Reminders by e-mail, at most 5 given, and keep: for one that stays as it is (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.521: a declined date of a series is left out as a skipped date; hidden: deleted and declined dates of a series, shown greyed when asked for (D-310)
@@ -53,6 +54,7 @@ __version__ = "commands_calendar.py 4.4.532"
 MAXIMUM_DAYS: int = 400
 MAXIMUM_EVENTS: int = 100_000  # events in the days of one event.list (only a hostile calendar has more)
 LIST_FIELDS: tuple[str, ...] = ("reminder", "attendee", "tag")
+MOST_REMINDERS: int = 5  # the owner's number (round 4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,18 +331,32 @@ def event_show(engine: Engine, parameters: ItemParameters) -> EventInfo:
 # --- writing ------------------------------------------------------------------------------------------------------------------------------
 
 
-def _reminder(text: str, zone_name: str) -> Reminder:
-    """'15' minutes before; '0' at the start; '-30' after; 'at:2026-10-01T09:00' at a fixed time."""
+def _reminder(text: str, zone_name: str, before: tuple[Reminder, ...] = ()) -> Reminder:
+    """'15' minutes before; '0' at the start; '-30' after; 'at:2026-10-01T09:00' at a fixed time; 'email:15' an e-mail reminder; 'keep:0' the first
+    reminder the event has, exactly as it is."""
     cleaned = text.strip()
     try:
+        if cleaned.lower().startswith("keep:"):
+            return before[int(cleaned[5:])]
+        if cleaned.lower().startswith("email:"):
+            return Reminder(int(cleaned[6:]), action="EMAIL")
         if cleaned.lower().startswith("at:"):
             moment = parse_moment(cleaned[3:], zone_named(zone_name) if zone_name else None)
             if not isinstance(moment, datetime):
                 raise ValueError("A reminder at a fixed time needs a time")
             return Reminder(None, moment)
         return Reminder(int(cleaned))
-    except ValueError:
-        raise UsageError(f"A reminder is minutes before the start (15), or at:2026-10-01T09:00 (got '{text}')") from None
+    except (ValueError, IndexError):
+        raise UsageError(f"A reminder is minutes before the start (15), email:15, or at:2026-10-01T09:00 (got '{text}')") from None
+
+
+def _addressed(engine: Engine, account: str, event: Event) -> Event:
+    """An e-mail reminder made here is for your own address: the one of the account, as the standard wants it in the alarm."""
+    if not any(reminder.action == "EMAIL" and not reminder.to for reminder in event.reminders):
+        return event
+    own = organizing_account(engine, account)
+    address = own.account.email_address if own is not None else ""
+    return replace(event, reminders=tuple(replace(reminder, to=address) if reminder.action == "EMAIL" and not reminder.to else reminder for reminder in event.reminders))
 
 
 def _attendee(text: str) -> Attendee:
@@ -457,7 +473,7 @@ class EventFields:
     location: str | None = field(default=None, metadata=option("Where"))
     description: str | None = field(default=None, metadata=option("A description"))
     rrule: str | None = field(default=None, metadata=option("How it repeats, like FREQ=WEEKLY;BYDAY=MO (empty: not at all)"))
-    reminder: tuple[str, ...] = field(default=(), metadata=option("Reminders: minutes before the start (15), or at:2026-10-01T09:00 (repeat)"))
+    reminder: tuple[str, ...] = field(default=(), metadata=option("Reminders: minutes before the start (15), email:15, or at:2026-10-01T09:00 (repeat)"))
     attendee: tuple[str, ...] = field(default=(), metadata=option("Attendees as addresses or 'Name <address>' (repeat)"))
     organizer: str | None = field(default=None, metadata=option("The organiser, as an address (empty: none)"))
     tag: tuple[str, ...] = field(default=(), metadata=option("Tags (repeat)"))
@@ -508,7 +524,9 @@ def _apply(event: Event, values: EventFields, creating: bool) -> Event:
             raise UsageError("A rule starts with FREQ=, like FREQ=WEEKLY;BYDAY=MO")
         result = replace(result, rrule=rule)
     if values.reminder:
-        result = replace(result, reminders=tuple(_reminder(text, zone_name) for text in values.reminder))
+        if len(values.reminder) > max(MOST_REMINDERS, len(result.reminders)):  # an event from elsewhere keeps what it has
+            raise UsageError(f"An event has at most {MOST_REMINDERS} reminders")
+        result = replace(result, reminders=tuple(_reminder(text, zone_name, event.reminders) for text in values.reminder))
     if values.attendee:
         result = replace(result, attendees=_attendees_kept(result.attendees, values.attendee))
     if values.organizer is not None:
@@ -558,6 +576,7 @@ def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
                 raise UsageError("This calendar is read-only")
             if parameters.colour is not None:
                 event = _with_colour(event, palette_for(engine.config().find(account), info), parameters.colour.strip())
+            event = _addressed(engine, account, event)
             you = organizing_account(engine, account) if _organizes(engine, event) else None
             series = EventSeries(_with_organizer(event, you))
             text = events_to_text(series)
@@ -642,7 +661,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 base = _occurrence_event(series, moment)
                 if parameters.rrule:
                     raise UsageError("One occurrence cannot have its own rule")
-                changed = _apply(_clear(base, parameters.clear), parameters, creating=False)
+                changed = _addressed(engine, found.account, _apply(_clear(base, parameters.clear), parameters, creating=False))
                 if parameters.colour is not None:
                     changed = _with_colour(changed, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 known = any(o.recurrence_id == moment for o in series.overrides)  # in its own place: the order says which one stands for
@@ -651,7 +670,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if not series.own_master and overrides[0].recurrence_id == moment:
                     series = replace(series, master=replace(changed, recurrence_id=None))  # the occurrence that stands for the event changed
             else:
-                master = _apply(_clear(series.master, parameters.clear), parameters, creating=False)
+                master = _addressed(engine, found.account, _apply(_clear(series.master, parameters.clear), parameters, creating=False))
                 if parameters.add_tag or parameters.remove_tag:
                     master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
                 if parameters.colour is not None:

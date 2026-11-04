@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.510"
+__version__ = "commands_accounts.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: Who sends the e-mail reminders in the summary and account.edit (D-313)
 # v4.4.510: the summary tells whether the server always mails the answers; invitation_answers may be none (D-310)
 # v4.4.505: who mails the answers to invitations (invitation_answers) in the summary and account.edit; the summary tells what the server
 #           announced (dav_auto_schedule), D-310
@@ -383,6 +384,7 @@ class AccountSummary:
     invitation_answers: str = ""  # who mails the answers to invitations: "server", "chrono"; "": as the server announces (D-310)
     dav_auto_schedule: bool = False  # the calendar server announced that it mails those answers itself
     dav_always_answers: bool = False  # the calendar server is one known to mail them whatever it is told
+    reminder_emails: str = "chrono"  # who sends the e-mail reminders: "chrono", "server", "none" (D-313)
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -419,6 +421,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.invitation_answers,
         item.dav_auto_schedule,
         item.dav_always_answers,
+        item.reminder_emails,
     )
 
 
@@ -504,6 +507,7 @@ class AccountEditParameters:
     outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
     invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, none, or empty (as the server announces)"))
+    reminder_emails: str | None = field(default=None, metadata=option("Who sends the e-mail reminders: chrono, server or none"))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
@@ -544,6 +548,9 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     in_send_receive = settings.in_send_receive if parameters.in_send_receive is None else parameters.in_send_receive
     account_name = settings.account_name if parameters.account_name is None else parameters.account_name.strip()
     junk_filter = settings.junk_filter if parameters.junk_filter is None else parameters.junk_filter
+    reminder_emails = settings.reminder_emails if parameters.reminder_emails is None else parameters.reminder_emails
+    if reminder_emails not in ("chrono", "server", "none"):
+        raise UsageError("Who sends reminder emails is chrono, server or none")
     answers = settings.invitation_answers if parameters.invitation_answers is None else parameters.invitation_answers
     if answers not in ("", "server", "chrono"):
         raise UsageError("Who mails the answers to invitations is server, chrono or empty")
@@ -561,6 +568,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             outgoing_same_login=same_login,
             junk_filter=junk_filter,
             invitation_answers=answers,
+            reminder_emails=reminder_emails,
         ))
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:

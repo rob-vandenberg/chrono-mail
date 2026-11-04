@@ -8,9 +8,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import SERVICE_NAME, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 4.2.459"
+__version__ = "paths.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: reminders_file (D-313)
 # v4.2.459: a profile's wallet name holds no "/" (its folder's name and a code of its place): KDE's wallet garbles an entry of a name with
 #           "/" when its label changes; former_credential_service: the name it had, its entries move from there (D-274)
 # v4.2.419: updates_file: the day of the last check for updates and the version the person skipped (D-293)
@@ -76,6 +77,11 @@ class AppDirectories:
     def junk_filter_file(self) -> Path:
         """What the junk filter learned, for every account together (D-238)."""
         return self.data_directory / "junk-filter.bin"
+
+    @property
+    def reminders_file(self) -> Path:
+        """Up to which moment the reminders were looked at, on this computer only (D-313)."""
+        return self.data_directory / "reminders.json"
 
     @property
     def updates_file(self) -> Path:

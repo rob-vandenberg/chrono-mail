@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.527"
+__version__ = "ical.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: An e-mail reminder has the address and the summary the standard asks (round 4)
 # v4.4.527: the size limit of a text is measured and says so
 # v4.4.514: calendars_in: a text of several calendars one after the other is read whole, each time zone once; zones_used: also of one item (D-310)
 # v4.2.385: kept_from: a text built afresh for an import keeps from the text it came in only the time zones it uses (VTIMEZONE), its own
@@ -53,6 +54,7 @@ class Reminder:
     action: str = "DISPLAY"
     relative_to_end: bool = False
     description: str = ""
+    to: str = ""  # an e-mail reminder: the address it is for (the standard asks one in the alarm)
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +270,12 @@ def _attendees(component: icalendar.Component) -> tuple[Attendee, ...]:
     return tuple(found[:MAXIMUM_ATTENDEES])
 
 
+def _alarm_address(alarm: icalendar.Component) -> str:
+    found = alarm.get("ATTENDEE")
+    first = found[0] if isinstance(found, list) and found else found
+    return str(first).removeprefix("mailto:").removeprefix("MAILTO:") if first else ""
+
+
 def _reminders(component: icalendar.Component) -> tuple[Reminder, ...]:
     """The alarms of an item. The text of an alarm that is the title of the item itself is not kept: it is what is written when there is none."""
     summary = _text(component, "SUMMARY")
@@ -284,9 +292,9 @@ def _reminders(component: icalendar.Component) -> tuple[Reminder, ...]:
                 description = ""
             if isinstance(value, timedelta):
                 related_end = str(getattr(trigger, "params", {}).get("RELATED", "")).upper() == "END"
-                found.append(Reminder(-int(value.total_seconds() // 60), None, action, related_end, description))
+                found.append(Reminder(-int(value.total_seconds() // 60), None, action, related_end, description, _alarm_address(alarm)))
             elif isinstance(value, datetime):
-                found.append(Reminder(None, value, action, False, description))
+                found.append(Reminder(None, value, action, False, description, _alarm_address(alarm)))
         except Exception:  # noqa: BLE001 - a damaged alarm is left out, the item stays
             continue
     return tuple(found)
@@ -486,6 +494,10 @@ def _set_reminders(component: icalendar.Component, reminders: tuple[Reminder, ..
         alarm = icalendar.Alarm()
         alarm.add("ACTION", reminder.action)
         alarm.add("DESCRIPTION", reminder.description or summary or "Reminder")
+        if reminder.action == "EMAIL":
+            alarm.add("SUMMARY", summary or "Reminder")
+            if reminder.to:
+                alarm.add("ATTENDEE", f"mailto:{reminder.to}")
         if reminder.at is not None:
             alarm.add("TRIGGER", reminder.at.astimezone(UTC), parameters={"VALUE": "DATE-TIME"})
         else:

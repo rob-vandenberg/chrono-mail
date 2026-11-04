@@ -44,6 +44,7 @@ from chrono_mail.ui.messagecolumns import MessageColumns
 from chrono_mail.ui.messagelist import CONTACT_ROLE
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.pimpages import PimPage
+from chrono_mail.ui.reminders import ReminderWatch
 from chrono_mail.ui.prefs import InUse, Preferences, Remembered
 from chrono_mail.ui.readingpane import ReadingPane
 from chrono_mail.ui.recoverydialog import RecoveryDialog
@@ -67,9 +68,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.532"
+__version__ = "mainwindow.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: The reminders are watched while the window runs (D-313)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.518: The calendar page opens mails to attendees in the composer (D-310)
@@ -396,6 +398,7 @@ class MainWindow(QMainWindow):
         self._wire()
         self._restore_state()
         self.tray = TrayController(self)
+        self.reminders = ReminderWatch(backend, self.tray, self)
         self.tray.toggle_requested.connect(self.toggle_visibility)
         self.tray.check_requested.connect(lambda: self.checking.check_accounts(None, manual=True))
         self.tray.settings_requested.connect(self._settings_from_tray)

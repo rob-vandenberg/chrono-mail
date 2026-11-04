@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.4.510"
+__version__ = "files.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: reminder_emails read and saved with the account (D-313)
 # v4.4.510: invitation_answers may be none; dav_always_answers and dav_addresses read and saved with the account (D-310)
 # v4.4.505: invitation_answers and dav_auto_schedule read and saved with the account (D-310)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
@@ -133,6 +134,9 @@ def _account(data: object, position: int) -> AccountSettings:
         answers = data.get("invitation_answers", "")
         if answers not in ("", "server", "chrono", "none"):
             raise ConfigurationError(f"Setting '{where}.invitation_answers' is not server, chrono, none or empty")
+        reminder_emails = data.get("reminder_emails", "chrono")
+        if reminder_emails not in ("server", "chrono", "none"):
+            raise ConfigurationError(f"Setting '{where}.reminder_emails' is not chrono, server or none")
         auto_schedule = data.get("dav_auto_schedule", False)
         always_answers = data.get("dav_always_answers", False)
         dav_addresses = data.get("dav_addresses", [])
@@ -148,7 +152,7 @@ def _account(data: object, position: int) -> AccountSettings:
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
             calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
-            invitation_answers=answers, dav_auto_schedule=auto_schedule, dav_always_answers=always_answers, dav_addresses=tuple(dav_addresses),
+            invitation_answers=answers, dav_auto_schedule=auto_schedule, dav_always_answers=always_answers, dav_addresses=tuple(dav_addresses), reminder_emails=reminder_emails,
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -229,6 +233,7 @@ def config_to_text(config: AppConfig) -> str:
                     "dav_auto_schedule": settings.dav_auto_schedule,
                     "dav_always_answers": settings.dav_always_answers,
                     "dav_addresses": list(settings.dav_addresses),
+                    "reminder_emails": settings.reminder_emails,
                 }
                 for settings in config.accounts
             ],

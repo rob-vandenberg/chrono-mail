@@ -3926,3 +3926,8 @@ Open: nothing.
 Built: a double click opens a saved appointment read-only with Edit and Close (Edit in the toolbar and menu still goes straight to the editor; a repeating event asks at Edit); attendees one per line with the name when known, a dialog of their own; tags picked from a list with New tag…; a location of several lines; the repeat list follows the date, Custom gives the standard rule (pim/repeat.py); one date with start and end time, Several days shows a second date, the end follows the start; New starts All day.
 Tests: tests/ui/test_ui_appointment_window.py, tests/test_repeat.py; the old window tests follow the new fields. Review: Sonnet rounds.
 Open: items 7 and 8 (reminders).
+
+## 2026-11-04, 4.4.536: reminders, items 7 and 8 of round 4 (the owner, D-313)
+Built: up to 5 reminders per event, each Notification or Email, a number and a unit, stored as VALARM; reminders from elsewhere the fields cannot say stay whole (keep:). Chrono Mail had nothing that fired reminders: reminder.check (engine/commands_reminders.py) looks every half minute, notifications through the tray, e-mails through the normal send path to your own address; one that cannot go comes back as a notification. Edit account > Calendars and contacts: Send reminder emails via, per account on this computer.
+Tests: tests/test_engine_reminders.py, tests/ui/test_ui_appointment_window.py, tests/ui/test_ui_confirmation_mails.py. Review: one Sonnet round.
+Open: account.edit refuses invitation_answers "none" (found in passing, not part of this work).

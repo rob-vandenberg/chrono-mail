@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.514"
+__version__ = "model.py 4.4.536"
 
 # --- Version history ----------------------------------------------------
+# v4.4.536: reminder_emails: who sends the e-mail reminders (D-313)
 # v4.4.514: answers_by: the person may choose the server, also when it does not announce that it mails (D-310)
 # v4.4.510: answers_by: who mails the answers, none when the person wants no such mails; dav_always_answers, dav_addresses (D-310)
 # v4.4.505: invitation_answers: who mails the answers to invitations, the server or Chrono Mail (empty: what the server announces,
@@ -106,6 +107,12 @@ class AccountSettings:
     dav_auto_schedule: bool = False  # its calendar server announced at the last look that it sends those answers itself (calendar-auto-schedule)
     dav_always_answers: bool = False  # its calendar server is one known to send those answers whatever it is told (D-310)
     dav_addresses: tuple[str, ...] = ()  # the addresses its calendar server knows as this user, in lower case; (): it does not say (D-310)
+    reminder_emails: str = "chrono"  # who sends the e-mail reminders of its calendars: "chrono", "server", "none"; set per computer, so one of two can send (D-313)
+
+    @property
+    def sends_reminder_emails(self) -> bool:
+        """Whether this computer sends the e-mail reminders of this account's calendars; without a calendar server there is nobody else to do it (D-313)."""
+        return self.reminder_emails == "chrono" or self.reminder_emails == "server" and not self.dav_url
 
     @property
     def server_answers(self) -> bool:
@@ -133,6 +140,8 @@ class AccountSettings:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
         if self.invitation_answers not in ("", "server", "chrono", "none"):
             raise ConfigurationError("Who answers invitations is 'server', 'chrono', 'none' or empty (as the server announces)")
+        if self.reminder_emails not in ("server", "chrono", "none"):
+            raise ConfigurationError("Who sends reminder emails is 'chrono', 'server' or 'none'")
         if self.storage not in ("own", "local"):
             raise ConfigurationError("The storage of an account is 'own' (its own folders) or 'local' (Local Folders)")
         if self.storage == "local" and self.account.kind is not AccountKind.POP3:
