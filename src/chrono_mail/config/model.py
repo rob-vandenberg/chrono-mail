@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.510"
+__version__ = "model.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: answers_by: the person may choose the server, also when it does not announce that it mails (D-310)
 # v4.4.510: answers_by: who mails the answers, none when the person wants no such mails; dav_always_answers, dav_addresses (D-310)
 # v4.4.505: invitation_answers: who mails the answers to invitations, the server or Chrono Mail (empty: what the server announces,
 #           dav_auto_schedule), D-310
@@ -114,12 +115,13 @@ class AccountSettings:
     @property
     def answers_by(self) -> str:
         """Who mails the answers to invitations for this account's calendars: "server", "chrono", or "none": the person wants no such mails
-        (D-310). A server that always sends them leaves no choice, and only a server that announces it can do this."""
+        (D-310). A server that always sends them leaves no choice; a server that does not announce it sends them only when the person says so."""
         if self.dav_url and self.dav_always_answers:
             return "server"
         if self.invitation_answers == "none":
             return "none"
-        return "server" if self.dav_url and self.dav_auto_schedule and self.invitation_answers != "chrono" else "chrono"
+        chosen = self.invitation_answers == "server" or (self.dav_auto_schedule and self.invitation_answers != "chrono")
+        return "server" if self.dav_url and chosen else "chrono"
 
     def look(self, key: str) -> CollectionLook | None:
         return next((item for item in self.collection_looks if item.key == key), None)

@@ -3815,3 +3815,8 @@ Open: nothing of this group.
 Built: commands_calendar _rule_sets_the_times: BYSETPOS no longer counts as setting the times.
 Tests: tests/test_engine_calendar.py; they fail on 4.4.512; Pyrefly 0 (Linux, win32), layer check kept.
 Open: lists A and B are done; C1 to C5 are later work.
+
+## 2026-11-04, 4.4.514: reading back an export, time zones, windows stay open, public calendars (the owner, D-310, decisions 1, 2, 3, 5, 8, 10, 11, 13)
+Built: ical calendars_in, zones_used; itip text_items per calendar, _delegate_lines; invitation.add writes each item as written; invitations is_yours and your_calendars; readingpane no closing, every dialog on the main window; accountedit and answers_by greyed only when certain; syncconflicts getattr reasons.
+Tests: tests/test_engine_invitation_files.py, test_engine_invitation_added.py, test_engine_invitation_organizer.py, test_engine_invitation_answers.py, test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py, test_ui_invitation_views.py, test_ui_confirmation_mails.py; the new ones fail on 4.4.513; Pyrefly 0 (Linux, win32), layer check kept; review round 1 found work growing with the square of the items, fixed; 20,000 items read in 5 seconds.
+Open: decisions 4, 6, 7, changelist items 1 to 25.

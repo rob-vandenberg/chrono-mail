@@ -8,11 +8,10 @@ from typing import Literal
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind, StorageError
-from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS, ImportParameters, event_import
+from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, is_yours, your_addresses
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, is_yours, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -21,16 +20,17 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
+    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.512"
+__version__ = "commands_invitations.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: Add all puts each item in as it was written, so an export comes back identical; a public calendar counts as yours again, a private one first (D-310)
 # v4.4.512: an added date is answered like an invitation: Accept and Tentative add it with your answer, Decline adds nothing, Delegate passes it on; invitation.apply only asks for a series you do not have (D-310)
 # v4.4.512: only your own calendars count as holding a meeting; a calendar that holds it already is marked and refused (D-310)
 # v4.4.510: who mails: the account decides, Chrono Mail sends when the server cannot, the copy tells the server whether to mail, also before a delete (D-310)
@@ -226,17 +226,14 @@ class _Stored:
 def _stored(engine: Engine, kind: CollectionKind, uid: str) -> _Stored | None:
     if not uid:
         return None
-    for account in pim_account_ids(engine):
-        try:
-            with open_pim(engine, account) as store:
-                for info in store.collections(kind):
-                    if not is_yours(info):
-                        continue  # someone else's copy: never changed for your answer
-                    item = store.index.find_uid(info.collection_id, uid)
-                    if item is not None:
-                        return _Stored(account, info, item.item_id, store.get(info.collection_id, item.item_id))
-        except ChronoMailError:
-            continue
+    with your_calendars(engine, kind) as places:  # someone else's copy is never changed for your answer
+        for account, store, info in places:
+            try:
+                item = store.index.find_uid(info.collection_id, uid)
+                if item is not None:
+                    return _Stored(account, info, item.item_id, store.get(info.collection_id, item.item_id))
+            except ChronoMailError:
+                continue
     return None
 
 
@@ -270,7 +267,7 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
                     public, shared = info.server_value("public") == "1", info.server_value("shared") == "1"
                     holds = uid != "" and store.index.find_uid(info.collection_id, uid) is not None
                     calendars.append(CalendarChoice(info.collection_id, info.name, account, account_name(engine, account), info.read_only, public, shared, holds))
-                    if not chosen and account == receiving and is_yours(info) and not holds:
+                    if not chosen and account == receiving and is_yours(info) and not public and not holds:
                         chosen = info.collection_id
         except ChronoMailError:
             continue
@@ -465,16 +462,29 @@ def invitation_add(engine: Engine, parameters: AddParameters) -> AddResult:
     if parameters.existing == "ask" and known:
         return AddResult(len(known), 0, 0, 0)
     skipped = known if parameters.existing == "skip" else set()
-    events = items_text(opened.text, set(places["event"]) - skipped)
-    tasks = items_text(opened.text, set(places["task"]) - skipped)
     added = replaced = 0
-    if events:
-        done = event_import(engine, ImportParameters(parameters.calendar, events))
-        added, replaced = done.imported, done.updated
-    if tasks:
-        finished = task_import(engine, TaskImportParameters(parameters.task_list, tasks))
-        added, replaced = added + finished.imported, replaced + finished.updated
+    for kind, collection_kind in (("event", CollectionKind.EVENTS), ("task", CollectionKind.TASKS)):
+        wanted = [(items.uids[position], items.texts[position]) for position in places[kind] if position not in skipped]
+        if wanted:
+            new, again = _put_items(engine, collection_kind, chosen[kind], wanted)
+            added, replaced = added + new, replaced + again
     return AddResult(0, added, replaced, len(skipped))
+
+
+def _put_items(engine: Engine, kind: CollectionKind, collection: str, items: list[tuple[str, str]]) -> tuple[int, int]:
+    """Items (their uid and text) into a calendar or task list, each as it was written (what a file holds comes back identical), server first:
+    how many were added and how many replaced one with that uid."""
+    account, info = _collection(engine, kind, collection)
+    added = replaced = 0
+    try:
+        with open_pim(engine, account) as store, item_writer(engine, account, store) as writer:
+            for uid, text in items:
+                known = store.index.find_uid(info.collection_id, uid)
+                writer.put(info, published_copy(text) or text, known.item_id if known else None)
+                added, replaced = added + (known is None), replaced + (known is not None)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+    return added, replaced
 
 
 def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None = None) -> str:

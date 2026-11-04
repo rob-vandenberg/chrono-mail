@@ -10,9 +10,10 @@ from tests.test_engine_invitation_answers import answer, drafts, kept, local_cal
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, show, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_added.py 4.4.512"
+__version__ = "test_engine_invitation_added.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: a public calendar counts as yours, a shared one does not (D-310)
 # v4.4.512: Initial tests: a date added to a series is answered like an invitation; only your own calendars hold a meeting (D-310)
 
 NEW_DATE = "20261231T100000Z"
@@ -114,9 +115,8 @@ def someone_elses(setup: Setup, value: str) -> tuple[str, str]:
     return theirs.collection_id, yours
 
 
-@pytest.mark.parametrize("value", ["shared", "public"])
-def test_a_calendar_of_someone_else_never_counts_as_holding_your_meeting(setup: Setup, value: str) -> None:
-    theirs, yours = someone_elses(setup, value)
+def test_a_calendar_shared_by_someone_else_never_counts_as_holding_your_meeting(setup: Setup) -> None:
+    theirs, yours = someone_elses(setup, "shared")
     message = deliver(setup, invitation_mail(calendar_text()))
     card = show(setup, message).invitation
     assert card is not None and card.stored_in == ""
@@ -125,6 +125,23 @@ def test_a_calendar_of_someone_else_never_counts_as_holding_your_meeting(setup: 
     with pytest.raises(UsageError, match="in that calendar already"):
         answer(setup, message, "ACCEPTED", theirs)
     assert answer(setup, message, "ACCEPTED", yours).stored_in.startswith("Calendar (")
+
+
+def test_a_meeting_in_a_public_calendar_is_yours_and_the_invite_shows_it(setup: Setup) -> None:
+    public, _ = someone_elses(setup, "public")
+    message = deliver(setup, invitation_mail(calendar_text()))
+    card = show(setup, message).invitation
+    assert card is not None and card.stored_in.startswith("Team (") and card.your_answer == "ACCEPTED"
+    choices = call(setup.engine, "invitation.choices", account=setup.account_id, folder="Inbox", message=message)
+    assert choices.stored == public
+
+
+def test_your_private_calendar_comes_before_a_public_one(setup: Setup) -> None:
+    _, yours = someone_elses(setup, "public")
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        store.put(yours, calendar_text(method="", answer="TENTATIVE"))
+    card = show(setup, deliver(setup, invitation_mail(calendar_text()))).invitation
+    assert card is not None and card.stored_in.startswith("Calendar (") and card.your_answer == "TENTATIVE"
 
 
 def test_a_shared_calendar_is_never_the_one_the_window_starts_on(setup: Setup) -> None:

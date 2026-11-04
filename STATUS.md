@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.513 (A series that picks its day by position takes its skipped dates to another hour; before it 4.4.512: Only your own calendars count as holding a meeting; a date added to a series is answered with the four buttons, or asks for the original invite; before it 4.4.511: Every open window of a mail follows an answer; Choose a calendar opens on the main window when the card window is gone; before it 4.4.510: Send confirmation emails via Chrono Mail or the server, per account; Chrono Mail sends when the server cannot; a delegate's answer says who they replace; before it 4.4.509: Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
+*Last updated: 2026-11-04, version 4.4.514 (An export is read back complete and identical; every item keeps its time zones; a window closes only when you close it; a public calendar counts as yours)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.514 done (D-310, the changelist after the review).** To check by the owner: open a file made by event.export: every item shows, Add all brings them back unchanged; after Accept, Add or Add all the window stays open; a meeting in a public calendar shows as kept, one in a calendar shared by someone else does not; from a message window Delegate opens on top; Edit account > Calendars and contacts: everything free unless certain. The backup does not use event.export: it copies the stores. Still to do: decisions 4, 6, 7 and items 1 to 25 of the changelist (private hand-over).
 
 **4.4.513 done (D-310, A4): lists A and B are complete.** To check by the owner: a monthly series on the second Tuesday with one date deleted, moved to another hour: the deleted date stays away. Still to do: C1 to C5, only after the owner says so.
 

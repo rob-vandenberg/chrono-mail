@@ -13,9 +13,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.512"
+__version__ = "test_engine_invitation_answers.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: the server can be chosen without its word (D-310)
 # v4.4.512: a date added to a series is answered (D-310)
 # v4.4.510: a server that announces nothing never counts as mailing (D-310)
 # v4.4.505: Initial tests: Accept, Tentative and Decline keep the item with your answer, server first, and make the answer to send as a
@@ -111,9 +112,10 @@ def test_who_mails_the_answer_follows_the_account() -> None:
     assert replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True).server_answers
     assert not replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True, invitation_answers="chrono").server_answers
     assert replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True, invitation_answers="server").server_answers
-    assert not replace(base, dav_url="https://dav.example.com/", invitation_answers="server").server_answers  # it never said it can
     assert replace(base, dav_url="https://dav.example.com/", dav_always_answers=True, invitation_answers="none").answers_by == "server"
     assert replace(base, invitation_answers="none").answers_by == "none"
+    assert replace(base, dav_url="https://dav.example.com/", invitation_answers="server").answers_by == "server"  # the person's choice, also without the server's word
+    assert replace(base, invitation_answers="server").answers_by == "chrono"  # no server: nobody else can send it
 
 
 def test_a_newer_version_updates_the_copy_and_keeps_your_answer(setup: Setup) -> None:

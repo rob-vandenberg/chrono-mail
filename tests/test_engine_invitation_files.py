@@ -8,16 +8,17 @@ from chrono_mail.engine.commands_invitations import SourceParameters, invitation
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.pim.ical import MAXIMUM_TEXT_CHARACTERS
-from chrono_mail.pim.itip import items_text, read_calendar_message, text_items
+from chrono_mail.pim.itip import read_calendar_message, text_items
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_list, task_text
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.508"
+__version__ = "test_engine_invitation_files.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: an export read back identical, every time zone kept, several calendars in one text (D-310)
 # v4.4.508: a text with several items: each its own card and answer, of every kind; invitation.add with Replace and Skip (D-310)
 # v4.4.507: Initial tests: an .ics attachment or file as a card, every command on it, several items added each on its own (D-310 step 4)
 
@@ -209,7 +210,70 @@ def test_an_item_keeps_the_time_zone_it_uses_and_no_other() -> None:
     text = two_events().replace("BEGIN:VEVENT", zones + "BEGIN:VEVENT", 1).replace("DTSTART:20261101T100000Z", "DTSTART;TZID=Here/One:20261101T100000")
     first = text_items(text).texts[0]
     assert "TZID:Here/One" in first and "TZID:Here/Two" not in first and "Item 2" not in first
-    assert read_calendar_message(first) is not None and "Item 2" in items_text(text, {1}) and "Item 1" not in items_text(text, {1})
+    assert read_calendar_message(first) is not None and "Item 2" in text_items(text).texts[1] and "Item 1" not in text_items(text).texts[1]
+
+
+ZONE: str = "BEGIN:VTIMEZONE\r\nTZID:{name}\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:{offset}\r\nTZOFFSETTO:{offset}\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n"
+
+
+def kept_event(uid: str, zone: str, offset: str, more: str = "") -> str:
+    """A calendar object as a calendar holds it: everything a plain import would drop or rewrite is in it."""
+    return ("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Example//EN\r\n" + ZONE.format(name=zone, offset=offset) +
+            f"BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261028T090000Z\r\nCREATED:20260101T090000Z\r\nSUMMARY:Item {uid}\r\nDTSTART;TZID={zone}:20261101T100000\r\n"
+            f"DTEND;TZID={zone}:20261101T110000\r\nRRULE:FREQ=WEEKLY;COUNT=5\r\nEXDATE;TZID={zone}:20261108T100000\r\nCLASS:PRIVATE\r\nTRANSP:TRANSPARENT\r\nPRIORITY:3\r\n"
+            "URL:https://example.com/agenda\r\nGEO:52.1;5.1\r\nCONTACT:Sam\r\nCATEGORIES:Work,Home\r\nX-OWN-MARK:kept\r\nORGANIZER;CN=Olivia:mailto:olivia@example.org\r\n"
+            "ATTENDEE;CN=Me;PARTSTAT=ACCEPTED;ROLE=OPT-PARTICIPANT:mailto:me@example.com\r\n"
+            f"BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Soon\r\nTRIGGER;VALUE=DATE-TIME:20261101T090000Z\r\nEND:VALARM\r\nEND:VEVENT\r\n{more}END:VCALENDAR\r\n")
+
+
+def changed_date(uid: str, zone: str) -> str:
+    return (f"BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261028T090000Z\r\nRECURRENCE-ID;TZID={zone}:20261115T100000\r\nSUMMARY:Moved\r\n"
+            f"DTSTART;TZID={zone}:20261115T120000\r\nDTEND;TZID={zone}:20261115T130000\r\nEND:VEVENT\r\n")
+
+
+def test_an_export_read_back_gives_every_item_identical(setup: Setup, tmp_path: Path) -> None:
+    """Decision 1: Chrono Mail reads back what it exported, complete and unchanged; here with one zone name for two zones, as one program writes for any zone."""
+    calendar = calendar_id(setup)
+    objects = [kept_event("one@example.com", "Custom", "+0100", changed_date("one@example.com", "Custom")), kept_event("two@example.com", "Custom", "+0500"),
+               kept_event("three@example.com", "Here/Other", "-0300")]
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        for each in objects:
+            store.put(calendar, each)
+        second = store.create_collection(CollectionKind.EVENTS, "Second").collection_id
+    exported = call(setup.engine, "event.export", calendar=calendar)
+    path = file_with(tmp_path, exported.text)
+    assert on_file(setup, "invitation.card", path).items == 3
+    assert on_file(setup, "invitation.add", path, calendar=second, existing="replace").added == 3
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        came_back = [store.get(second, item) for item in store.item_ids(second)]
+    def lines(text: str) -> list[str]:
+        return sorted(text.replace("\r\n ", "").split("\r\n"))
+    assert sorted(map(lines, came_back)) == sorted(map(lines, objects))
+
+
+def test_an_exported_task_list_comes_back_too(setup: Setup, tmp_path: Path) -> None:
+    objects = [task_text(method="").replace("BEGIN:VTODO", "BEGIN:VTODO\r\nX-OWN-MARK:kept").replace("UID:", f"UID:{number}-") for number in range(2)]
+    path = file_with(tmp_path, "".join(objects))
+    assert on_file(setup, "invitation.card", path).tasks == 2
+    place = task_list(setup)
+    assert on_file(setup, "invitation.add", path, task_list=place).added == 2
+    assert all("X-OWN-MARK:kept" in each for each in kept_tasks(setup))
+
+
+def test_every_date_keeps_its_time_zone_also_one_used_only_in_a_reminder_or_a_skipped_date() -> None:
+    """Decision 3: an item takes along every time zone used anywhere inside it."""
+    zones = "".join(ZONE.format(name=name, offset="+0100") for name in ("Here/Alarm", "Here/Skipped", "Here/Unused"))
+    alarm = "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Soon\r\nTRIGGER;VALUE=DATE-TIME;TZID=Here/Alarm:20261101T090000\r\nEND:VALARM\r\n"
+    text = two_events().replace("BEGIN:VEVENT", zones + "BEGIN:VEVENT", 1).replace("END:VEVENT", f"RRULE:FREQ=DAILY;COUNT=3\r\nEXDATE;TZID=Here/Skipped:20261102T100000\r\n{alarm}END:VEVENT", 1)
+    first = text_items(text).texts[0]
+    assert "TZID:Here/Alarm" in first and "TZID:Here/Skipped" in first and "TZID:Here/Unused" not in first
+
+
+def test_a_file_of_several_calendars_reads_as_every_item_also_for_one_item_after_a_calendar_with_none() -> None:
+    empty = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Example//EN\r\nEND:VCALENDAR\r\n"
+    assert len(text_items(two_events() + two_events().replace("item-", "more-")).texts) == 4
+    message = read_calendar_message(empty + two_events())
+    assert message is not None and message.uid == "item-1@example.com"
 
 
 def test_a_file_of_tasks_goes_to_a_task_list(setup: Setup, tmp_path: Path) -> None:

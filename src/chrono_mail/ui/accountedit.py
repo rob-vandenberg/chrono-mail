@@ -44,9 +44,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.510"
+__version__ = "accountedit.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: Send confirmation emails via: greyed only when certain beyond doubt; a server that does not announce it can be chosen (D-310)
 # v4.4.510: Send confirmation emails via Chrono Mail or Server replaces the two radio buttons (D-310)
 # v4.4.505: Calendars and contacts: "Answers to invitations are sent by: the server / Chrono Mail", starting on what the server announces;
 #           an (i) when Chrono Mail is chosen for a server that sends them itself (D-310)
@@ -290,17 +291,17 @@ class AccountEditDialog(QDialog):
     # --- commands -------------------------------------------------------------------------------------------
 
     def _answers_way(self) -> str:
-        """Who sends the mails with the box ticked, as the account stands: a server that does not announce it cannot be chosen (D-310)."""
+        """Who sends the mails with the box ticked, as the account stands (D-310)."""
         account = self._account
         if not self.dav_url.text().strip():
             return "chrono"
-        if account.dav_always_answers:
+        if account.dav_always_answers or account.invitation_answers == "server":
             return "server"
         return "server" if account.dav_auto_schedule and account.invitation_answers != "chrono" else "chrono"
 
     def _answers_warning(self) -> None:
-        """What can be chosen here: a server that always sends these mails leaves no choice, and the dropdown offers the server only when it
-        announces that it sends them; each greyed part says why in its (i) (D-310)."""
+        """What can be chosen here: greyed only when certain beyond doubt (D-310). A server that always sends these mails leaves no choice; without
+        a calendar server only Chrono Mail can send them, and the box stays free; anything else is free. Each greyed part says why in its (i)."""
         account = self._account
         has_server = bool(self.dav_url.text().strip())  # as typed in this window: a server linked just now counts
         always = has_server and account.dav_always_answers
@@ -309,8 +310,6 @@ class AccountEditDialog(QDialog):
             self.answers_send.setChecked(True)
         elif not has_server:
             reason = "This account has no calendar server: Chrono Mail sends these mails."
-        elif not account.dav_auto_schedule:
-            reason = "This server did not say that it sends these mails itself: Chrono Mail sends them."
         else:
             reason = ""
         self.answers_send.setEnabled(not always)

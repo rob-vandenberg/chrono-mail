@@ -52,9 +52,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.3.499"
+__version__ = "syncconflicts.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: the reason of each getattr on its line (the owner's decision after 4.4.513)
 # v4.3.499: The list: What, Name, Fields, Where, together always the free width, never a horizontal scrollbar; a border dragged as a
 #           splitter, a new window width in proportion, their shares kept with the window's size; What fits its widest text until dragged;
 #           the tick boxes in the middle of their column (the owner)
@@ -161,15 +162,15 @@ class CheckDelegate(QStyledItemDelegate):
         widget = getattr(cell, "widget")  # getattr: PySide's stubs give these fields no type
         owner = widget if isinstance(widget, QWidget) else None
         style = owner.style() if owner is not None else QApplication.style()
-        features = getattr(cell, "features")
+        features = getattr(cell, "features")  # getattr: PySide's stubs give the fields of a style option no type
         setattr(cell, "features", features & ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator)
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, cell, painter, owner)  # background, selection: no box at the left
-        rect = getattr(option, "rect")
+        rect = getattr(option, "rect")  # getattr: PySide's stubs give the fields of a style option no type
         if not isinstance(rect, QRect):
             return
         tick = QStyleOptionViewItem(cell)
         setattr(tick, "rect", self.box(rect, owner))
-        state = getattr(cell, "state") & ~(QStyle.StateFlag.State_On | QStyle.StateFlag.State_Off | QStyle.StateFlag.State_NoChange)
+        state = getattr(cell, "state") & ~(QStyle.StateFlag.State_On | QStyle.StateFlag.State_Off | QStyle.StateFlag.State_NoChange)  # getattr: PySide's stubs give the fields of a style option no type
         checked = index.data(Qt.ItemDataRole.CheckStateRole) in (Qt.CheckState.Checked, Qt.CheckState.Checked.value)
         setattr(tick, "state", state | (QStyle.StateFlag.State_On if checked else QStyle.StateFlag.State_Off))
         style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck, tick, painter, owner)
@@ -178,7 +179,7 @@ class CheckDelegate(QStyledItemDelegate):
     def editorEvent(self, event: QEvent, model: QAbstractItemModel, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> bool:
         if not isinstance(event, QMouseEvent):
             return super().editorEvent(event, model, option, index)  # Space ticks as before
-        rect, widget = getattr(option, "rect"), getattr(option, "widget")
+        rect, widget = getattr(option, "rect"), getattr(option, "widget")  # getattr: PySide's stubs give the fields of a style option no type
         if not isinstance(rect, QRect) or not self.box(rect, widget if isinstance(widget, QWidget) else None).contains(event.position().toPoint()):
             return False  # beside the box: a click selects the row, nothing more
         if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:

@@ -147,11 +147,13 @@ def test_a_decline_before_the_meeting_reached_the_server_is_mailed_by_chrono_mai
     assert on_server(server) == []
 
 
-def test_a_server_that_announces_nothing_never_counts_as_mailing(setup: Setup, server: FakeDav) -> None:  # noqa: F811
-    """The organizer never gets none unless the person chose that, also from a choice kept from earlier."""
-    settings(setup, invitation_answers="server", dav_auto_schedule=False)
+def test_a_server_that_announces_nothing_mails_only_when_the_person_chose_it(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    """Not certain what it does: the person's choice counts; left alone, Chrono Mail sends, and the server is told nothing either way."""
+    settings(setup, invitation_answers="", dav_auto_schedule=False)
     assert answer(setup, invited(setup), "ACCEPTED", calendar_id(setup)).draft_message is not None
-    assert "SCHEDULE-AGENT" not in on_server(server)[0]
+    settings(setup, invitation_answers="server", dav_auto_schedule=False)
+    assert answer(setup, invited(setup), "ACCEPTED", calendar_id(setup)).draft_message is None
+    assert all("SCHEDULE-AGENT" not in each for each in on_server(server))
 
 
 def test_a_delegation_with_the_box_off_passes_it_on_and_tells_the_organizer_nothing(setup: Setup, server: FakeDav) -> None:  # noqa: F811

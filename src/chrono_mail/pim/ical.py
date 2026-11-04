@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.2.385"
+__version__ = "ical.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: calendars_in: a text of several calendars one after the other is read whole, each time zone once; zones_used: also of one item (D-310)
 # v4.2.385: kept_from: a text built afresh for an import keeps from the text it came in only the time zones it uses (VTIMEZONE), its own
 #           X- properties (CREATED it carries already); never anything a server would refuse; given_parts reads the imported text once for all
 #           its items; a changed occurrence is matched by the moment of its RECURRENCE-ID, in any written form
@@ -150,15 +151,33 @@ def new_uid() -> str:
 # --- reading properties ---------------------------------------------------------------------------------------------------------------
 
 
-def _parse(text: str | bytes) -> icalendar.Calendar | None:
-    """The calendar in a text, or None for anything that is not one. The library can raise many kinds of error on damaged text; none gets out."""
+def calendars_in(text: str | bytes) -> list[icalendar.Calendar]:
+    """Every calendar in a text, in the order written: a file may hold several, one after the other, as event.export writes it. None at all for
+    anything that is not one. The library can raise many kinds of error on damaged text; none gets out."""
     try:
         if len(text) > MAXIMUM_TEXT_CHARACTERS:
-            return None
-        parsed = icalendar.Calendar.from_ical(text.decode("utf-8", "replace") if isinstance(text, bytes) else text)
+            return []
+        parsed = icalendar.Calendar.from_ical(text.decode("utf-8", "replace") if isinstance(text, bytes) else text, multiple=True)
     except Exception:  # noqa: BLE001 - damaged input must never stop the program, whatever the library raises
+        return []
+    return [each for each in parsed if isinstance(each, icalendar.Calendar)]
+
+
+def _parse(text: str | bytes) -> icalendar.Calendar | None:
+    """The calendar in a text, or None for anything that is not one. Several in one text read as one: the properties of the first, everything
+    they hold, and each time zone once."""
+    found = calendars_in(text)
+    if not found:
         return None
-    return parsed if isinstance(parsed, icalendar.Calendar) else None
+    first = found[0]
+    zones = {_text(each, "TZID") for each in first.subcomponents if each.name == "VTIMEZONE"}
+    for later in found[1:]:
+        for part in later.subcomponents:
+            if part.name != "VTIMEZONE" or _text(part, "TZID") not in zones:
+                first.subcomponents.append(part)
+            if part.name == "VTIMEZONE":
+                zones.add(_text(part, "TZID"))
+    return first
 
 
 def _text(component: icalendar.Component, name: str) -> str:
@@ -571,7 +590,8 @@ def _key_of(component: icalendar.Component) -> str:
     return moment.isoformat() if moment is not None else "unreadable"
 
 
-def _zones_used(calendar: icalendar.Calendar) -> set[str]:
+def zones_used(calendar: icalendar.Component) -> set[str]:
+    """Every time zone used anywhere inside a calendar or an item, its reminders included."""
     used: set[str] = set()
     for component in calendar.walk():
         for value in component.values():
@@ -632,7 +652,7 @@ def kept_from(fresh: str, given: GivenParts, uid: str, kind: str) -> str:
             for name, value in found.items():
                 if name.upper().startswith("X-") and name not in component:
                     component[name] = value
-        used = _zones_used(built)
+        used = zones_used(built)
         zones = [zone for name, zone in given.zones.items() if name in used]
         if zones:
             names = {str(part.get("TZID", "")) for part in zones}

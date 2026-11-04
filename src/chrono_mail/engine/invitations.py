@@ -1,5 +1,7 @@
 """What a calendar message in a mail asks or tells, for the card shown above its text (iTIP, RFC 5546; D-310)."""
 import sqlite3
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from html.parser import HTMLParser
 from dataclasses import dataclass, replace
 from datetime import date, datetime
@@ -10,12 +12,14 @@ from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
 from chrono_mail.pim.ical import Attendee
+from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.512"
+__version__ = "invitations.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: a public calendar counts as holding your meeting again, a private one first; only one shared by someone else does not; your_calendars opens each store once per card (D-310)
 # v4.4.512: only your own calendars count as holding a meeting: is_yours, a public or shared one no longer does; an ADD shows your answer to its dates (D-310)
 # v4.4.509: calendar_text: a calendar part is read with the character set the mail states (D-310)
 # v4.4.508: a text with several items has a card per item (parts), of every kind, and says what it holds: events, tasks, journal entries and
@@ -160,9 +164,24 @@ class _Kept:
 
 
 def is_yours(info: CollectionInfo) -> bool:
-    """Whether a calendar counts as holding your meeting: only your own does (D-310). A read-only, a public or a shared one is someone else's,
-    even when you may write in it."""
-    return not info.read_only and info.server_value("public") != "1" and info.server_value("shared") != "1"
+    """Whether a calendar counts as holding your meeting: a private and a public one do, as if you own them. A read-only one holds someone else's
+    copy, and one shared with you is theirs, even when you may write in it (D-310)."""
+    return not info.read_only and info.server_value("shared") != "1"
+
+
+@contextmanager
+def your_calendars(engine: Engine, kind: CollectionKind) -> Iterator[list[tuple[str, PimStore, CollectionInfo]]]:
+    """Every calendar that counts as yours, each store opened once, your private ones first: a public one only when none of those holds the item.
+    An account whose calendars cannot be opened (removed meanwhile, no key, a file gone meanwhile) is skipped."""
+    with ExitStack() as opened:
+        found: list[tuple[str, PimStore, CollectionInfo]] = []
+        for account_id in pim_account_ids(engine):
+            try:
+                store = opened.enter_context(open_pim(engine, account_id))
+                found.extend((account_id, store, info) for info in store.collections(kind) if is_yours(info))
+            except (ChronoMailError, OSError, sqlite3.Error):
+                continue
+        yield sorted(found, key=lambda place: place[2].server_value("public") == "1")
 
 
 def _added_answer(text: str, message_text: str, addresses: frozenset[str]) -> str:
@@ -171,44 +190,36 @@ def _added_answer(text: str, message_text: str, addresses: frozenset[str]) -> st
     return next((person.status for date in dates if date is not None for person in date.attendees if person.address.strip().lower() in addresses), "")
 
 
-def _stored(engine: Engine, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> _Kept:
+def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> _Kept:
     """Where the item of the message is kept here, the message against that copy, and your answer in it. A store that cannot be read is skipped."""
-    kind = CollectionKind.EVENTS if message.kind == "event" else CollectionKind.TASKS
-    for account_id in pim_account_ids(engine):
-        try:
-            with open_pim(engine, account_id) as store:
-                for info in store.collections(kind):
-                    if not is_yours(info):
-                        continue
-                    try:  # a damaged or unreadable item is skipped: the mail is always shown
-                        item = store.index.find_uid(info.collection_id, message.uid)
-                        text = store.get(info.collection_id, item.item_id) if item is not None else ""
-                    except (ChronoMailError, sqlite3.Error):  # also an index busy with a synchronisation
-                        continue
-                    first = read_calendar_message(text) if text else None  # the main item, or else the first changed occurrence it holds
-                    if first is None:
-                        continue
-                    main = read_calendar_message(text, None)  # None: the copy holds only changed occurrences (an invitation to one)
-                    kept = read_calendar_message(text, message.occurrence) if message.occurrence is not None else main
-                    base = kept or main or first  # an occurrence not changed in the copy has the version of its series (RFC 5546)
-                    # The copy's DTSTAMP is this computer's, rewritten at every change here. A REFRESH has no SEQUENCE: it is never out of date.
-                    newer = is_newer(message, base.sequence, None) if message.method != "REFRESH" else None
-                    version: Version = "same" if newer is None else ("newer" if newer else "older")
-                    answer = next((person.status for person in base.attendees if person.address.strip().lower() in addresses), "")
-                    if message.method == "ADD" and main is None:
-                        continue  # no series kept (single occurrences only): there is nothing to add dates to, ask for the series
-                    if message.method == "ADD":
-                        kept_here = not added_already(text, message_text)  # dates still to add
-                        answer = _added_answer(text, message_text, addresses)
-                    else:
-                        moments = occurrences_of(message_text)  # every occurrence the message is about (one or several)
-                        held = in_meeting if message.method in ("REPLY", "COUNTER") else holds_occurrence  # to you as organizer: only a date it really has
-                        kept_here = message.occurrence is None or any(held(text, moment) for moment in moments)
-                    yours = (main or first).organizer is not None and (main or first).organizer.address.strip().lower() in addresses  # type: ignore[union-attr]
-                    usable = message.method != "COUNTER" or proposal_usable(text, message_text)
-                    return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable)
-        except (ChronoMailError, OSError, sqlite3.Error):  # an account whose calendars cannot be opened (removed meanwhile, no key, a file gone meanwhile)
+    for account_id, store, info in places:
+        try:  # a damaged or unreadable item is skipped: the mail is always shown
+            item = store.index.find_uid(info.collection_id, message.uid)
+            text = store.get(info.collection_id, item.item_id) if item is not None else ""
+        except (ChronoMailError, OSError, sqlite3.Error):  # also an index busy with a synchronisation
             continue
+        first = read_calendar_message(text) if text else None  # the main item, or else the first changed occurrence it holds
+        if first is None:
+            continue
+        main = read_calendar_message(text, None)  # None: the copy holds only changed occurrences (an invitation to one)
+        kept = read_calendar_message(text, message.occurrence) if message.occurrence is not None else main
+        base = kept or main or first  # an occurrence not changed in the copy has the version of its series (RFC 5546)
+        # The copy's DTSTAMP is this computer's, rewritten at every change here. A REFRESH has no SEQUENCE: it is never out of date.
+        newer = is_newer(message, base.sequence, None) if message.method != "REFRESH" else None
+        version: Version = "same" if newer is None else ("newer" if newer else "older")
+        answer = next((person.status for person in base.attendees if person.address.strip().lower() in addresses), "")
+        if message.method == "ADD" and main is None:
+            continue  # no series kept (single occurrences only): there is nothing to add dates to, ask for the series
+        if message.method == "ADD":
+            kept_here = not added_already(text, message_text)  # dates still to add
+            answer = _added_answer(text, message_text, addresses)
+        else:
+            moments = occurrences_of(message_text)  # every occurrence the message is about (one or several)
+            held = in_meeting if message.method in ("REPLY", "COUNTER") else holds_occurrence  # to you as organizer: only a date it really has
+            kept_here = message.occurrence is None or any(held(text, moment) for moment in moments)
+        yours = (main or first).organizer is not None and (main or first).organizer.address.strip().lower() in addresses  # type: ignore[union-attr]
+        usable = message.method != "COUNTER" or proposal_usable(text, message_text)
+        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable)
     return _Kept()
 
 
@@ -226,21 +237,23 @@ def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
     addresses = your_addresses(engine)
     found = text_items(text)
     cards: list[InvitationInfo] = []
-    for place, item in enumerate(found.texts[:MOST_BLOCKS]):
-        message = read_calendar_message(item)
-        if message is not None:
-            cards.append(replace(_card_of_item(engine, position, message, item, addresses), item=place if len(found.texts) > 1 else -1))
+    with your_calendars(engine, CollectionKind.EVENTS) as calendars, your_calendars(engine, CollectionKind.TASKS) as task_lists:
+        for place, item in enumerate(found.texts[:MOST_BLOCKS]):
+            message = read_calendar_message(item)
+            if message is not None:
+                card = _card_of_item(engine, task_lists if message.kind == "task" else calendars, position, message, item, addresses)
+                cards.append(replace(card, item=place if len(found.texts) > 1 else -1))
     if not cards:
         return None
     return replace(cards[0], item=-1, parts=tuple(cards) if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
                    tasks=found.kinds.count("task"), journals=found.journals, damaged=found.damaged)
 
 
-def _card_of_item(engine: Engine, position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> InvitationInfo:
+def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> InvitationInfo:
     """The card of one item. A text that asks nothing (no METHOD) is offered as a shared item."""
     plain = not message.method
     message = replace(message, method="PUBLISH") if plain else message
-    kept = _stored(engine, message, message_text, addresses) if message.uid and message.kind != "freebusy" else _Kept()
+    kept = _stored(engine, places, message, message_text, addresses) if message.uid and message.kind != "freebusy" else _Kept()
     event, task = message.event, message.task
     start = event.start if event is not None else (task.due if task is not None else message.period_start)
     end = event.end if event is not None else message.period_end

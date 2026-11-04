@@ -15,7 +15,7 @@ from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.pim.itip import BusyPeriod
 from chrono_mail.ui import app
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog
-from chrono_mail.ui.invitationcard import all_kept, apply_text, busy_text, intro_text, organize_choices, organize_reason, status_text
+from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, organize_reason, status_text
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
@@ -26,9 +26,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.512"
+__version__ = "test_ui_invitation_window.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: a window stays open until the person closes it (D-310)
 # v4.4.512: a date added to a series is answered, it has no button of its own (D-310)
 # v4.4.508: one block per item, Add all, Replace and Skip, and the window closing when everything is added (D-310)
 # v4.4.507: Initial tests: a task on the card, busy times with their window, an .ics attachment or file as a card in a window of its own, a
@@ -149,10 +150,12 @@ def test_a_file_opens_as_a_card_in_a_window_of_its_own_and_can_be_added(world: W
 
     monkeypatch.setattr(InvitationCalendarDialog, "exec", chosen)
     window.card.add_button.click()
-    qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)  # everything in the window is added: it closes
+    qtbot.waitUntil(lambda: window.invitation is not None and bool(window.invitation.stored_in), timeout=5000)
+    assert window.isVisible()  # it is always the person who closes the window
     with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
         (calendar,) = store.collections(CollectionKind.EVENTS)
         assert len(store.index.item_ids(calendar.collection_id)) == 1
+    window.close()
 
 
 TWO_ITEMS = CALENDAR_FILE.replace("END:VCALENDAR", "BEGIN:VTODO\r\nUID:file-2@example.com\r\nDTSTAMP:20261028T090000Z\r\nSUMMARY:Bring cake\r\nEND:VTODO\r\nBEGIN:VJOURNAL\r\nUID:file-3@example.com\r\nEND:VJOURNAL\r\nEND:VCALENDAR")
@@ -189,23 +192,25 @@ def test_several_items_show_a_block_each_with_add_all_at_the_top(world: World, q
     window.close()
 
 
-def test_a_block_adds_only_its_own_item_and_the_window_closes_after_the_last(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_block_adds_only_its_own_item_and_the_window_stays_open_after_the_last(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = opened_file(world, qtbot, calendar_file(tmp_path, TWO_ITEMS))
     first_choice(monkeypatch)
     window.card.blocks[1].add_button.click()
     qtbot.waitUntil(lambda: bool(window.card.blocks) and not window.card.blocks[1].add_button.isVisible(), timeout=5000)
     assert kept_items(world, CollectionKind.TASKS) == 1 and kept_items(world, CollectionKind.EVENTS) == 0 and window.isVisible()
     window.card.blocks[0].add_button.click()
-    qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
-    assert kept_items(world, CollectionKind.EVENTS) == 1
+    qtbot.waitUntil(lambda: bool(window.card.blocks) and not window.card.blocks[0].add_button.isVisible(), timeout=5000)
+    assert kept_items(world, CollectionKind.EVENTS) == 1 and window.isVisible()
+    window.close()
 
 
-def test_add_all_puts_each_kind_in_its_place_and_closes_the_window(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_all_puts_each_kind_in_its_place_and_the_window_stays_open(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = opened_file(world, qtbot, calendar_file(tmp_path, TWO_ITEMS))
     first_choice(monkeypatch)
     window.card.add_all_button.click()
-    qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
-    assert kept_items(world, CollectionKind.EVENTS) == 1 and kept_items(world, CollectionKind.TASKS) == 1
+    qtbot.waitUntil(lambda: bool(window.card.blocks) and not window.card.blocks[0].add_button.isVisible() and not window.card.blocks[1].add_button.isVisible(), timeout=5000)
+    assert kept_items(world, CollectionKind.EVENTS) == 1 and kept_items(world, CollectionKind.TASKS) == 1 and window.isVisible()
+    window.close()
 
 
 def test_items_already_there_ask_replace_or_skip_with_the_owners_words(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,9 +228,10 @@ def test_items_already_there_ask_replace_or_skip_with_the_owners_words(world: Wo
 
     monkeypatch.setattr(QMessageBox, "exec", skip)
     window.card.add_all_button.click()
-    qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
+    qtbot.waitUntil(lambda: kept_items(world, CollectionKind.TASKS) == 1, timeout=5000)
     assert asked == ["1 of these items is already in this calendar and task list. Replace it?"]
-    assert kept_items(world, CollectionKind.EVENTS) == 1 and kept_items(world, CollectionKind.TASKS) == 1
+    assert kept_items(world, CollectionKind.EVENTS) == 1 and window.isVisible()
+    window.close()
 
 
 def test_a_window_that_was_opened_with_everything_kept_stays_open(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,6 +239,8 @@ def test_a_window_that_was_opened_with_everything_kept_stays_open(world: World, 
     window = opened_file(world, qtbot, path)
     first_choice(monkeypatch)
     window.card.add_button.click()
+    qtbot.waitUntil(lambda: window.invitation is not None and bool(window.invitation.stored_in), timeout=5000)
+    window.close()
     qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
     again = opened_file(world, qtbot, path)
     qtbot.wait(50)
@@ -248,13 +256,6 @@ def test_declining_keeps_the_window_open(world: World, qtbot: QtBot, tmp_path: P
     qtbot.wait(100)  # the card is read again after the answer
     assert window.isVisible()
     window.close()
-
-
-def test_a_card_counts_as_kept_only_when_every_item_is_shown_and_kept() -> None:
-    kept = replace(CARD, stored_in="Home (Work)")
-    assert all_kept(kept) and not all_kept(CARD)
-    assert all_kept(replace(kept, parts=(kept, kept), items=2)) and not all_kept(replace(kept, parts=(kept, CARD), items=2))
-    assert not all_kept(replace(kept, parts=(kept, kept), items=3))  # an item that has no block of its own may still wait
 
 
 def test_a_file_with_nothing_to_show_says_so_and_brings_the_window_forward(world: World, qtbot: QtBot, tmp_path: Path) -> None:

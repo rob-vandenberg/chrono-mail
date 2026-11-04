@@ -11,15 +11,16 @@ import icalendar
 from dateutil.rrule import rrulestr
 
 from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: one reading of iCalendar
-    MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, new_uid,
+    MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, calendars_in, new_uid, zones_used,
     occurrences,
 )
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.512"
+__version__ = "itip.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: text_items reads every calendar of a text, an item takes along every time zone used anywhere inside it, as its own calendar defines it; a delegator's answer adds whoever they name as not answered yet (D-310)
 # v4.4.512: an ADD can be answered: answered_added, added_dates, and the answer and the delegate's invitation name the date as an occurrence (D-310)
 # v4.4.510: a delegate's answer carries DELEGATED-FROM; told_silent, with_silence, without_organizer (D-310)
 # v4.4.509: with_attendee_answer takes only the line of the attendee who answered (D-310)
@@ -787,10 +788,32 @@ def _take_line(target: icalendar.Component, person: Any) -> None:  # noqa: ANN40
         line.params["DELEGATED-TO"] = person.params["DELEGATED-TO"]
 
 
+def _delegate_lines(target: icalendar.Component, person: Any, reply_lines: list[Any]) -> None:  # noqa: ANN401 - icalendar's property objects are untyped
+    """Whoever an attendee delegated to joins the meeting as not answered yet, when not on it: their answer comes only from their own mail."""
+    named: Any = person.params.get("DELEGATED-TO")
+    if _partstat(person) != "DELEGATED" or not named:
+        return
+    mine: Any = target.get("ATTENDEE")
+    known = {_address_of(each) for each in (mine if isinstance(mine, list) else ([mine] if mine is not None else []))}
+    for delegate in named if isinstance(named, list) else [named]:
+        address = str(delegate).strip()
+        lower = _address_of(icalendar.vCalAddress(address))
+        if not address or any(character.isspace() for character in address) or lower in known:
+            continue
+        known.add(lower)
+        line = icalendar.vCalAddress(address)
+        name = next((each.params.get("CN") for each in reply_lines if _address_of(each) == lower), None)
+        if name:
+            line.params["CN"] = name
+        line.params["PARTSTAT"] = "NEEDS-ACTION"
+        line.params["DELEGATED-FROM"] = str(person).strip()
+        target.add("ATTENDEE", line)
+
+
 def with_attendee_answer(stored: str, reply: str, who: str) -> str | None:
     """Your meeting with an attendee's answer (a REPLY, RFC 5546 section 3.2.3): per item of the answer (one occurrence, or the meeting), each of
-    the line of `who` (the attendee who answered: nobody answers for someone else) into yours: their PARTSTAT and DELEGATED-TO; a line not on your list (a delegate, someone it was passed on to) added. An answer
-    to the series goes onto the dates that followed it too; one they answered otherwise keeps that. None when the meeting holds nothing it is about."""
+    the line of `who` (the attendee who answered: nobody answers for someone else) into yours: their PARTSTAT and DELEGATED-TO; a line not on your list (someone it was passed on to) added, and whoever they delegated to, as not answered yet. An
+    answer to the series goes onto the dates that followed it too; one they answered otherwise keeps that. None when the meeting holds nothing it is about."""
     kept = _parse(stored)
     answer = _parse(reply)
     if kept is None or answer is None:
@@ -803,7 +826,8 @@ def with_attendee_answer(stored: str, reply: str, who: str) -> str | None:
         targets = [target] if target is not None else (_items_of(kept) if moment is None else list[icalendar.Component]())  # (a whole answer, a copy of single dates: all of them)
         taken = taken or bool(targets)
         props: Any = item.get("ATTENDEE")
-        for person in props if isinstance(props, list) else ([props] if props is not None else []):
+        people: list[Any] = props if isinstance(props, list) else ([props] if props is not None else [])
+        for person in people:
             address = _address_of(person)
             if address.strip().lower() != who.strip().lower() or any(character.isspace() for character in address) or not _partstat(person):
                 continue  # someone else's line, or a damaged one; an answer that is none changes nothing
@@ -813,6 +837,7 @@ def with_attendee_answer(stored: str, reply: str, who: str) -> str | None:
                 following = [each for each in _items_of(kept) if each.get("RECURRENCE-ID") is not None and _your_answer(each, address) in ("NEEDS-ACTION", series_answer)]
             for each in [*targets, *following]:
                 _take_line(each, person)
+                _delegate_lines(each, person, people)
     return kept.to_ical().decode("utf-8") if taken else None
 
 
@@ -1183,56 +1208,61 @@ def _readable(component: icalendar.Component, method: str, kind: MessageKind) ->
         return False
 
 
-def _items_in(calendar: icalendar.Calendar) -> tuple[list[list[icalendar.Component]], int, int]:
-    """The items of a calendar in the order written, how many journal entries and how many damaged items it holds. A shared item without a UID
-    gets one made from its contents: reading the text again finds the same item, and it can be found in a calendar."""
-    method = _method_of(calendar)
-    found: dict[tuple[str, str], list[icalendar.Component]] = {}
-    journals = 0
-    for position, component in enumerate(calendar.subcomponents[:MAXIMUM_COMPONENTS]):
-        if component.name == "VJOURNAL":
-            journals += 1
-        elif component.name in _KINDS:
-            uid = _first(component, "UID")
-            if not uid and method in ("", "PUBLISH"):
-                uid = f"{hashlib.sha256(component.to_ical()).hexdigest()[:32]}@chrono-mail"
-                component["UID"] = icalendar.vText(uid)
-            found.setdefault((component.name, uid or f"\0{position}"), []).append(component)
-    items = [group for group in found.values() if any(_readable(each, method, _KINDS[str(each.name)]) for each in group)]
+def _items_in(calendars: list[icalendar.Calendar]) -> tuple[list[tuple[icalendar.Calendar, list[icalendar.Component]]], int, int]:
+    """The items of the calendars of a text in the order written, each with the calendar it stands in, how many journal entries and how many
+    damaged items they hold. A shared item without a UID gets one made from its contents: reading the text again finds the same item, and it can
+    be found in a calendar."""
+    method = _method_of(calendars[0])
+    found: dict[tuple[str, str], tuple[icalendar.Calendar, list[icalendar.Component]]] = {}
+    journals = position = 0
+    for calendar in calendars:
+        for component in calendar.subcomponents:
+            position += 1
+            if component.name == "VJOURNAL":
+                journals += 1
+            elif component.name in _KINDS:
+                uid = _first(component, "UID")
+                if not uid and method in ("", "PUBLISH"):
+                    uid = f"{hashlib.sha256(component.to_ical()).hexdigest()[:32]}@chrono-mail"
+                    component["UID"] = icalendar.vText(uid)
+                found.setdefault((component.name, uid or f"\0{position}"), (calendar, []))[1].append(component)
+    items = [item for item in found.values() if any(_readable(each, method, _KINDS[str(each.name)]) for each in item[1])]
     return items, journals, len(found) - len(items)
 
 
-def _calendar_of(calendar: icalendar.Calendar, components: list[icalendar.Component]) -> str:
-    """These components in a calendar text of their own: the properties of the calendar, and the time zones they use."""
-    used = {each.params["TZID"] for component in components for value in component.values() for each in (value if isinstance(value, list) else [value])
-            if "TZID" in getattr(each, "params", {})}
+def _zones_of(calendar: icalendar.Calendar) -> dict[str, icalendar.Component]:
+    """The time zones a calendar defines, by name; the first of a name counts."""
+    zones: dict[str, icalendar.Component] = {}
+    for each in calendar.subcomponents:
+        if each.name == "VTIMEZONE":
+            zones.setdefault(_text(each, "TZID"), each)
+    return zones
+
+
+def _calendar_of(calendar: icalendar.Calendar, components: list[icalendar.Component], own: dict[str, icalendar.Component], anywhere: dict[str, icalendar.Component]) -> str:
+    """These components in a calendar text of their own: the properties of their calendar, and every time zone used anywhere inside them, their
+    reminders included: as their own calendar defines it (two calendars of a text may use one name for two zones), else as another one does."""
+    used = sorted({zone for component in components for zone in zones_used(component)})
     made = copy.copy(calendar)
-    made.subcomponents = [*(each for each in calendar.subcomponents if each.name == "VTIMEZONE" and _text(each, "TZID") in used), *components]
+    made.subcomponents = [*(zone for name in used if (zone := own.get(name, anywhere.get(name))) is not None), *components]
     return made.to_ical().decode("utf-8")
 
 
 def text_items(text: str | bytes) -> TextItems:
-    """The items of a calendar text, read once: every event, task and busy time, of whatever kind is written first or later. Never raises."""
-    calendar = _parse(text)
-    if calendar is None:
+    """The items of a calendar text, read once: every event, task and busy time, of whatever kind is written first or later, in every calendar of
+    the text. Never raises."""
+    calendars = calendars_in(text)
+    if not calendars:
         return TextItems()
-    every_uid = all(_first(each, "UID") for each in calendar.subcomponents if each.name in _KINDS)
-    items, journals, damaged = _items_in(calendar)
-    if len(items) == 1 and every_uid and not journals and not damaged:  # one item and nothing else: as it was written
+    every_uid = all(_first(each, "UID") for calendar in calendars for each in calendar.subcomponents if each.name in _KINDS)
+    items, journals, damaged = _items_in(calendars)
+    if len(items) == 1 and len(calendars) == 1 and every_uid and not journals and not damaged:  # one item and nothing else: as it was written
         texts: list[str] = [text.decode("utf-8", "replace") if isinstance(text, bytes) else text]
     else:
-        texts = [_calendar_of(calendar, item) for item in items]
-    return TextItems(tuple(texts), tuple(_KINDS[str(item[0].name)] for item in items), tuple(_first(item[0], "UID") for item in items), journals, damaged)
-
-
-def items_text(text: str | bytes, positions: Collection[int]) -> str:
-    """Some items of a calendar text (their places in text_items) together in one text; "": none of them."""
-    calendar = _parse(text)
-    if calendar is None:
-        return ""
-    items = _items_in(calendar)[0]
-    chosen = [component for position, item in enumerate(items) if position in positions for component in item]
-    return _calendar_of(calendar, chosen) if chosen else ""
+        zones = {id(calendar): _zones_of(calendar) for calendar in calendars}  # read once: a text may hold very many calendars
+        anywhere = {name: zone for each in reversed(list(zones.values())) for name, zone in each.items()}
+        texts = [_calendar_of(calendar, item, zones[id(calendar)], anywhere) for calendar, item in items]
+    return TextItems(tuple(texts), tuple(_KINDS[str(item[0].name)] for _, item in items), tuple(_first(item[0], "UID") for _, item in items), journals, damaged)
 
 
 # --- busy times (D-310 step 4) -----------------------------------------------------------------------------------------------------------

@@ -2,10 +2,12 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 from shiboken6 import delete
 
+from chrono_mail.ui.invitationcalendar import InvitationDelegateDialog
 from chrono_mail.ui.invitationwindow import CalendarSource
 from chrono_mail.ui.readingpane import ReadingPane
 from chrono_mail.ui.reader import ReaderWidget
@@ -13,9 +15,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_views.py 4.4.511"
+__version__ = "test_ui_invitation_views.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: every dialog of an invite belongs to the main window (D-310)
 # v4.4.511: Initial tests: every open window of a mail follows an answer, and Choose a calendar opens with the card window gone (D-310)
 
 WHERE: tuple[str, str, str] = ("a", "Inbox", "m1")
@@ -72,19 +75,21 @@ def test_an_answer_finishes_when_its_window_was_closed_meanwhile(qtbot: QtBot) -
     host = SimpleNamespace(_backend=SimpleNamespace(ask=ask), _refresh_others=others)
     ReadingPane._send_answer(cast(ReadingPane, host), closed, CalendarSource(*WHERE), "ACCEPTED", "c1", CARD)  # noqa: SLF001
     assert len(asked) == 1
-    ReadingPane._show_again(cast(ReadingPane, host), closed, CalendarSource(*WHERE), kept=True)  # noqa: SLF001
+    ReadingPane._show_again(cast(ReadingPane, host), closed, CalendarSource(*WHERE))  # noqa: SLF001
     assert asked[-1] == "others"  # nothing more: there is no window to show it in
 
 
-def test_choose_a_calendar_opens_on_the_main_window_when_the_card_window_is_gone(qtbot: QtBot) -> None:
-    """P15: the card window closed between Accept and the engine's answer, and Accept never finished."""
+def test_every_dialog_of_an_invite_belongs_to_the_main_window_whatever_window_was_clicked(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decision 10: the action belongs to the program: closing a window never loses a click."""
     main, card = ReaderWidget(), ReaderWidget()
     qtbot.addWidget(main)
-    host = cast(ReadingPane, SimpleNamespace(reader=main))
-    card.show()
-    assert ReadingPane._parent_of(host, card) is card  # noqa: SLF001
-    card.hide()
-    assert ReadingPane._parent_of(host, card) is main  # noqa: SLF001
-    delete(card)
-    assert ReadingPane._parent_of(host, card) is main  # noqa: SLF001
-    assert isinstance(main.window(), QWidget)
+    qtbot.addWidget(card)
+    parents: list[QWidget | None] = []
+
+    def refused(dialog: InvitationDelegateDialog) -> int:
+        parents.append(dialog.parentWidget())
+        return dialog.DialogCode.Rejected
+
+    monkeypatch.setattr(InvitationDelegateDialog, "exec", refused)
+    ReadingPane.delegate_invitation(cast(ReadingPane, SimpleNamespace(_parent=main)), card, CalendarSource(*WHERE))
+    assert parents == [main]

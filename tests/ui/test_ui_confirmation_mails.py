@@ -7,9 +7,10 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from tests.ui.world import REGISTRY, World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_confirmation_mails.py 4.4.510"
+__version__ = "test_ui_confirmation_mails.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: not certain: everything free (D-310)
 # v4.4.510: Initial tests: Edit account > Calendars and contacts: "Send confirmation emails via" with Chrono Mail or the server (D-310)
 
 URL: str = "https://dav.example.com/"
@@ -50,7 +51,9 @@ def test_without_a_server_that_sends_them_only_the_box_can_be_chosen(world: Worl
     dialog.answers_send.setChecked(True)
     assert dialog._answers_value() == ""  # noqa: SLF001 - sent again, by whoever the server's word gives
     other = window(world, qtbot, dav_url=URL)
-    assert not other.answers_by.isEnabled() and "did not say" in other.answers_info.reason
+    assert other.answers_by.isEnabled() and other.answers_by.currentData() == "chrono" and other.answers_info.isHidden()  # not certain: everything free
+    other.answers_by.setCurrentIndex(other.answers_by.findData("server"))
+    assert other._answers_value() == "server"  # noqa: SLF001 - the person may know better than the server's silence
 
 
 def test_a_server_typed_in_this_window_changes_the_reason_at_once(world: World, qtbot: QtBot) -> None:

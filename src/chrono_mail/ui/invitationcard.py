@@ -20,9 +20,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.512"
+__version__ = "invitationcard.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: all_kept is gone: a window never closes by itself (D-310)
 # v4.4.512: a date added to a series you have shows the four answers; of a series you do not have: the text, and only the button Request (D-310)
 # v4.4.508: a text with several items: one block per item with its own details and buttons, and Add all at the top for items that ask no
 #           answer; the card says what the text holds and what is left out (D-310)
@@ -154,12 +155,6 @@ def _holds_text(info: InvitationInfo) -> str:
 def adds_all(info: InvitationInfo) -> bool:
     """Whether the card offers Add all: several items, and they ask no answer."""
     return bool(info.parts) and info.method == "PUBLISH" and info.events + info.tasks > 0
-
-
-def all_kept(info: InvitationInfo) -> bool:
-    """Whether every item on the card that can be kept is in one of your calendars."""
-    blocks = info.parts or (info,)
-    return len(blocks) == info.items and all(each.stored_in or each.kind == "freebusy" for each in blocks)
 
 
 def busy_text(info: InvitationInfo) -> str:

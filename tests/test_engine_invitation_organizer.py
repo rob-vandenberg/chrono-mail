@@ -11,9 +11,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.509"
+__version__ = "test_engine_invitation_organizer.py 4.4.514"
 
 # --- Version history ----------------------------------------------------
+# v4.4.514: a delegator's answer adds the delegate as not answered yet (D-310)
 # v4.4.509: Take their answer takes only the line of the attendee who wrote it (D-310)
 # v4.4.506: Initial tests: you are the organizer: an attendee's answer into your meeting, a proposal accepted or declined, the latest version
 #           sent to whoever asks; only the organizer can (D-310 step 3)
@@ -421,6 +422,27 @@ def test_an_answer_to_a_meeting_kept_as_single_dates_goes_onto_those_dates(setup
     stored(setup, only)
     organize(setup, deliver(setup, from_sam(meeting("REPLY", sam="ACCEPTED"))), "take")
     assert "PARTSTAT=ACCEPTED" in kept(setup)[0]
+
+
+def test_a_delegators_answer_adds_the_delegate_as_not_answered_yet_and_takes_nothing_else() -> None:
+    """Decision 5: their answer comes only from their own mail, whatever the delegator's mail says about them."""
+    reply = meeting("REPLY", sam="DELEGATED").replace("PARTSTAT=DELEGATED", 'PARTSTAT=DELEGATED;DELEGATED-TO="mailto:kim@example.net"', 1)
+    reply = reply.replace("END:VEVENT", 'ATTENDEE;CN=Kim;PARTSTAT=ACCEPTED;DELEGATED-FROM="mailto:sam@example.net":mailto:kim@example.net\r\nEND:VEVENT')
+    text = with_attendee_answer(meeting(), reply, "sam@example.net")
+    assert text is not None
+    message = read_calendar_message(text)
+    assert message is not None
+    assert {person.address: person.status for person in message.attendees}["kim@example.net"] == "NEEDS-ACTION"
+    assert {person.address: person.status for person in message.attendees}["sam@example.net"] == "DELEGATED"
+    assert next(person.name for person in message.attendees if person.address == "kim@example.net") == "Kim"
+    assert "DELEGATED-FROM" in text
+
+
+def test_a_delegate_already_on_the_meeting_keeps_their_own_answer() -> None:
+    reply = meeting("REPLY", sam="DELEGATED").replace("PARTSTAT=DELEGATED", 'PARTSTAT=DELEGATED;DELEGATED-TO="mailto:kim@example.net"', 1)
+    kept = meeting().replace("END:VEVENT", "ATTENDEE;PARTSTAT=TENTATIVE:mailto:kim@example.net\r\nEND:VEVENT")
+    text = with_attendee_answer(kept, reply, "sam@example.net")
+    assert text is not None and text.count("kim@example.net") == 2 and "PARTSTAT=TENTATIVE:mailto:kim@example.net" in text.replace("\r\n ", "")  # the line, and DELEGATED-TO
 
 
 def test_a_newer_answer_ends_an_earlier_delegation() -> None:
