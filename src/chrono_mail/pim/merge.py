@@ -10,13 +10,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from chrono_mail.core.words import digits as plain_digits
+from chrono_mail.pim.ical import NO_REMINDER
 from chrono_mail.pim.times import zone_named
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.3.498"
+__version__ = "merge.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: an alarm with ACTION:NONE is no reminder: only such an alarm reads as none, and it is never shown in a clash
 # v4.3.498: a grouped line (item1.EMAIL) is its field, its group label kept on the line; a grouped line no person sees (item1.X-ABLabel)
 #           is tied to its group's entry, goes or stays with it and takes its group; two entries that share a group name in no
 #           version get groups of their own, grouped lines not changed stay as written;
@@ -424,11 +426,24 @@ def visible(unit_name: str, key: str) -> bool:
     return key.split(SEPARATOR, 1)[0] in VISIBLE.get(unit_name, frozenset[str]())
 
 
+def real_alarms(text: str) -> str:
+    """The alarms of a field without the placeholders a server adds (ACTION:NONE): those are no reminder, nobody sees them."""
+    kept: list[str] = []
+    alarm: list[str] = []
+    for line in text.split("\n"):
+        alarm.append(line)
+        if _name(line) == "END" and _head_and_value(line)[1].strip().upper() == ALARMS:
+            if not any(_name(part) == "ACTION" and _head_and_value(part)[1].strip().upper() == NO_REMINDER for part in alarm):
+                kept.extend(alarm)
+            alarm = []
+    return "\n".join(kept)
+
+
 def reminders_seen(text: str | None) -> tuple[tuple[str, str], ...]:
-    """An item's reminders as a person sees them: when each goes off and how; their ids and other programs' markers left out."""
+    """An item's reminders as a person sees them: when each goes off and how; their ids, other programs' markers and placeholders left out."""
     found: list[tuple[str, str]] = []
     trigger, action = "", ""
-    for line in (text or "").split("\n"):
+    for line in real_alarms(text or "").split("\n"):
         name = _name(line)
         head, value = _head_and_value(line)
         if name == "BEGIN":
@@ -487,7 +502,7 @@ def _said(text: str | None, repeating: bool = False) -> str | None:
     """A field as it reads (_reading), so another valid way of writing the same is no difference (the owner, 4.2.490); all reminders together
     by when and how (reminders_seen); another part of an item (a VLOCATION) as it is."""
     if text is not None and text.startswith(f"BEGIN:{ALARMS}"):
-        return "\n".join(PART_MARK.join(reminder) for reminder in reminders_seen(text))
+        return "\n".join(PART_MARK.join(reminder) for reminder in reminders_seen(text)) or None  # only a placeholder reads as no reminder
     if text is None or "\n" in text or ":" not in text:  # a text that is no line: as it is
         return text
     heading, value = _reading(text, repeating)
@@ -552,6 +567,10 @@ def _shown(text: str | None) -> str:
     """A field's text as the person reads it: the value of a line ("" when absent)."""
     if text is None:
         return ""
+    if text.startswith(f"BEGIN:{ALARMS}"):
+        text = real_alarms(text)
+        if not text:
+            return ""
     if "\n" in text:  # alarms: their triggers
         return "; ".join(_head_and_value(line)[1] for line in text.split("\n") if _name(line) == "TRIGGER") or "a reminder"
     return _head_and_value(text)[1] if ":" in text and not text.startswith(":") else text

@@ -3931,3 +3931,10 @@ Open: items 7 and 8 (reminders).
 Built: up to 5 reminders per event, each Notification or Email, a number and a unit, stored as VALARM; reminders from elsewhere the fields cannot say stay whole (keep:). Chrono Mail had nothing that fired reminders: reminder.check (engine/commands_reminders.py) looks every half minute, notifications through the tray, e-mails through the normal send path to your own address; one that cannot go comes back as a notification. Edit account > Calendars and contacts: Send reminder emails via, per account on this computer.
 Tests: tests/test_engine_reminders.py, tests/ui/test_ui_appointment_window.py, tests/ui/test_ui_confirmation_mails.py. Review: one Sonnet round.
 Open: account.edit refuses invitation_answers "none" (found in passing, not part of this work).
+
+## 2026-11-04, 4.4.537: the reminder At 1976-04-01 00:55, and two follow-ups
+Cause: the server adds an alarm to every item it stores, ACTION:NONE with TRIGGER 19760401T005545Z (read on the server: 12 of 12 events; the test data script writes no alarm). The program read it as a reminder at a set time.
+Built: an alarm with ACTION:NONE is no reminder: not in the windows, not in the conflict window, it never fires, and it stays in the item when the reminders change; a reminder here and only a placeholder there is no clash. account.edit takes invitation_answers none, as the window sends. The reminder check read every event ever, because the index applies a period only with an end: it now reads no event that ended over 31 days ago.
+Measured (encrypted local calendar, every event with a placeholder): 20,000 events, 2,000 of them to come: 6.7 s per look before, 1.0 s after; 5,000 events all to come: 1.7 s. Parsing is about 0.24 ms per event.
+Tests: tests/test_engine_reminders.py, tests/test_pim_merge.py, tests/test_pim_conflictwords.py, tests/ui/test_ui_calendar.py. Review: one Sonnet round, nothing real.
+Open: a reminder more than 31 days after its event, and a moved occurrence of a series whose repeat ended over 31 days ago, are not looked at.

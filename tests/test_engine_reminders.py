@@ -8,7 +8,7 @@ from chrono_mail.config import AccountSettings
 from chrono_mail.engine import Engine, UsageError, commands_reminders
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_reminders import ReminderCheck, _Due, _due_in, reminder_check
-from chrono_mail.pim.ical import parse_events
+from chrono_mail.pim.ical import EventSeries, parse_events
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.core import LOCAL_ACCOUNT_ID
 from tests.test_config import make_account
@@ -16,9 +16,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.536"
+__version__ = "test_engine_reminders.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: a placeholder alarm is no reminder and stays; old events are not read; account.edit takes none for invitation_answers
 # v4.4.536: Initial version (D-313)
 
 
@@ -110,6 +111,75 @@ def test_server_is_chosen_only_with_a_calendar_server_to_do_it() -> None:
     account = AccountSettings(make_account(), reminder_emails="server")
     assert account.sends_reminder_emails
     assert not replace(account, dav_url="https://dav.example.org/").sends_reminder_emails
+
+
+PLACEHOLDER = "BEGIN:VALARM\r\nUID:from-the-server\r\nTRIGGER;VALUE=DATE-TIME:19760401T005545Z\r\nACTION:NONE\r\nEND:VALARM\r\n"
+
+
+def with_placeholder(setup: Setup, item: str) -> None:
+    """The alarm a server adds to every item, as it comes from the server."""
+    collection = local_calendar(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        store.put(collection, store.get(collection, item).replace("END:VEVENT", f"{PLACEHOLDER}END:VEVENT"), item)
+
+
+def stored(setup: Setup, item: str) -> str:
+    collection = local_calendar(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        return store.get(collection, item)
+
+
+def test_a_placeholder_is_no_reminder_and_stays_when_the_reminders_change(setup: Setup) -> None:
+    item = event_in(setup, 600, "Neighbourhood meeting", ())
+    with_placeholder(setup, item)
+    assert call(setup.engine, "event.show", item=item).reminders == ()
+    call(setup.engine, "event.edit", item=item, reminder=("15",))
+    assert [reminder.minutes_before for reminder in call(setup.engine, "event.show", item=item).reminders] == [15]
+    assert "UID:from-the-server" in stored(setup, item) and stored(setup, item).count("BEGIN:VALARM") == 2
+    call(setup.engine, "event.edit", item=item, clear=("reminder",))
+    assert call(setup.engine, "event.show", item=item).reminders == ()
+    assert "UID:from-the-server" in stored(setup, item) and stored(setup, item).count("BEGIN:VALARM") == 1
+
+
+def test_a_placeholder_never_fires_and_a_real_reminder_beside_it_does(setup: Setup) -> None:
+    item = event_in(setup, 10, "Dentist", ("15",))
+    with_placeholder(setup, item)
+    with_placeholder(setup, event_in(setup, 10, "Baker", ()))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def test_the_look_reads_no_event_that_ended_long_ago(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    event_in(setup, -40 * 24 * 60, "Old", ("15",))
+    event_in(setup, 10, "Coming", ("15",))
+    read: list[str] = []
+
+    def parse(text: str) -> list[EventSeries]:
+        read.append(text)
+        return parse_events(text)
+
+    monkeypatch.setattr(commands_reminders, "parse_events", parse)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Coming"]
+    assert len(read) == 1 and "Coming" in read[0]
+
+
+def test_a_series_begun_long_ago_and_a_reminder_days_after_an_event_still_come(setup: Setup) -> None:
+    event_in(setup, 10 - 400 * 24 * 60, "Every day", ("15",), rrule="FREQ=DAILY")
+    item = event_in(setup, -3 * 24 * 60 - 60, "Report back", ())
+    collection = local_calendar(setup)
+    after = "BEGIN:VALARM\r\nTRIGGER;RELATED=END:PT72H\r\nACTION:DISPLAY\r\nDESCRIPTION:Back\r\nEND:VALARM\r\nEND:VEVENT"
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        store.put(collection, store.get(collection, item).replace("END:VEVENT", after), item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert sorted(note.summary for note in check(setup).notes) == ["Every day", "Report back"]
+
+
+def test_unticking_the_confirmation_emails_is_taken_by_account_edit(setup: Setup) -> None:
+    call(setup.engine, "account.edit", account=setup.account_id, invitation_answers="none")
+    assert setup.engine.config().find(setup.account_id).invitation_answers == "none"
+    with pytest.raises(UsageError):
+        call(setup.engine, "account.edit", account=setup.account_id, invitation_answers="nobody")
 
 
 FIXED_ALARM = """BEGIN:VCALENDAR

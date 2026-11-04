@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.536"
+__version__ = "test_ui_calendar.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: a placeholder alarm shows no row; a normal reminder shows as type, number and unit
 # v4.4.536: Reminder rows (round 4)
 # v4.4.535: The window's new fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -527,6 +528,26 @@ def test_an_event_past_a_daylight_saving_change_keeps_its_hour(world: World, qtb
         monkeypatch.undo()
         time.tzset()  # the process's own zone again (nothing left behind, AGENTS.md 4.5.5)
 
+
+
+def test_a_placeholder_alarm_shows_no_row_and_a_normal_reminder_beside_it_its_fields(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.core import LOCAL_ACCOUNT_ID
+    from chrono_mail.engine.pimaccess import open_pim
+
+    page = open_calendar(world, qtbot)
+    placeholder = "BEGIN:VALARM\r\nTRIGGER;VALUE=DATE-TIME:19760401T005545Z\r\nACTION:NONE\r\nEND:VALARM\r\nEND:VEVENT"
+    rows: list[int] = []
+    for reminder in ((), ("60",)):
+        added = world.call("event.add", calendar=calendar_id(world), summary="Neighbours", start="2026-10-15T09:00", end="2026-10-15T11:00", time_zone="UTC", reminder=reminder)
+        with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
+            store.put(calendar_id(world), store.get(calendar_id(world), added.item).replace("END:VEVENT", placeholder), added.item)
+        editor = EventEditor(world.backend, page._calendars(), [], event=world.call("event.show", item=added.item), collection=calendar_id(world))  # noqa: SLF001
+        qtbot.addWidget(editor)
+        rows.append(len(editor.reminders.rows))
+        assert editor.reminders.add_button.text() == "Add notification"
+    assert rows == [0, 1]
+    row = editor.reminders.rows[0]
+    assert not row.fixed.isVisibleTo(row) and row.kind.isVisibleTo(row) and (row.number.value(), row.unit.currentText()) == (1, "hours")
 
 
 def test_a_reminder_at_a_set_time_shows_as_that_never_as_no_reminder(world: World, qtbot: QtBot) -> None:

@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.536"
+__version__ = "ical.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: an alarm with ACTION:NONE is no reminder: it is not read as one and stays in the item when the reminders change
 # v4.4.536: An e-mail reminder has the address and the summary the standard asks (round 4)
 # v4.4.527: the size limit of a text is measured and says so
 # v4.4.514: calendars_in: a text of several calendars one after the other is read whole, each time zone once; zones_used: also of one item (D-310)
@@ -31,6 +32,7 @@ MAXIMUM_TEXT_CHARACTERS: int = 16 * 1024 * 1024  # measured: a file this size ho
 MAXIMUM_COMPONENTS: int = 20_000
 MAXIMUM_ATTENDEES: int = 500  # kept of one item: every one is a part of the window; the card counts the rest
 MAXIMUM_REMINDERS: int = 20
+NO_REMINDER: str = "NONE"  # the ACTION of an alarm that is a placeholder a server adds to every item: no reminder, and it stays in the item as it is
 MAXIMUM_DATES: int = 5_000  # exceptions and extra dates of one repeating item
 MAXIMUM_OCCURRENCES: int = 5_000  # one range of a calendar view
 COLOUR_ID_PROPERTY: str = "X-CHRONO-MAIL-COLOR-ID"  # which colour of its calendar's palette an event has (D-191)
@@ -276,12 +278,17 @@ def _alarm_address(alarm: icalendar.Component) -> str:
     return str(first).removeprefix("mailto:").removeprefix("MAILTO:") if first else ""
 
 
+def _placeholder(alarm: icalendar.Component) -> bool:
+    return alarm.name == "VALARM" and _text(alarm, "ACTION").upper() == NO_REMINDER
+
+
 def _reminders(component: icalendar.Component) -> tuple[Reminder, ...]:
-    """The alarms of an item. The text of an alarm that is the title of the item itself is not kept: it is what is written when there is none."""
+    """The alarms of an item, a placeholder left out. The text of an alarm that is the title of the item itself is not kept: it is what is written
+    when there is none."""
     summary = _text(component, "SUMMARY")
     found: list[Reminder] = []
     for alarm in component.subcomponents:
-        if alarm.name != "VALARM" or len(found) >= MAXIMUM_REMINDERS:
+        if alarm.name != "VALARM" or _placeholder(alarm) or len(found) >= MAXIMUM_REMINDERS:
             continue
         try:
             trigger = alarm.get("TRIGGER")
@@ -489,7 +496,7 @@ def _set_people(component: icalendar.Component, event: Event, old: Event | None)
 def _set_reminders(component: icalendar.Component, reminders: tuple[Reminder, ...], old: tuple[Reminder, ...], summary: str) -> None:
     if reminders == old:
         return
-    component.subcomponents[:] = [part for part in component.subcomponents if part.name != "VALARM"]
+    component.subcomponents[:] = [part for part in component.subcomponents if part.name != "VALARM" or _placeholder(part)]
     for reminder in reminders[:MAXIMUM_REMINDERS]:
         alarm = icalendar.Alarm()
         alarm.add("ACTION", reminder.action)

@@ -1,13 +1,13 @@
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from chrono_mail.pim.conflictwords import Words, duration_words, reminder_words, rows, rule_words, value_words
 from chrono_mail.pim.merge import SERVER, merge
-from chrono_mail.pim.times import in_local_zone
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_conflictwords.py 4.3.498"
+__version__ = "test_pim_conflictwords.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: a placeholder alarm (ACTION:NONE) is not in the words
 # v4.3.498: a grouped line (item1.EMAIL) is shown and chosen as its field; reminders read the same in every time zone;
 #           a row that pairs two entries of a field that holds several values can be split into both (B-31, the owner); one entry written
 #           two ways on both sides cannot, nor a skipped date in another zone
@@ -48,8 +48,8 @@ def test_a_duration_and_a_repeat_read_as_words() -> None:
 def test_reminders_read_as_when_and_how() -> None:
     text = "BEGIN:VALARM\nTRIGGER:-PT1H\nACTION:DISPLAY\nEND:VALARM\nBEGIN:VALARM\nTRIGGER;VALUE=DATE-TIME:19760401T005545Z\nACTION:NONE\nEND:VALARM"
     words = reminder_words(text, False, WORDS)
-    shown = when(in_local_zone(datetime(1976, 4, 1, 0, 55, 45, tzinfo=UTC)))  # the moment in this computer's zone: the same test in every zone
-    assert words.startswith(f"1 hour before the start, message on screen; On {shown}") and words.endswith("no alert")
+    assert words == "1 hour before the start, message on screen"  # the placeholder a server adds is no reminder
+    assert reminder_words("BEGIN:VALARM\nTRIGGER;VALUE=DATE-TIME:19760401T005545Z\nACTION:NONE\nEND:VALARM", False, WORDS) == reminder_words("", False, WORDS)
     assert "PT1H" not in words and "19760401T" not in words
 
 

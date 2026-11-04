@@ -19,13 +19,16 @@ from chrono_mail.pimstore.index import ItemQuery
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_reminders.py 4.4.536"
+__version__ = "commands_reminders.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: the look reads no event that ended over a month ago: the start of the query counted only with an end, so it read every event ever at every look
 # v4.4.536: Initial version: reminders come due while Chrono Mail runs, as a notification or an e-mail to your own address (D-313)
 
 LATE: timedelta = timedelta(minutes=5)  # a reminder older than this was missed while the program was closed: it still counts only for what has not begun
 MOST_ITEMS: int = 1_000_000  # the query needs a number; every event that is still to come counts
+LONG_AFTER: timedelta = timedelta(days=31)  # the check reads no event that ended longer ago: years of old events cost seconds at every look, and a reminder this long after an event is not a thing people set
+END_OF_TIME: int = 253_402_300_799  # the query takes a period only with an end: the last second of the year 9999
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +140,7 @@ def reminder_check(engine: Engine, _parameters: NoParameters) -> ReminderCheck:
             calendars = tuple(info.collection_id for info in store.collections(CollectionKind.EVENTS))
             if not calendars:
                 continue
-            for item in store.index.query(ItemQuery(CollectionKind.EVENTS, calendars, start=int((since - timedelta(days=1)).timestamp()), limit=MOST_ITEMS)):
+            for item in store.index.query(ItemQuery(CollectionKind.EVENTS, calendars, start=int((since - LONG_AFTER).timestamp()), end=END_OF_TIME, limit=MOST_ITEMS)):
                 try:
                     text = store.get(item.collection, item.item_id)
                     if "VALARM" in text:

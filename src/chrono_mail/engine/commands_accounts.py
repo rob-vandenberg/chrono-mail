@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.536"
+__version__ = "commands_accounts.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: account.edit takes none for invitation_answers, as the window sends when its box is unticked (D-310)
 # v4.4.536: Who sends the e-mail reminders in the summary and account.edit (D-313)
 # v4.4.510: the summary tells whether the server always mails the answers; invitation_answers may be none (D-310)
 # v4.4.505: who mails the answers to invitations (invitation_answers) in the summary and account.edit; the summary tells what the server
@@ -552,8 +553,8 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     if reminder_emails not in ("chrono", "server", "none"):
         raise UsageError("Who sends reminder emails is chrono, server or none")
     answers = settings.invitation_answers if parameters.invitation_answers is None else parameters.invitation_answers
-    if answers not in ("", "server", "chrono"):
-        raise UsageError("Who mails the answers to invitations is server, chrono or empty")
+    if answers not in ("", "server", "chrono", "none"):
+        raise UsageError("Who mails the answers to invitations is server, chrono, none or empty")
 
     def edit(fresh: AppConfig) -> AppConfig:  # the edited parts on the account as it is now: what other commands changed meanwhile stays
         _refuse_same_account(fresh.accounts, account.kind, incoming.username, incoming.host, account.account_id)

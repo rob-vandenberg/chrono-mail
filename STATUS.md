@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.536 (appointment window finished: reminders by notification and e-mail, Send reminder emails via)*
+*Last updated: 2026-11-04, version 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.537 done.** To check by the owner: open Neighbourhood meeting in the test profile: no reminder row, only Add notification; add a reminder and save: it shows as type, number and unit. Untick Edit account > Calendars and contacts > Send confirmation emails via and save: no refusal.
 
 **4.4.534 done (D-310).** To check by the owner: an invitation shows Accept (green), Tentative (orange), Delegate (blue), Decline (red), each a gradient, in that order, in both themes; a disabled one is grey; hover is lighter, focus has an outline.
 

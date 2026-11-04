@@ -1,9 +1,10 @@
 from chrono_mail.pim.merge import BOTH, LOCAL, SERVER, copied, merge, reading
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.3.498"
+__version__ = "test_pim_merge.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: a placeholder alarm (ACTION:NONE) reads as no reminder
 # v4.3.498: a grouped line (item1.EMAIL) is its field: changed on both sides it clashes, chosen here it keeps its group, reading sees it;
 #           reading leaves out an attendee line for the organizer, which a server adds (Kerio); a grouped label stays tied to its entry,
 #           also through Use Chrono Mail, Keep both and a server renumbering the groups; grouped lines not changed stay as written;
@@ -139,6 +140,22 @@ def test_a_field_a_person_never_sees_never_clashes_and_takes_the_server_s() -> N
     theirs = calendar("SUMMARY:Meeting", "LOCATION:Room 1", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda", "STATUS:CANCELLED")
     merged = merge(BASE, ours, theirs)
     assert merged.clashes == () and "STATUS:CANCELLED" in (merged.text or "")  # D-308
+
+
+PLACEHOLDER = ("BEGIN:VALARM", "TRIGGER;VALUE=DATE-TIME:19760401T005545Z", "ACTION:NONE", "END:VALARM")
+
+
+def test_a_reminder_here_and_the_server_s_placeholder_there_is_no_clash() -> None:
+    merged = merge(calendar("SUMMARY:Meeting"), calendar("SUMMARY:Meeting", "BEGIN:VALARM", "TRIGGER:-PT1H", "ACTION:DISPLAY", "END:VALARM"), calendar("SUMMARY:Meeting", *PLACEHOLDER))
+    assert merged.clashes == () and "TRIGGER:-PT1H" in (merged.text or "")
+
+
+def test_a_placeholder_is_never_shown_as_a_reminder_in_a_clash() -> None:
+    def alarm(trigger: str) -> tuple[str, ...]:
+        return ("BEGIN:VALARM", f"TRIGGER:{trigger}", "ACTION:DISPLAY", "END:VALARM")
+
+    merged = merge(calendar("SUMMARY:Meeting", *PLACEHOLDER), calendar("SUMMARY:Meeting", *PLACEHOLDER, *alarm("-PT1H")), calendar("SUMMARY:Meeting", *PLACEHOLDER, *alarm("-PT2H")))
+    assert [(clash.local, clash.server) for clash in merged.clashes] == [("-PT1H", "-PT2H")]
 
 
 def test_reminders_that_differ_only_in_what_is_not_shown_never_clash() -> None:

@@ -19,6 +19,7 @@ from chrono_mail.pim.merge import (
     jar,
     merge,
     number,
+    real_alarms,
     repeats,
     same,
     units_together,
@@ -27,9 +28,10 @@ from chrono_mail.pim.merge import (
 from chrono_mail.pim.times import in_local_zone, zone_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "conflictwords.py 4.3.498"
+__version__ = "conflictwords.py 4.4.537"
 
 # --- Version history ----------------------------------------------------
+# v4.4.537: a placeholder alarm (ACTION:NONE) is left out of the reminders in words
 # v4.3.498: a row that pairs two entries of a field that holds several values can be split: both kept (Row.split, B-31, the owner);
 #           the fields whose entries pair up are merge.MULTIPLE, the one list of them
 # v4.2.497: a field of an occurrence the person keeps or leaves out is taken by nothing; a jar's entry taken out on a side shows as going, as merge does; a row differs and has its choice exactly as merge reads the item (one notion of a difference): a photo, an attendee's answer,
@@ -65,7 +67,7 @@ ORDINALS: dict[int, str] = {1: "first", 2: "second", 3: "third", 4: "fourth", 5:
 FREQUENCIES: dict[str, str] = {"YEARLY": "year", "MONTHLY": "month", "WEEKLY": "week", "DAILY": "day", "HOURLY": "hour", "MINUTELY": "minute",
                                "SECONDLY": "second"}
 RULE_PARTS_IN_WORDS: frozenset[str] = frozenset({"FREQ", "INTERVAL", "BYDAY", "BYMONTHDAY", "BYMONTH", "COUNT", "UNTIL", "WKST"})
-ACTIONS: dict[str, str] = {"DISPLAY": "message on screen", "EMAIL": "e-mail", "AUDIO": "sound", "NONE": "no alert"}
+ACTIONS: dict[str, str] = {"DISPLAY": "message on screen", "EMAIL": "e-mail", "AUDIO": "sound"}
 TASK_STATES: dict[str, str] = {"NEEDS-ACTION": "To do", "IN-PROCESS": "In progress", "COMPLETED": "Done", "CANCELLED": "Cancelled"}
 EVENT_STATES: dict[str, str] = {"CONFIRMED": "Confirmed", "TENTATIVE": "Tentative", "CANCELLED": "Cancelled"}
 TYPES_LEFT_OUT: frozenset[str] = frozenset({"PREF", "INTERNET", "VOICE", "X400"})
@@ -242,7 +244,7 @@ def reminder_words(text: str, task: bool, words: Words) -> str:
     """All reminders of an item in words, one after another: "1 hour before the start, message on screen"."""
     found: list[str] = []
     trigger, parameters, action = "", dict[str, str](), ""
-    for line in text.split("\n"):
+    for line in real_alarms(text).split("\n"):
         head, value = _head_and_value(line)
         name = head.split(";", 1)[0].strip().upper()
         if name == "BEGIN":
