@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind, StorageError
+from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, MessageFlag, StorageError
 from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, blocks_of, card_of, is_yours, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -27,9 +27,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.516"
+__version__ = "commands_invitations.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: A Decline or Delegate leaves its mark on the mail, Change my answer and a new answer take it off (D-310)
 # v4.4.516: invitation.reopen: Change my answer (D-310)
 # v4.4.515: invitation.blocks: the cards of a big text step by step; a Decline that waits for the connection says what the server's copy needs first; refused twice, the meeting stays here with a sync conflict (D-310)
 # v4.4.514: Add all puts each item in as it was written, so an export comes back identical; a public calendar counts as yours again, a private one first (D-310)
@@ -119,6 +120,7 @@ class _Opened:
     plain: bool = False  # a calendar text that asks nothing (no METHOD): offered as PUBLISH
     several: bool = False  # a text with several items and none chosen: only the card and Add all work on all of them
     whole: str = ""  # the whole text, also of what is left out: the card says what it holds
+    marks: frozenset[MessageFlag] | None = None  # the marks of the mail this is the one invitation of; None: no mark can speak for it (a file, another attachment, several items)
 
 
 def _file_text(path: str) -> bytes:
@@ -137,6 +139,8 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     message_id: str | None = None
     senders: tuple[str, ...] = ()
     receiving: str | None = None
+    own_part = False
+    flags = frozenset[MessageFlag]()
     if parameters.file:
         data = _file_text(parameters.file)
     else:
@@ -146,10 +150,13 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
             parsed = parse_message(raw)
             if parameters.part >= len(parsed.attachments):
                 raise UsageError("This message has no such attachment")
-            found = calendar_part(parsed.attachments) if parameters.part < 0 else None
+            found = calendar_part(parsed.attachments)
             if parameters.part < 0 and found is None:
                 raise UsageError("This message holds no calendar message")
-            data = calendar_text(parsed.attachments[found[0] if found is not None else parameters.part]).encode("utf-8")
+            position = found[0] if found is not None and parameters.part < 0 else parameters.part
+            data = calendar_text(parsed.attachments[position]).encode("utf-8")
+            own_part = found is not None and found[0] == position
+            flags = mailbox.current_flags(reference)
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
@@ -169,7 +176,8 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     text = text if several else items.texts[max(parameters.item, 0)]
     plain = message.method == ""
     settings = engine.config().find(receiving) if receiving else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text)
+    marks = flags if own_part and len(items.texts) == 1 else None
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks)
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -330,6 +338,20 @@ def _copy_for(text: str, mails: _Mailing) -> str:
     return (with_silence(text, not mails.server) or text) if mails.told else text
 
 
+def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None) -> None:
+    """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline leaves no copy to tell it. An answer or Change my answer takes
+    an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again."""
+    if opened.marks is None or opened.message.method not in ("REQUEST", "ADD"):
+        return
+    wanted = (opened.marks - ANSWER_MARKS) | ({mark} if mark is not None else frozenset[MessageFlag]())
+    if wanted != opened.marks:
+        try:
+            with open_mailbox(engine, parameters.account) as mailbox:
+                mailbox.set_flags(mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message)), wanted)
+        except ChronoMailError:
+            return
+
+
 def _delete(writer: ItemWriter, info: CollectionInfo, item: str, text: str, mails: _Mailing) -> None:
     """Delete a copy. A server mails about that from what it holds, so what it holds says first whether it should."""
     before = ""
@@ -426,6 +448,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         draft_folder, draft_message = _save_mail(engine, opened, you.account, _SUBJECT_WORD[parameters.answer],
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply)
         draft_account = you.account
+    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None)
     return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account)
 
 
@@ -667,6 +690,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     task = message.kind == "task"
     asked = f"{who} asks you to do this task in their place.\n" if task else f"{who} asks you to go to this meeting in their place.\n"
     passed = _save_mail(engine, opened, you.account, "Invitation", asked, request, to=delegate)
+    _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
     if not mails.chrono:  # the server mails your answer DELEGATED itself, or you want no such mails (D-310)
         return DelegateResult(you.account, passed[0], passed[1], "")
     told = f"{who} has asked {delegate} to do this task in their place.\n" if task else f"{who} has asked {delegate} to go to this meeting in their place.\n"
@@ -816,6 +840,7 @@ def invitation_reopen(engine: Engine, parameters: SourceParameters) -> ReopenRes
     _not_yours(engine, opened)
     you = _you(engine, opened)
     stored = _stored(engine, _kind(message), message.uid)
+    _remember(engine, parameters, opened, None)
     if stored is None:
         return ReopenResult(False)
     text = ""  # the whole copy goes
@@ -861,7 +886,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     card = card_of(engine, parameters.part, opened.whole)
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
-    return card
+    return with_mark(card, opened.marks) if opened.marks is not None else card
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

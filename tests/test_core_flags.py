@@ -12,14 +12,14 @@ ALL_FLAGS: frozenset[MessageFlag] = frozenset(MessageFlag)
 
 
 def test_letters_and_imap_names() -> None:
-    assert {flag.maildir_letter for flag in MessageFlag} == {"D", "F", "R", "S", "T"}
+    assert {flag.maildir_letter for flag in MessageFlag} == {"D", "F", "J", "K", "R", "S", "T"}
     assert MessageFlag.SEEN.imap_name == "\\Seen"
     assert MessageFlag.REPLIED.imap_name == "\\Answered"
     assert MessageFlag.TRASHED.imap_name == "\\Deleted"
 
 
 def test_suffix_is_sorted_in_ascii_order() -> None:
-    assert flags_to_maildir_suffix(ALL_FLAGS) == "DFRST"
+    assert flags_to_maildir_suffix(ALL_FLAGS) == "DFJKRST"
     assert flags_to_maildir_suffix(frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED})) == "FS"
 
 

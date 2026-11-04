@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, AuthenticationError, ConfigurationError, FolderRole, MessageFlag, ProtocolError
+from chrono_mail.core import ANSWER_MARKS, AccountKind, AuthenticationError, ConfigurationError, FolderRole, MessageFlag, ProtocolError
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine, ImapLink
@@ -13,9 +13,10 @@ from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 from chrono_mail.sync.imap_sync import LOCAL_ONLY  # first parts of the local folders that never exist on a server
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 3.6.349"
+__version__ = "imap_online.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: A folder that keeps no keywords gets no answer marks (D-310)
 # v3.6.349: after a folder delete Inbox is opened for changes again before the next action there (RV-170); a folder that holds mail too
 #           large to download says so instead of "check for mail first" (RV-172); refuse_unseen for a folder tree (RV-176)
 # v3.0.339: a folder is deleted on the server only when it holds no mail this computer never had (the server deletes it with its mail; RV-108)
@@ -108,6 +109,7 @@ class Ready:
     new_uid: int | None = None  # a move or copy: its UID in the target folder (COPYUID)
     validity: int | None = None  # ... and that folder's UIDVALIDITY
     expunged: bool = True  # a delete: removed there (with UIDPLUS), or only marked deleted
+    kept: frozenset[MessageFlag] | None = None  # marks: what the folder holds of them (_kept_in)
 
 
 @dataclass
@@ -161,6 +163,10 @@ class ServerSession:
         """The server cannot be reached: done here, remembered by the commit, done there by the next check; told and counted as waiting."""
         self._go_offline()
         return commit
+
+    def _kept_in(self, server: str, flags: frozenset[MessageFlag]) -> frozenset[MessageFlag]:
+        """What of these marks a server folder can hold: one that keeps no keywords has no answer marks, they stay here only (OR-21)."""
+        return flags if self.link.keywords.get(server, False) else flags - ANSWER_MARKS
 
     def _lost(self, error: ProtocolError) -> None:
         """A step failed: a refusal of the server is the person's error; anything else means the server cannot be reached."""
@@ -302,7 +308,7 @@ class ServerSession:
             changes: dict[tuple[tuple[str, ...], tuple[str, ...]], list[tuple[str, int]]] = {}
             for store_id, uid in part:
                 known = self.state.folder_entries(local)[uid].flags
-                flags = wanted[store_id]
+                flags = self._kept_in(server, wanted[store_id])
                 added = tuple(sorted(flag.imap_name for flag in flags if flag.imap_name.lower() not in known))
                 removed = tuple(sorted(flag.imap_name for flag in MessageFlag if flag.imap_name.lower() in known and flag not in flags))
                 changes.setdefault((added, removed), []).append((store_id, uid))
@@ -313,7 +319,7 @@ class ServerSession:
                 if removed:
                     client.uid_store(uids, list(removed), "remove")
                 for store_id, uid in members:
-                    self.ready[store_id] = Ready("flags", local, uid)
+                    self.ready[store_id] = Ready("flags", local, uid, kept=self._kept_in(server, wanted[store_id]))
 
         self._grouped("flags", list(wanted), step)
 
@@ -397,7 +403,7 @@ class ServerSession:
         done = self._taken(store_id, "flags")
         if done is not None:
             local, uid = done.local, done.uid
-            names = flag_names(flags) | frozenset(name for name in self.state.folder_entries(local)[uid].flags if name not in SYSTEM_NAMES)
+            names = flag_names(done.kept if done.kept is not None else flags) | frozenset(name for name in self.state.folder_entries(local)[uid].flags if name not in SYSTEM_NAMES)
             return lambda: self.state.set_flags(local, uid, names)
         client = self._client()
         if client is None:
@@ -406,11 +412,12 @@ class ServerSession:
             place = self._place(client, store_id)
             if place is None:
                 return _nothing
-            local, uid, _ = place
+            local, uid, server = place
             known = self.state.folder_entries(local)[uid].flags
-            wanted = flag_names(flags)
-            added = [flag.imap_name for flag in flags if flag.imap_name.lower() not in known]
-            removed = [flag.imap_name for flag in MessageFlag if flag.imap_name.lower() in known and flag not in flags]
+            kept = self._kept_in(server, flags)
+            wanted = flag_names(kept)
+            added = [flag.imap_name for flag in kept if flag.imap_name.lower() not in known]
+            removed = [flag.imap_name for flag in MessageFlag if flag.imap_name.lower() in known and flag not in kept]
             if added:
                 client.uid_store(str(uid), added, "add")
             if removed:
@@ -557,14 +564,15 @@ class ServerSession:
             if server is None:
                 return _nothing_new
             self._known(client, local, server)
-            result = client.append(server, raw, [flag.imap_name for flag in flags])
+            kept = self._kept_in(server, flags)
+            result = client.append(server, raw, [flag.imap_name for flag in kept])
         except ProtocolError as error:
             self._lost(error)
             return _nothing_new
 
         def commit(new_store_id: str) -> None:
             if result.uid is not None and result.uid_validity is not None and self.state.validity.get(local) == result.uid_validity:
-                self.state.map(local, result.uid, new_store_id, flag_names(flags))
+                self.state.map(local, result.uid, new_store_id, flag_names(kept))
             else:
                 self.state.mark_uploaded(new_store_id)
 

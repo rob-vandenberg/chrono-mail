@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Literal, override
 
-from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind
+from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind, MessageFlag
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
@@ -16,9 +16,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.516"
+__version__ = "invitations.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: with_mark: an answer that left no copy is read from the mark on the mail (D-310)
 # v4.4.516: your own line shows the answer in your copy (D-310)
 # v4.4.515: no limit of 50 blocks: blocks_of gives the cards of a text step by step, so every item gets its block and a huge file stays fast (D-310)
 # v4.4.514: a public calendar counts as holding your meeting again, a private one first; only one shared by someone else does not; your_calendars opens each store once per card (D-310)
@@ -76,6 +77,7 @@ class InvitationInfo:
     tasks: int = 0
     journals: int = 0  # journal entries in the text: left out
     damaged: int = 0  # items that cannot be read: left out
+    answered_on_mail: bool = False  # your answer is known from the mark on the mail: no copy of it says so (with_mark)
 
 
 class _VisibleText(HTMLParser):
@@ -236,6 +238,16 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     if found is None:
         return None
     return card_of(engine, found[0], calendar_text(attachments[found[0]]))
+
+
+def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag]) -> InvitationInfo:
+    """The card with the answer the mail itself remembers. A Decline leaves no copy, so its mark is what tells every computer; a copy that holds
+    the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant."""
+    answer = "DECLINED" if MessageFlag.INVITE_DECLINED in flags else "DELEGATED" if MessageFlag.INVITE_DELEGATED in flags else ""
+    holds = bool(card.stored_in) and (not card.occurrence_kept if card.method == "ADD" else card.occurrence_kept)  # (ADD: occurrence_kept is dates still to add)
+    if not answer or holds or card.items > 1 or card.method not in ("REQUEST", "ADD"):
+        return card
+    return replace(card, your_answer=answer, answered_on_mail=True, attendees=tuple(_yours_as_kept(person, answer) for person in card.attendees))
 
 
 def blocks_of(engine: Engine, position: int, text: str, first: int, count: int) -> tuple[InvitationInfo, ...]:

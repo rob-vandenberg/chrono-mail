@@ -15,9 +15,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_views.py 4.4.514"
+__version__ = "test_ui_invitation_views.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: The stand-in of the reading pane has _renew_blocks, which the pane calls since 4.4.515
 # v4.4.514: every dialog of an invite belongs to the main window (D-310)
 # v4.4.511: Initial tests: every open window of a mail follows an answer, and Choose a calendar opens with the card window gone (D-310)
 
@@ -35,7 +36,7 @@ def test_every_other_open_window_of_that_mail_shows_the_new_card(qtbot: QtBot) -
     def ask(_: object, __: object, done: Any, *___: object, **____: object) -> None:  # noqa: ANN401 - the answer's type is the command's
         done(answered)
 
-    host = SimpleNamespace(_card_windows=[], shown=WHERE, reader=pane, _backend=SimpleNamespace(ask=ask),
+    host = SimpleNamespace(_card_windows=[], _renew_blocks=lambda *_: False, shown=WHERE, reader=pane, _backend=SimpleNamespace(ask=ask),
                            message_windows=[SimpleNamespace(where=WHERE, reader=same), SimpleNamespace(where=("a", "Inbox", "m2"), reader=other)])
     acting = ReaderWidget()
     qtbot.addWidget(acting)
@@ -55,7 +56,7 @@ def test_a_late_refresh_leaves_the_pane_alone_when_another_mail_was_chosen(qtbot
         host.shown = ("a", "Inbox", "m2")  # the same invitation in another mail, chosen while the answer was on its way
         done(replace(shown(html="<p></p>"), invitation=replace(CARD, stored_in="Calendar (Work)")))
 
-    host = SimpleNamespace(_card_windows=[], shown=WHERE, reader=pane, _backend=SimpleNamespace(ask=ask), message_windows=[])
+    host = SimpleNamespace(_card_windows=[], _renew_blocks=lambda *_: False, shown=WHERE, reader=pane, _backend=SimpleNamespace(ask=ask), message_windows=[])
     ReadingPane._refresh_others(cast(ReadingPane, host), acting, CalendarSource(*WHERE))  # noqa: SLF001
     assert pane.invitation is not None and pane.invitation.stored_in == ""
 

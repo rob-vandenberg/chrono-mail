@@ -15,7 +15,7 @@ from chrono_mail.core.errors import (
     RebuildAborted,
     StorageError,
 )
-from chrono_mail.core.flags import MessageFlag, flags_from_maildir_suffix, flags_to_maildir_suffix
+from chrono_mail.core.flags import ANSWER_MARKS, MessageFlag, flags_from_maildir_suffix, flags_to_maildir_suffix
 from chrono_mail.core.folder import Folder, FolderRole
 from chrono_mail.core.message import MessageRef
 from chrono_mail.core.names import displayed_address, shown_name, written_address
@@ -35,9 +35,10 @@ from chrono_mail.core.pim import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 4.2.441"
+__version__ = "__init__.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: ANSWER_MARKS
 # v4.2.441: Export CertificateError and CertificateTrouble (D-299)
 # v4.2.438: chosen_own_name (the name of a calendar's own colour that the person gave it)
 # v4.2.430: Export written_address
@@ -84,6 +85,7 @@ __all__ = [
     "CryptoError",
     "Folder",
     "FolderRole",
+    "ANSWER_MARKS",
     "MessageFlag",
     "MessageFormatError",
     "MessageRef",

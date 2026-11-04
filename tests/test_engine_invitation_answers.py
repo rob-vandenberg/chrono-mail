@@ -3,7 +3,8 @@ from dataclasses import replace
 import pytest
 
 from chrono_mail.config import AccountSettings, AppConfig
-from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
+from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, CollectionKind
+from chrono_mail.engine.invitations import InvitationInfo
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
@@ -13,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.516"
+__version__ = "test_engine_invitation_answers.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: A Decline or a Delegate is remembered on the mail, Change my answer takes it off (D-310)
 # v4.4.516: Change my answer on a date takes only that date, and the date comes back with a new answer (D-310)
 # v4.4.514: the server can be chosen without its word (D-310)
 # v4.4.512: a date added to a series is answered (D-310)
@@ -99,6 +101,55 @@ def test_without_the_tick_no_answer_mail_is_made(setup: Setup) -> None:
     message = deliver(setup, invitation_mail(calendar_text()))
     result = answer(setup, message, "TENTATIVE", local_calendar(setup), mail=False)
     assert result.draft_message is None and drafts(setup) == [] and "PARTSTAT=TENTATIVE" in kept(setup)[0]
+
+
+def card(setup: Setup, message: str) -> InvitationInfo:
+    shown = call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=message).invitation
+    assert shown is not None
+    return shown
+
+
+def test_a_decline_is_remembered_on_the_mail_and_change_my_answer_takes_it_off(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    assert not card(setup, message).answered_on_mail
+    answer(setup, message, "DECLINED")
+    declined = card(setup, message)
+    assert declined.answered_on_mail and declined.your_answer == "DECLINED" and declined.stored_in == ""
+    assert [person.answer for person in declined.attendees if person.you] == ["DECLINED"]
+    assert not call(setup.engine, "invitation.reopen", account=setup.account_id, folder="Inbox", message=message).removed  # no copy was there
+    assert not card(setup, message).answered_on_mail and card(setup, message).your_answer == ""
+
+
+def test_a_delegation_that_leaves_no_copy_is_remembered_on_the_mail(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    call(setup.engine, "invitation.delegate", account=setup.account_id, folder="Inbox", message=message, to="other@example.com")
+    delegated = card(setup, message)
+    assert delegated.answered_on_mail and delegated.your_answer == "DELEGATED"
+
+
+def test_a_copy_in_your_calendar_knows_better_than_the_mark(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    answer(setup, message, "DECLINED")
+    stored(setup, calendar_text(method="", answer="ACCEPTED"))  # accepted later, from another mail or computer
+    kept_copy = card(setup, message)
+    assert not kept_copy.answered_on_mail and kept_copy.your_answer == "ACCEPTED"
+
+
+def test_a_new_answer_takes_an_older_mark_off(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    answer(setup, message, "DECLINED")
+    answer(setup, message, "ACCEPTED", local_calendar(setup))
+    assert not card(setup, message).answered_on_mail and card(setup, message).your_answer == "ACCEPTED"
+
+
+def test_a_mark_speaks_only_for_the_mails_own_invitation(setup: Setup) -> None:
+    both = calendar_text() + calendar_text().replace("UID:", "UID:second-")
+    message = deliver(setup, invitation_mail(both))
+    answer_one = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="DECLINED", calendar="", mail=False, item=0)
+    assert answer_one.answer == "DECLINED"
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        reference = mailbox.reference(mailbox.folder("Inbox"), message)
+        assert not mailbox.current_flags(reference) & ANSWER_MARKS  # one mail cannot say which of its items was declined
 
 
 def test_decline_removes_a_kept_copy_and_makes_the_answer(setup: Setup) -> None:

@@ -3831,3 +3831,8 @@ Open: changelist items 1 to 19, 21 to 25.
 Built: invitations _yours_as_kept; invitation.reopen; invitationcard is_handled, change_button, "You have not answered yet."; readingpane change_answer.
 Tests: tests/test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.515.
 Open: item 4 (a Decline remembered on the mail), items 1 to 3, 8 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.517: a Decline is remembered on the mail (the owner, D-310, item 4)
+Built: core flags INVITE_DECLINED, INVITE_DELEGATED, ANSWER_MARKS; imap_sync and imap_online treat them as keywords, a folder that keeps none keeps them here; invitations with_mark; commands_invitations _remember; invitationcard is_handled, status_text; readingpane change_answer.
+Tests: tests/test_imap_tags.py, tests/test_engine_invitation_answers.py, tests/ui/test_ui_invitation_answers.py; each new test fails on 4.4.516. The stand-in in tests/ui/test_ui_invitation_views.py was out of date since 4.4.515.
+Open: items 1 to 3, 8 to 19, 21 to 25.

@@ -12,9 +12,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.512"
+__version__ = "test_ui_invitation_answers.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: An answer only the mail remembers shows like any other (D-310)
 # v4.4.512: a date added to a series: the four answers, or only Request; a calendar that holds the meeting is greyed; a shared one is not ticked for busy times (D-310)
 # v4.4.510: the tick of Settings > Calendar is gone (D-310)
 # v4.4.506: your own meeting: its buttons, greyed with a reason when they cannot work (D-310 step 3)
@@ -30,6 +31,14 @@ def test_an_invitation_has_accept_tentative_decline_and_delegate(reader: ReaderW
     with qtbot.waitSignal(reader.invitation_answer_requested, timeout=2000) as signal:
         card.accept_button.click()
     assert signal.args == ["ACCEPTED"]
+
+
+def test_an_answer_only_the_mail_remembers_shows_it_with_change_my_answer(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, your_answer="DECLINED", answered_on_mail=True)))
+    card = reader._card  # noqa: SLF001
+    qtbot.waitUntil(lambda: card.change_button.isVisible())
+    assert card.status.text() == "You declined."
+    assert not card.accept_button.isVisible() and not card.decline_button.isVisible()
 
 
 def test_an_out_of_date_invitation_greys_its_buttons_with_a_reason(reader: ReaderWidget, qtbot: QtBot) -> None:

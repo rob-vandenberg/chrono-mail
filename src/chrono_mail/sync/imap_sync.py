@@ -3,7 +3,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace as replace_entry
 from dataclasses import dataclass, field
 
-from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, ProtocolError
+from chrono_mail.core import ANSWER_MARKS, ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, ProtocolError
 from chrono_mail.core.folder import OWN_FOLDERS, roles_by_name
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
@@ -16,9 +16,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.2.449"
+__version__ = "imap_sync.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: The answer marks of an invitation are keywords: sent and taken over with the flags, here only in a folder that keeps no keywords (D-310)
 # v4.2.449: receive_only, the first fill of a new account (D-300): folders opened read-only, only downloads; nothing sent to the server,
 #           nothing made, moved, deleted or marked there, nothing removed here, no checkpoint (the next full check asks everything)
 # v4.2.428: the accounts of a folder's downloaded messages are recorded in one write (the index's receiver, held), never one per message
@@ -155,7 +156,8 @@ def kept_flags(server_flags: frozenset[str]) -> frozenset[str]:
 
 
 def system_flags(names: frozenset[str]) -> frozenset[str]:
-    return frozenset(name for name in names if name in KEPT_FLAGS)
+    """The marks every folder keeps: not the keywords, neither tags nor answer marks."""
+    return frozenset(name for name in names if name in KEPT_FLAGS and KEPT_FLAGS[name] not in ANSWER_MARKS)
 
 
 def server_tags(server_flags: frozenset[str]) -> tuple[str, ...]:
@@ -166,7 +168,7 @@ def server_tags(server_flags: frozenset[str]) -> tuple[str, ...]:
 
 def local_names(flags: frozenset[MessageFlag], tags: tuple[str, ...], keywords: bool) -> frozenset[str]:
     """What a message here is in the server's terms: its flags, and its tags as keywords when the folder keeps keywords."""
-    names = {flag.imap_name.lower() for flag in flags}
+    names = {flag.imap_name.lower() for flag in flags if keywords or flag not in ANSWER_MARKS}
     if keywords:
         names |= {tag_to_keyword(tag).lower() for tag in tags}
     return frozenset(names)
@@ -717,7 +719,7 @@ def _push_flags(client: ImapClient, store: Store, index: Index | None, state: Im
         tags = view.tags.get(entry.store_id, ())
         mine = local_names(message.flags, tags, view.keywords)
         if view.keywords and (view.tags_unknown is None or entry.store_id in view.tags_unknown):  # its tags are not known here, which is not
-            mine = local_names(message.flags, (), False) | (entry.flags - system_flags(entry.flags))  # "none": they stay on the server (RV-48)
+            mine = local_names(message.flags, (), True) | (entry.flags - frozenset(KEPT_FLAGS))  # "none": they stay on the server (RV-48)
         known = entry.flags if view.keywords else system_flags(entry.flags)
         if mine != known:
             sending.append((uid, entry, message, tags, mine, known))
@@ -737,7 +739,7 @@ def _push_flags(client: ImapClient, store: Store, index: Index | None, state: Im
         if uid not in view.on_server:
             continue
         spelling = {flag.lower(): flag for flag in view.on_server[uid].flags}  # a keyword is removed as the server writes it
-        added = [flag.imap_name for flag in message.flags if flag.imap_name.lower() not in known]
+        added = [flag.imap_name for flag in message.flags if flag.imap_name.lower() in mine and flag.imap_name.lower() not in known]
         added += [tag_to_keyword(tag) for tag in tags if view.keywords and tag_to_keyword(tag).lower() not in known]
         removed = [spelling.get(name, KEPT_FLAGS[name].imap_name if name in KEPT_FLAGS else name) for name in sorted(known - mine)]
         try:
@@ -772,7 +774,7 @@ def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Fo
         if local_names(message.flags, current_tags, view.keywords) != (entry.flags if view.keywords else system_flags(entry.flags)):
             view.unsettled = True  # the server's change waits until this one is settled: the next check asks for it again (R-09)
             continue  # changed here too: the local change is kept and was or will be sent (it wins until then)
-        wanted = message_flags(server_now)
+        wanted = message_flags(server_now) | (frozenset() if view.keywords else message.flags & ANSWER_MARKS)  # a folder without keywords: they stay here
         try:
             if wanted != message.flags:
                 with counts.announcer.changing():
@@ -934,7 +936,7 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
             tags = ()  # the message is safe; its tags come again with the next comparison
     if not view.keywords:
         server_now = system_flags(server_now)
-    state.map(local, uid, reference.store_id, server_now if tags or not view.keywords else system_flags(server_now))
+    state.map(local, uid, reference.store_id, server_now if tags or not view.keywords else frozenset(name for name in server_now if name in KEPT_FLAGS))  # tags not kept come again
     counts.downloaded += 1
     counts.new.append(reference)
     view.locations[reference.store_id] = (local, place)
@@ -989,7 +991,7 @@ def _upload(client: ImapClient, store: Store, index: Index | None, state: ImapSt
         try:
             raw = store.read(message.ref, hint=message.relative_path)
             tags = view.tags.get(store_id, ()) if view.keywords else ()
-            result = client.append(view.plan.server_name, raw, [flag.imap_name for flag in message.flags] + [tag_to_keyword(tag) for tag in tags])
+            result = client.append(view.plan.server_name, raw, [flag.imap_name for flag in message.flags if view.keywords or flag not in ANSWER_MARKS] + [tag_to_keyword(tag) for tag in tags])
         except ImapRefused as error:  # a lasting "no": a sync conflict (kept here only when the person says so); not sent again meanwhile (D-195)
             record(store, MESSAGE_REFUSED, local, store_id, _subject(index, store_id), str(error))
             view.held.add(store_id)

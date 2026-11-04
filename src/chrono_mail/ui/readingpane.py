@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.516"
+__version__ = "readingpane.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: Change my answer asks nothing when no copy is in a calendar (D-310)
 # v4.4.516: Change my answer, confirmed first (D-310)
 # v4.4.515: the blocks of a big text come as the person scrolls; after a click only that block changes, the place in the list stays (D-310)
 # v4.4.514: a window never closes by itself: the person closes it; every dialog of an invite belongs to the main window (D-310)
@@ -408,7 +409,7 @@ class ReadingPane(QObject):
         what, home = ("task", "task list") if info.kind == "task" else ("appointment", "calendar")
         text = f"Changing the status of the invitation will remove the {what} from your {home} until you make a new choice."
         box = plain_box(QMessageBox.Icon.Question, self._parent, "Change my answer", text, QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
-        if QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:
+        if not info.answered_on_mail and QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:  # no copy: nothing leaves your calendar, so nothing to ask
             return
         parameters = SourceParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
         self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._status.report("Could not change your answer", error), owner=self)

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.516 (An answered invite shows Change my answer instead of the four answers, your own name shows your real answer, a meeting you never answered says so)*
+*Last updated: 2026-11-04, version 4.4.517 (A Decline or Delegate is remembered on the mail, so every computer shows it as handled)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.517 done (D-310, item 4 of the changelist after the review).** To check by the owner: Decline an invite: the four answers give way to "You declined." and Change my answer, also after a restart and on a second computer; Change my answer asks nothing when no appointment is in a calendar and brings the four answers back. A mail with several calendar items and an .ics file keep no such mark. Still to do: changelist items 1 to 3, 8 to 19, 21 to 25.
 
 **4.4.516 done (D-310, items 5, 6, 7 of the changelist after the review).** To check by the owner: Accept an invite: the four answers give way to Change my answer and your own name has the green tick; Change my answer asks first, the appointment goes, nothing is mailed, the four answers return. A meeting in your calendar you never answered says "You have not answered yet." Still to do for item 7: a declined invite, which needs item 4 (the mark on the mail). Next: item 4, then items 1 to 3, 8 to 19, 21 to 25.
 

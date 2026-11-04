@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.516"
+__version__ = "invitationcard.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: An answer known from the mail counts as handled and says so (D-310)
 # v4.4.516: handled: Change my answer instead of the answer buttons; a meeting you never answered says so (D-310)
 # v4.4.515: every item of a text gets its block, built as the person scrolls near it (blocks_wanted, add_blocks); update_blocks changes only some blocks (D-310)
 # v4.4.514: all_kept is gone: a window never closes by itself (D-310)
@@ -169,7 +170,9 @@ def busy_text(info: InvitationInfo) -> str:
 
 
 def status_text(info: InvitationInfo) -> str:
-    """What your calendar holds of it: nothing (empty), the copy and your answer, or a newer version."""
+    """What your calendar holds of it: nothing (empty), the copy and your answer, or a newer version. An answer that left no copy: only that answer."""
+    if info.answered_on_mail:
+        return _YOU[info.your_answer]
     if not info.stored_in:
         return ""
     if info.version == "older":
@@ -182,6 +185,8 @@ def status_text(info: InvitationInfo) -> str:
 def is_handled(info: InvitationInfo) -> bool:
     """An invitation counts as handled when you answered it, not when it merely is in a calendar: its answer buttons give way to Change my answer.
     An update that asks a new answer is not handled yet."""
+    if info.answered_on_mail:
+        return True
     if info.method == "ADD":  # (occurrence_kept: dates are still to add)
         return bool(info.stored_in) and not info.occurrence_kept and info.your_answer in _ANSWERED
     return bool(info.stored_in) and info.occurrence_kept and info.your_answer in _ANSWERED and info.version == "same"

@@ -4,10 +4,11 @@ from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
-from chrono_mail.core import ProtocolError
+from chrono_mail.core import MessageFlag, ProtocolError, StorageError
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.protocols.imap import ImapClient, keyword_to_tag, tag_to_keyword
 from chrono_mail.core import ConnectionSecurity, ServerSettings
+from chrono_mail.store.properties import MessageProperties
 from tests.enginefactory import make_engine
 from tests.fakeimap import FakeImapServer
 from tests.fakesmtp import FakeSmtpServer
@@ -15,9 +16,10 @@ from tests.test_engine_commands import call
 from tests.test_engine_imap import World, mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_imap_tags.py 3.2.342"
+__version__ = "test_imap_tags.py 4.4.517"
 
 # --- Version history ----------------------------------------------------
+# v4.4.517: The answer marks of an invitation travel as keywords, a folder without keywords keeps them here (D-310)
 # v3.2.342: tags that cannot be read here stay on the server (RV-48)
 # v0.5.138: Initial tests: tags as IMAP keywords (server first, both ways, a server without keywords)
 
@@ -159,3 +161,89 @@ def test_a_server_that_keeps_no_keywords_keeps_the_tags_here(plain_world: World)
     result = world.fetch()
     assert tags_here(world) == {"Message 1": ("Work",)} and server_flags(world) == set()
     assert any("keeps no tags" in text for text in result.failed)
+
+
+# --- the answer marks of an invitation ------------------------------------------------------------
+
+
+def declined(world: World) -> None:
+    with open_mailbox(world.engine, world.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder("Inbox"), world.rows("Inbox")[0].message_id)
+        mailbox.set_flags(reference, mailbox.current_flags(reference) | {MessageFlag.INVITE_DECLINED})
+
+
+def flags_here(world: World) -> tuple[str, ...]:
+    return world.rows("Inbox")[0].flags
+
+
+def test_an_answer_mark_goes_to_the_server_and_comes_from_it(world: World) -> None:
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    declined(world)
+    assert "$InviteDeclined" in server_flags(world)
+    world.imap.folders["INBOX"].messages[0].flags.discard("$InviteDeclined")  # Change my answer on another computer
+    world.fetch()
+    assert "invite_declined" not in flags_here(world)
+    world.imap.folders["INBOX"].messages[0].flags.add("$InviteDeclined")  # a Decline on another computer
+    world.fetch()
+    assert "invite_declined" in flags_here(world)
+    assert not tags_here(world)["Message 1"]  # it is no tag
+
+
+def test_a_mark_made_offline_goes_to_the_server_with_the_next_check(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    world.engine.close_imap_links()
+    with monkeypatch.context() as offline:
+        def unreachable(_: ImapClient) -> None:
+            raise ProtocolError("no connection")
+
+        offline.setattr(ImapClient, "connect", unreachable)
+        declined(world)
+    world.fetch()
+    assert "$InviteDeclined" in server_flags(world) and "invite_declined" in flags_here(world)
+
+
+def test_a_folder_that_keeps_no_keywords_keeps_the_answer_mark_here_without_a_conflict(plain_world: World) -> None:
+    world = plain_world
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    world.imap.refuse_stores = True  # nothing may be sent for it: a real server could say no
+    declined(world)
+    world.imap.refuse_stores = False
+    world.imap.folders["INBOX"].messages[0].flags.add("\\Flagged")  # the server changes something: its marks are taken over
+    world.fetch()
+    world.fetch()
+    assert "$InviteDeclined" not in server_flags(world)
+    assert {"invite_declined", "flagged"} <= set(flags_here(world))
+    with open_mailbox(world.engine, world.account) as mailbox:
+        assert mailbox.sync_conflicts() == [] and mailbox.waiting_for_server() == ([], 0)
+
+
+def test_marking_many_at_once_records_no_answer_mark_in_a_folder_that_keeps_no_keywords(plain_world: World) -> None:
+    world = plain_world
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    declined(world)
+    with open_mailbox(world.engine, world.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder("Inbox"), world.rows("Inbox")[0].message_id)
+        flags = mailbox.current_flags(reference) | {MessageFlag.SEEN}
+        with mailbox.together():
+            mailbox.prepare_flags({reference: flags})
+            mailbox.set_flags(reference, flags)
+        world.imap.refuse_stores = True  # taking the mark off sends nothing either
+        mailbox.set_flags(reference, flags - {MessageFlag.INVITE_DECLINED})
+    assert "invite_declined" not in flags_here(world)
+
+
+def test_tags_that_could_not_be_kept_at_download_stay_on_the_server_and_come_later(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.imap.add("INBOX", mail(1), {"Home"})
+    with monkeypatch.context() as broken:
+        def refused(*_: object) -> tuple[str, ...]:
+            raise StorageError("no room")
+
+        broken.setattr(MessageProperties, "set_tags", refused)
+        world.fetch()
+    world.fetch()
+    assert "Home" in server_flags(world) and tags_here(world) == {"Message 1": ("Home",)}
+
