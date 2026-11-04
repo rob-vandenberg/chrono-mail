@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.523"
+__version__ = "invitationcard.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: a mail of your own says what you sent, with no buttons; a file that does not name you greys its answers with an (i); Add all only with more than one item, greyed when fewer than two are left (D-310)
 # v4.4.523: the meeting's own text and an attendee's comment are shown (D-310)
 # v4.4.522: an update says so and what changed; Update calendar when your answer stands, the four answers when it moved; a mail about one date says so; a cancellation has no newer-version sentence (D-310)
 # v4.4.520: the card says when your answer waits in Drafts (D-310)
@@ -58,6 +59,8 @@ _NOT_KEPT: str = ("This invite was part of a series that is not in your {home}, 
                    "will create a special email which contains a request to the organizer to resend the original invite. You can change the accompanying text "
                    "if you wish, then click [Send] to send the email. The organizer's calendar program should recognize the request, and the organizer can then "
                    "send you the invite again.")
+_OWN: dict[str, str] = {"REQUEST": "invitation", "PUBLISH": "{item}", "ADD": "added date", "CANCEL": "cancellation", "REPLY": "answer", "COUNTER": "proposal",
+                        "DECLINECOUNTER": "refusal of a proposal", "REFRESH": "request for the latest version"}  # a mail of your own
 _ANSWERED: dict[str, str] = {"ACCEPTED": "accepted", "DECLINED": "declined", "TENTATIVE": "tentatively accepted", "DELEGATED": "delegated"}
 _PROGRESS: dict[str, str] = {"COMPLETED": "{who} has completed this task.", "IN-PROCESS": "{who} is working on this task."}  # an answer about a task's progress
 _YOU: dict[str, str] = {"ACCEPTED": "You accepted.", "DECLINED": "You declined.", "TENTATIVE": "You accepted tentatively.", "DELEGATED": "You delegated it.",
@@ -151,9 +154,11 @@ def only_update(info: InvitationInfo) -> bool:
 
 def intro_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
-        return _busy_intro(info)
+        return _own_text(info) if info.own_mail else _busy_intro(info)
     if info.parts or info.journals or info.damaged:
         return _holds_text(info)
+    if info.own_mail:
+        return _own_text(info)
     if info.plain:
         return "" if info.item >= 0 else "This file holds one item."  # a block of a file: the top of the card said it
     if asks_for_series(info):
@@ -189,8 +194,23 @@ def _holds_text(info: InvitationInfo) -> str:
 
 
 def adds_all(info: InvitationInfo) -> bool:
-    """Whether the card offers Add all: several items, and they ask no answer."""
-    return bool(info.parts) and info.method == "PUBLISH" and info.events + info.tasks > 0
+    """Whether the card offers Add all: more than one item that can be added, and they ask no answer."""
+    return bool(info.parts) and info.method == "PUBLISH" and info.events + info.tasks > 1 and not info.own_mail
+
+
+def not_for_you(info: InvitationInfo) -> bool:
+    """A file that does not name you: no account of yours received it, so there is no address to answer with."""
+    return info.position < 0 and not any(person.you for person in info.attendees)
+
+
+def _own_text(info: InvitationInfo) -> str:
+    """What a mail of your own is, in your Sent or Drafts folder."""
+    word = _OWN.get(info.method, "invitation") if info.kind != "freebusy" else ("request for busy times" if info.method == "REQUEST" else "list of busy times")
+    word = word.format(item=item_word(info))
+    if info.own_mail == "draft":
+        return f"This {word} is waiting in Drafts."
+    answer = next((person.answer for person in info.attendees if person.you), "") if info.method == "REPLY" else ""
+    return f"You sent this {word}. {_YOU.get(answer, '')}".strip()
 
 
 def busy_text(info: InvitationInfo) -> str:
@@ -204,7 +224,9 @@ def busy_text(info: InvitationInfo) -> str:
 
 
 def status_text(info: InvitationInfo) -> str:
-    """What became of it, and that your answer has not gone yet while it waits in Drafts."""
+    """What became of it, and that your answer has not gone yet while it waits in Drafts. A mail of your own says what it is, at the top."""
+    if info.own_mail:
+        return ""
     return f"{_kept_text(info)} Your answer is waiting in Drafts.".strip() if info.answer_waiting else _kept_text(info)
 
 
@@ -379,6 +401,8 @@ class InvitationCard(QFrame):
         self.add_all_button = QPushButton("Add all", self)
         self.add_all_button.clicked.connect(self.add_all_requested)
         top.addWidget(self.add_all_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.add_all_mark = InfoMark(self)
+        top.addWidget(self.add_all_mark, 0, Qt.AlignmentFlag.AlignLeft)
         self._intro_line = self._line()
         outer.addWidget(self._intro_line)
         self._blocks = QWidget(self)  # a text with several items: a card per item
@@ -561,17 +585,23 @@ class InvitationCard(QFrame):
         self._blocks.setVisible(bool(info.parts))
         for part in (self._middle_section, self._details_line, self._bottom_section):
             part.setVisible(not info.parts)
-        self.add_all_button.setVisible(adds_all(info))
+        self._show_add_all(info)
         self._asking = False
         self._build_blocks(info.parts)
         if info.parts:
             self._watch_scrolling()
             QTimer.singleShot(0, self, self._want_more)  # (the first blocks may leave room)
 
+    def _show_add_all(self, info: InvitationInfo) -> None:
+        """Add all, greyed with an (i) when fewer than two items are left to add (OR-15)."""
+        self.add_all_button.setVisible(adds_all(info))
+        self.add_all_button.setEnabled(info.left > 1)
+        self.add_all_mark.explain("Add all", "" if info.left > 1 or not adds_all(info) else "Fewer than two items are left to add: the buttons of the items do the rest.", self.add_all_button)
+
     def _build_blocks(self, parts: tuple[InvitationInfo, ...]) -> None:
         for part in parts:
             block = InvitationCard(self._blocks)
-            block.show_invitation(part)
+            block.show_invitation(replace(part, own_mail=self.info.own_mail) if self.info is not None else part)
             self._forward(part.item, block)
             self._block_rows.addWidget(block)
             self.blocks.append(block)
@@ -614,15 +644,16 @@ class InvitationCard(QFrame):
         self.blocks_changed.emit()
         QTimer.singleShot(0, self, self._want_more)
 
-    def update_blocks(self, parts: tuple[InvitationInfo, ...]) -> None:
+    def update_blocks(self, parts: tuple[InvitationInfo, ...], left: int) -> None:
         """Only these blocks change, in their place: the person stays where they were in the list (D-310)."""
         if self.info is None:
             return
         changed = {part.item: part for part in parts}
         for block in self.blocks:
             if block.info is not None and block.info.item in changed:
-                block.show_invitation(changed[block.info.item])
-        self.info = replace(self.info, parts=tuple(changed.get(part.item, part) for part in self.info.parts))
+                block.show_invitation(replace(changed[block.info.item], own_mail=self.info.own_mail))
+        self.info = replace(self.info, parts=tuple(changed.get(part.item, part) for part in self.info.parts), left=left)
+        self._show_add_all(self.info)
         self.blocks_changed.emit()
 
     @override
@@ -685,9 +716,10 @@ class InvitationCard(QFrame):
         for a shared item; greyed with an (i) when a newer version is in a calendar already (OR-15)."""
         yours = info.organizer is not None and info.organizer.you  # your own meeting: nothing to answer
         busy = info.kind == "freebusy"
-        asks = (info.method == "REQUEST" or (info.method == "ADD" and bool(info.stored_in))) and not yours and not busy
-        shared = info.method == "PUBLISH" and not busy
-        wants_busy = info.method == "REQUEST" and not yours and busy
+        quiet = bool(info.own_mail)  # a mail you wrote asks you nothing
+        asks = (info.method == "REQUEST" or (info.method == "ADD" and bool(info.stored_in))) and not yours and not busy and not quiet
+        shared = info.method == "PUBLISH" and not busy and not quiet
+        wants_busy = info.method == "REQUEST" and not yours and busy and not quiet
         self.busy_button.setVisible(wants_busy)
         handled = asks and is_handled(info)
         self.change_button.setVisible(handled)
@@ -695,11 +727,11 @@ class InvitationCard(QFrame):
             button.setVisible(asks and not handled and not only_update(info))
         self.add_button.setText(f"Add to {home_word(info)}")
         self.add_button.setVisible(shared and not info.stored_in)
-        apply = apply_text(info) if not yours else ""
+        apply = apply_text(info) if not yours and not quiet else ""
         self.apply_button.setText(apply)
         self.apply_button.setVisible(bool(apply))
-        self.request_label.setVisible(asks_for_series(info))
-        choices = organize_choices(info)
+        self.request_label.setVisible(asks_for_series(info) and not quiet)
+        choices: list[tuple[str, str]] = organize_choices(info) if not quiet else []
         self._organize_actions = [action for _, action in choices]
         for button, (label, _) in zip(self.organize_buttons, [*choices, ("", ""), ("", "")], strict=False):
             button.setText(label)
@@ -709,10 +741,15 @@ class InvitationCard(QFrame):
         self._answer_line.setVisible(shown)
         outdated = info.version == "older"
         reason = f"A newer version of this {item_word(info)} is in your {home_word(info)}: this message is out of date." if outdated else (organize_reason(info) if choices else "")
-        buttons = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.change_button, self.add_button, self.apply_button, *self.organize_buttons)
+        answering = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.busy_button)
+        buttons = (*answering, self.change_button, self.add_button, self.apply_button, *self.organize_buttons)
         for button in buttons:
             button.setEnabled(not reason)
         if not reason and "accept_proposal" in self._organize_actions and not info.proposal_usable:
             reason = f"This proposal changes nothing in your {item_word(info)}, or its times cannot be used."
             self.organize_buttons[self._organize_actions.index("accept_proposal")].setEnabled(False)  # Decline proposal still answers it
+        if not reason and (asks or wants_busy or (asks_for_series(info) and not quiet)) and not_for_you(info):
+            reason = f"None of your addresses is on this {'request' if busy else item_word(info)}, so there is no address to answer with."
+            for button in (*answering, *((self.apply_button,) if asks_for_series(info) else ())):
+                button.setEnabled(False)
         self.answers_mark.explain("Answer", reason, *buttons)

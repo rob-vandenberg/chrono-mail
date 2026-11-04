@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, FolderRole
+from chrono_mail.engine.invitations import own_mail
+from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.commands_invitations import SourceParameters, invitation_card
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
@@ -15,9 +17,10 @@ from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_lis
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.515"
+__version__ = "test_engine_invitation_files.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: Add all skips what is kept in any calendar; how many are left; a mail in Sent or Drafts (D-310)
 # v4.4.515: every item of a text comes as a block, step by step, however many it holds (D-310)
 # v4.4.514: an export read back identical, every time zone kept, several calendars in one text (D-310)
 # v4.4.508: a text with several items: each its own card and answer, of every kind; invitation.add with Replace and Skip (D-310)
@@ -174,28 +177,39 @@ def test_an_invitation_among_several_is_answered_on_its_own(setup: Setup, tmp_pa
     assert len(kept(setup)) == 1 and "Item 2" in kept(setup)[0] and "PARTSTAT=ACCEPTED" in kept(setup)[0]
 
 
-def test_items_already_in_the_chosen_calendar_are_asked_about_and_nothing_is_written(setup: Setup, tmp_path: Path) -> None:
+def test_an_item_in_a_calendar_is_handled_so_add_all_skips_it_and_writes_nothing_over_it(setup: Setup, tmp_path: Path) -> None:
     calendar = calendar_id(setup)
     on_file(setup, "invitation.add", file_with(tmp_path, two_events()), calendar=calendar)
     changed = two_events().replace("SUMMARY:Item 1", "SUMMARY:Item one").replace("SUMMARY:Item 2", "SUMMARY:Item two")
     path = file_with(tmp_path, changed.replace("END:VCALENDAR", "BEGIN:VEVENT\r\nUID:item-3@example.com\r\nDTSTAMP:20261028T090000Z\r\nDTSTART:20261103T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR"), "new.ics")
-    asked = on_file(setup, "invitation.add", path, calendar=calendar)
-    assert asked.already == 2 and asked.added == 0 and len(kept(setup)) == 2
-    skipped = on_file(setup, "invitation.add", path, calendar=calendar, existing="skip")
-    assert (skipped.added, skipped.replaced, skipped.skipped) == (1, 0, 2) and not any("Item one" in text for text in kept(setup)) and len(kept(setup)) == 3
-    replaced = on_file(setup, "invitation.add", path, calendar=calendar, existing="replace")
-    assert (replaced.added, replaced.replaced) == (0, 3) and any("Item one" in text for text in kept(setup)) and len(kept(setup)) == 3
+    assert on_file(setup, "invitation.card", path).left == 1
+    result = on_file(setup, "invitation.add", path, calendar=calendar)
+    assert (result.added, result.skipped) == (1, 2) and not any("Item one" in text for text in kept(setup)) and len(kept(setup)) == 3
+    assert on_file(setup, "invitation.card", path).left == 0
 
 
-def test_a_calendar_that_does_not_hold_them_asks_nothing_and_they_are_then_there_twice(setup: Setup, tmp_path: Path) -> None:
+def test_an_item_in_another_calendar_is_skipped_too_and_never_there_twice(setup: Setup, tmp_path: Path) -> None:
     calendar = calendar_id(setup)
     path = file_with(tmp_path, two_events())
     on_file(setup, "invitation.add", path, calendar=calendar)
     with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
         second = store.create_collection(CollectionKind.EVENTS, "Second").collection_id
-    assert on_file(setup, "invitation.add", path, calendar=second).added == 2
+    assert on_file(setup, "invitation.add", path, calendar=second).skipped == 2
     with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
-        assert sum(len(store.index.item_ids(each.collection_id)) for each in store.collections(CollectionKind.EVENTS)) == 4
+        assert sum(len(store.index.item_ids(each.collection_id)) for each in store.collections(CollectionKind.EVENTS)) == 2
+
+
+def test_the_blocks_say_how_many_items_are_left_to_add(setup: Setup, tmp_path: Path) -> None:
+    path = file_with(tmp_path, two_events())
+    assert on_file(setup, "invitation.card", path).left == 2
+    on_file(setup, "invitation.answer", path, item=0, answer="ACCEPTED", calendar=calendar_id(setup))
+    assert on_file(setup, "invitation.blocks", path, first=0, count=1).left == 1
+
+
+def test_a_mail_in_sent_or_drafts_is_your_own_and_one_in_the_inbox_is_not(setup: Setup) -> None:
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        assert own_mail(mailbox, mailbox.role_folder(FolderRole.SENT)) == "sent" and own_mail(mailbox, mailbox.role_folder(FolderRole.DRAFTS)) == "draft"
+        assert own_mail(mailbox, ("Inbox",)) == ""
 
 
 def test_add_needs_a_place_for_each_kind_the_file_holds_and_writes_nothing_without(setup: Setup, tmp_path: Path) -> None:
@@ -209,7 +223,7 @@ def test_two_items_without_a_uid_are_two_items_that_are_found_again(setup: Setup
     path = file_with(tmp_path, two_events().replace("UID:item-1@example.com\r\n", "").replace("UID:item-2@example.com\r\n", ""))
     calendar = calendar_id(setup)
     assert on_file(setup, "invitation.add", path, calendar=calendar).added == 2
-    assert on_file(setup, "invitation.add", path, calendar=calendar).already == 2
+    assert on_file(setup, "invitation.add", path, calendar=calendar).skipped == 2
     assert all(each.stored_in for each in on_file(setup, "invitation.card", path).parts)
 
 
@@ -257,7 +271,10 @@ def test_an_export_read_back_gives_every_item_identical(setup: Setup, tmp_path: 
     exported = call(setup.engine, "event.export", calendar=calendar)
     path = file_with(tmp_path, exported.text)
     assert on_file(setup, "invitation.card", path).items == 3
-    assert on_file(setup, "invitation.add", path, calendar=second, existing="replace").added == 3
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:  # what is still in a calendar is handled: a restore brings back what is gone
+        for item in store.item_ids(calendar):
+            store.delete(calendar, item)
+    assert on_file(setup, "invitation.add", path, calendar=second).added == 3
     with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
         came_back = [store.get(second, item) for item in store.item_ids(second)]
     def lines(text: str) -> list[str]:

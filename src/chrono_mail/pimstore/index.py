@@ -9,9 +9,10 @@ from chrono_mail.pimstore.extract import Extract, tag_text
 from chrono_mail.pimstore.schema import SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 2.5.335"
+__version__ = "index.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: uids: every uid of a collection in one query
 # v2.5.335: a new file is made only after it is found empty again under the write lock: a second connection opening it at that
 #           moment took it for damaged, and the file was removed while the first still used it (D-247)
 # v1.10.277: Contact groups: an item says whether it is a group and holds its members; a query asks for groups, or for everything but them (R-39)
@@ -159,6 +160,10 @@ class PimIndex(IndexDatabase):
     def get(self, item_id: str) -> IndexedItem | None:
         row = self._connection.execute(f"SELECT {_COLUMNS} FROM items i WHERE i.item_id = ?", (item_id,)).fetchone()
         return _item(row) if row is not None else None
+
+    def uids(self, collection: str) -> frozenset[str]:
+        """Every uid in a collection, in one query."""
+        return frozenset(str(row[0]) for row in self._connection.execute("SELECT uid FROM items WHERE collection = ?", (collection,)))
 
     def find_uid(self, collection: str, uid: str) -> IndexedItem | None:
         row = self._connection.execute(f"SELECT {_COLUMNS} FROM items i WHERE i.collection = ? AND i.uid = ?", (collection, uid)).fetchone()

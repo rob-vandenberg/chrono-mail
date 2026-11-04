@@ -3,7 +3,6 @@ from collections.abc import Callable
 from dataclasses import replace as changed
 from functools import partial
 from pathlib import Path
-from typing import Literal
 
 from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
@@ -40,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.524"
+__version__ = "readingpane.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: the question Replace or Skip is gone: Add all skips what is kept (D-310)
 # v4.4.524: Add all works in the main window (D-310)
 # v4.4.520: the card is shown again when an answer that waited has been sent (D-310)
 # v4.4.518: Accept proposal asks whether the attendees are told (D-310)
@@ -447,7 +447,7 @@ class ReadingPane(QObject):
 
         def got(result: BlocksResult) -> None:
             if isValid(card) and card.showing == showing:
-                card.update_blocks(result.parts)
+                card.update_blocks(result.parts, result.left)
 
         first, count = (item, 1) if item >= 0 else (0, len(info.parts))
         parameters = BlocksParameters(source.account, source.folder, source.message, part=source.part, file=source.file, first=first, count=count)
@@ -718,8 +718,7 @@ class ReadingPane(QObject):
         self.add_all_invitation(self.reader, self._in_pane())
 
     def add_all_invitation(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
-        """Add all: the calendar for the events and the task list for the tasks the text holds, then every item added; items that are in the
-        chosen place already are replaced or skipped, as the person says (D-310)."""
+        """Add all: the calendar for the events and the task list for the tasks the text holds, then every item that is in none of your calendars yet (D-310)."""
         info = reader.invitation
         if place is None or info is None or not adds_all(info):
             return
@@ -735,39 +734,23 @@ class ReadingPane(QObject):
 
         def tasks_for(calendar: str) -> None:
             if info.tasks:
-                chosen_for(True, lambda task_list: self._add_items(reader, place, calendar, task_list, "ask"))
+                chosen_for(True, lambda task_list: self._add_items(reader, place, calendar, task_list))
             else:
-                self._add_items(reader, place, calendar, "", "ask")
+                self._add_items(reader, place, calendar, "")
 
         if info.events:
             chosen_for(False, tasks_for)
         else:
             tasks_for("")
 
-    def _add_items(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, calendar: str, task_list: str, existing: Literal["ask", "replace", "skip"]) -> None:
+    def _add_items(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, calendar: str, task_list: str) -> None:
         def added(result: AddResult) -> None:
-            if result.already:
-                choice = self._replace_or_skip(result.already, calendar, task_list)
-                self._add_items(reader, place, calendar, task_list, choice)
-                return
-            done = f"Added {result.added + result.replaced} {'item' if result.added + result.replaced == 1 else 'items'}."
+            done = f"Added {result.added} {'item' if result.added == 1 else 'items'}."
             self._status.show(done if not result.skipped else f"{done} Skipped {result.skipped} that {'was' if result.skipped == 1 else 'were'} there already.")
             self._show_again(reader, place)
 
-        parameters = AddParameters(place.account, place.folder, place.message, part=place.part, file=place.file, calendar=calendar, task_list=task_list, existing=existing)
+        parameters = AddParameters(place.account, place.folder, place.message, part=place.part, file=place.file, calendar=calendar, task_list=task_list)
         self._backend.ask(INVITATION_ADD, parameters, added, lambda error: self._status.report("Could not add the items", error), owner=self)
-
-    def _replace_or_skip(self, already: int, calendar: str, task_list: str) -> Literal["replace", "skip"]:
-        """Items that are in the chosen calendar already: the person says what happens to them (D-310)."""
-        home = "calendar and task list" if calendar and task_list else ("task list" if task_list else "calendar")
-        text = f"1 of these items is already in this {home}. Replace it?" if already == 1 else f"{already} of these items are already in this {home}. Replace them?"
-        box = plain_box(QMessageBox.Icon.Question, self._parent, "Add all", text, QMessageBox.StandardButton.NoButton, QMessageBox.StandardButton.NoButton)
-        replacing = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
-        box.setDefaultButton(box.addButton("Skip", QMessageBox.ButtonRole.RejectRole))
-        box.exec()
-        answer: Literal["replace", "skip"] = "replace" if box.clickedButton() is replacing else "skip"
-        box.deleteLater()
-        return answer
 
     def _save_attachment(self, position: int, suggested: str) -> None:
         if self.shown is None:

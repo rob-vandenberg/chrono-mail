@@ -11,7 +11,7 @@ from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, Coll
 from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, with_mark, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -28,9 +28,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.520"
+__version__ = "commands_invitations.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: Add all skips what any of your calendars holds, the choice to replace is gone; invitation.blocks says how many items are left (D-310)
 # v4.4.520: an answer's draft names the mail it answers, so sending it sets the Replied mark; a server that mails sets it at once; the card knows a draft waits (D-310)
 # v4.4.519: the choice of who wrote moved to invitations.py, for the card too; a declined proposal and a sent latest version are marked on the mail and not made twice (D-310)
 # v4.4.518: Who mails moved to meetingmail.py; the box of the account that got the invite decides, and it covers only answers; Accept proposal follows what the person said (D-310)
@@ -396,62 +397,49 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
 class AddParameters(SourceParameters):
     calendar: str = field(default="", metadata=option("The calendar the events go into"))
     task_list: str = field(default="", metadata=option("The task list the tasks go into"))
-    existing: Literal["ask", "replace", "skip"] = field(default="ask", metadata=option("Items already in that calendar: ask (nothing is added then), replace or skip"))
 
 
 @dataclass(frozen=True, slots=True)
 class AddResult:
-    already: int  # existing=ask: how many items are in the chosen calendar or task list already; nothing was added
     added: int
-    replaced: int
-    skipped: int
+    skipped: int  # items one of your calendars holds already
 
 
 def invitation_add(engine: Engine, parameters: AddParameters) -> AddResult:
     """Add all (D-310): the items of a text that ask no answer, each its own object: events in the chosen calendar, tasks in the chosen task
-    list, read once. An item kept in another calendar is added all the same: the person chose this one, and it is then there twice."""
+    list, read once. An item one of your calendars holds is handled, so it is skipped, whichever calendar was chosen."""
     opened = _opened(engine, parameters, busy=True, whole=True)
     if opened.message.method != "PUBLISH":
         raise UsageError("These items ask for an answer: each has its own buttons")
     items = text_items(opened.text)
     chosen = {"event": parameters.calendar, "task": parameters.task_list}
     places = {kind: [position for position, each in enumerate(items.kinds) if each == kind] for kind in chosen}
-    known: set[int] = set()
     for kind, collection_kind in (("event", CollectionKind.EVENTS), ("task", CollectionKind.TASKS)):
-        if places[kind]:
-            account, info = _collection(engine, collection_kind, chosen[kind])
-            if info.read_only:
-                raise UsageError(f"This {_home(collection_kind)} is read-only")
-            with open_pim(engine, account) as store:
-                known.update(position for position in places[kind] if store.index.find_uid(info.collection_id, items.uids[position]) is not None)
+        if places[kind] and _collection(engine, collection_kind, chosen[kind])[1].read_only:
+            raise UsageError(f"This {_home(collection_kind)} is read-only")
     if not places["event"] and not places["task"]:
         raise UsageError("This holds nothing to add")
-    if parameters.existing == "ask" and known:
-        return AddResult(len(known), 0, 0, 0)
-    skipped = known if parameters.existing == "skip" else set()
-    added = replaced = 0
+    skipped = kept_items(engine, opened.text)
+    added = 0
     for kind, collection_kind in (("event", CollectionKind.EVENTS), ("task", CollectionKind.TASKS)):
         wanted = [(items.uids[position], items.texts[position]) for position in places[kind] if position not in skipped]
         if wanted:
-            new, again = _put_items(engine, collection_kind, chosen[kind], wanted)
-            added, replaced = added + new, replaced + again
-    return AddResult(0, added, replaced, len(skipped))
+            added += _put_items(engine, collection_kind, chosen[kind], wanted)
+    return AddResult(added, len(skipped))
 
 
-def _put_items(engine: Engine, kind: CollectionKind, collection: str, items: list[tuple[str, str]]) -> tuple[int, int]:
+def _put_items(engine: Engine, kind: CollectionKind, collection: str, items: list[tuple[str, str]]) -> int:
     """Items (their uid and text) into a calendar or task list, each as it was written (what a file holds comes back identical), server first:
-    how many were added and how many replaced one with that uid."""
+    how many went in."""
     account, info = _collection(engine, kind, collection)
-    added = replaced = 0
     try:
         with open_pim(engine, account) as store, item_writer(engine, account, store) as writer:
             for uid, text in items:
                 known = store.index.find_uid(info.collection_id, uid)
                 writer.put(info, published_copy(text) or text, known.item_id if known else None)
-                added, replaced = added + (known is None), replaced + (known is not None)
     except StorageError as error:
         raise UsageError(str(error)) from None
-    return added, replaced
+    return len(items)
 
 
 def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None = None) -> str:
@@ -806,6 +794,7 @@ class BlocksParameters(SourceParameters):
 @dataclass(frozen=True, slots=True)
 class BlocksResult:
     parts: tuple[InvitationInfo, ...]
+    left: int  # how many items of the text are in none of your calendars yet
 
 
 def invitation_blocks(engine: Engine, parameters: BlocksParameters) -> BlocksResult:
@@ -813,7 +802,7 @@ def invitation_blocks(engine: Engine, parameters: BlocksParameters) -> BlocksRes
     if parameters.first < 0 or parameters.count < 1:
         raise UsageError("Name a place and how many items")
     opened = _opened(engine, replace(parameters, item=-1), busy=True, whole=True)
-    return BlocksResult(blocks_of(engine, parameters.part, opened.whole, parameters.first, parameters.count))
+    return BlocksResult(blocks_of(engine, parameters.part, opened.whole, parameters.first, parameters.count), items_left(engine, opened.whole))
 
 
 def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationInfo:

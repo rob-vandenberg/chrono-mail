@@ -3871,3 +3871,8 @@ Open: items 16 to 19, 21 to 25.
 Built: the reading pane connects Add all, as the windows already did.
 Tests: tests/ui/test_ui_invitation_window.py; the new test fails on 4.4.523.
 Open: items 16, 18, 19, 21 to 25.
+
+## 2026-11-04, 4.4.525: your own mails, invites not meant for you, Add all (the owner, D-310, items 16, 18, 21)
+Built: a card in Sent or Drafts (own_mail, by folder role) says what you wrote and has no buttons; a file naming none of your addresses greys its answers with an (i); Add all needs more than one item, is greyed when fewer than two are left (left, one query per calendar), and skips what any of your calendars holds, so the question Replace or Skip is gone.
+Tests: tests/test_engine_invitation_files.py, tests/ui/test_ui_invitation_answers.py, tests/ui/test_ui_invitation_window.py; the new tests fail on 4.4.524. Two review rounds: the first found two real faults, fixed; the second nothing real.
+Open: items 19, 22 to 25.

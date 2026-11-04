@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.523"
+__version__ = "invitations.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: own_mail: a mail in Sent or Drafts is your own; left, kept_items and items_left: what Add all still has to add (D-310)
 # v4.4.523: description and comment on the card (D-310)
 # v4.4.522: one_date, answer_again, the times now also for an update (D-310)
 # v4.4.520: answer_waiting: a card knows that your answer still waits in Drafts (D-310)
@@ -92,6 +93,8 @@ class InvitationInfo:
     answer_again: bool = False  # an update: taking it asks your answer again, as its time changed
     kept_start: date | datetime | None = None  # a proposal or an update: the times your meeting has now
     kept_end: date | datetime | None = None
+    own_mail: str = ""  # a mail of your own: "sent" in the Sent folder, "draft" in Drafts; it says what you wrote and asks nothing
+    left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
 
 
 class _VisibleText(HTMLParser):
@@ -329,6 +332,12 @@ def answer_waiting(mailbox: Mailbox, message_id: str | None) -> bool:
     return False
 
 
+def own_mail(mailbox: Mailbox, folder: tuple[str, ...]) -> str:
+    """Whether a mail lies in your Sent or Drafts folder, known by role (OR-26). The folder tells, not the sender: another account of yours can invite this one."""
+    roles = {each.role: each.path for each in mailbox.store.list_folders()}
+    return "sent" if roles.get(FolderRole.SENT) == folder else "draft" if roles.get(FolderRole.DRAFTS) == folder else ""
+
+
 def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = (), waiting: bool = False) -> InvitationInfo:
     """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves no copy, so its mark is what tells every
     computer; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
@@ -361,6 +370,25 @@ def blocks_of(engine: Engine, position: int, text: str, first: int, count: int) 
     return tuple(cards)
 
 
+def kept_items(engine: Engine, text: str) -> frozenset[int]:
+    """The places of a text's events and tasks that one of your calendars or task lists holds: such an item is handled, wherever it is."""
+    found = text_items(text)
+    kept: set[int] = set()
+    for kind, collection_kind in (("event", CollectionKind.EVENTS), ("task", CollectionKind.TASKS)):
+        places = [place for place, each in enumerate(found.kinds) if each == kind]
+        if places:
+            with your_calendars(engine, collection_kind) as calendars:
+                held = frozenset[str]().union(*(store.index.uids(info.collection_id) for _, store, info in calendars))  # one query per calendar: a text may hold very many items
+                kept.update(place for place in places if found.uids[place] in held)
+    return frozenset(kept)
+
+
+def items_left(engine: Engine, text: str) -> int:
+    """How many events and tasks of a text are in none of your calendars yet."""
+    found = text_items(text)
+    return found.kinds.count("event") + found.kinds.count("task") - len(kept_items(engine, text))
+
+
 def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
     """The card of a calendar text, or None when it holds nothing to show. Several items: the first ones' cards in `parts`, the first one's
     details in the card itself, and what the text holds; blocks_of gives the rest."""
@@ -369,7 +397,8 @@ def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
     if not cards:
         return None
     return replace(cards[0], item=-1, parts=cards if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
-                   tasks=found.kinds.count("task"), journals=found.journals, damaged=found.damaged)
+                   tasks=found.kinds.count("task"), journals=found.journals, damaged=found.damaged,
+                   left=items_left(engine, text) if len(found.texts) > 1 and cards[0].method == "PUBLISH" else 0)
 
 
 def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> InvitationInfo:

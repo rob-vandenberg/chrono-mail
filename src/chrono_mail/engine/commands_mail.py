@@ -22,7 +22,7 @@ from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GROUPS, TOLERANCE_SECONDS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, invitation_of, shows_text, with_mark
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, invitation_of, own_mail, shows_text, with_mark
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.receiving import own_place, receiving_account
@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.520"
+__version__ = "commands_mail.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: message.show says when a card is of a mail of your own (D-310)
 # v4.4.520: the card knows whether your answer waits in Drafts (D-310)
 # v4.4.519: the card knows who wrote the mail (D-310)
 # v4.4.517: message.show reads the answer mark of the mail (D-310)
@@ -914,6 +915,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         invitation = with_mark(invitation, mailbox.current_flags(reference), (address.address for address in parsed.from_addresses), answer_waiting(mailbox, parsed.message_id)) if invitation is not None else None
         html_body = parsed.html_body
         if invitation is not None:
+            invitation = replace(invitation, own_mail=own_mail(mailbox, folder))
             html_shows, plain_shows = shows_text(parsed.html_body, parsed.text_body)
             html_shows = html_shows or any(part.inline for part in parsed.attachments)  # a part the HTML shows by cid:, also as a background
             if not html_shows and not plain_shows and not below:  # a picture the HTML shows counts in html_shows

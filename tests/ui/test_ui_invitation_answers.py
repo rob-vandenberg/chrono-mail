@@ -6,15 +6,16 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
 from chrono_mail.ui.infomark import InfoMark
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog, InvitationDelegateDialog
-from chrono_mail.ui.invitationcard import apply_text
+from chrono_mail.ui.invitationcard import adds_all, apply_text, intro_text, status_text
 from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.522"
+__version__ = "test_ui_invitation_answers.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: your own mails, a file that does not name you, Add all with one item (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.517: An answer only the mail remembers shows like any other (D-310)
 # v4.4.512: a date added to a series: the four answers, or only Request; a calendar that holds the meeting is greyed; a shared one is not ticked for busy times (D-310)
@@ -196,3 +197,43 @@ def test_buttons_of_your_own_meeting_are_greyed_with_a_reason_when_they_cannot_w
     reader.show_message(replace(shown(html="<p></p>"), invitation=useless))
     qtbot.waitUntil(lambda: card.organize_buttons[1].isEnabled())
     assert not card.organize_buttons[0].isEnabled() and "changes nothing" in card.answers_mark.reason  # Decline proposal still answers it
+
+
+def test_your_own_mails_say_what_you_sent_and_have_no_buttons(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, own_mail="sent")))
+    card = reader._card  # noqa: SLF001
+    assert card.intro.text() == "You sent this invitation." and card.status.text() == ""
+    assert not card.accept_button.isVisibleTo(card) and not card.delegate_button.isVisibleTo(card) and not card.apply_button.isVisibleTo(card)
+    assert intro_text(replace(CARD, own_mail="draft")) == "This invitation is waiting in Drafts."
+    me = replace(CARD.attendees[0], you=True, answer="ACCEPTED")
+    assert intro_text(replace(CARD, method="REPLY", attendees=(me,), own_mail="sent")) == "You sent this answer. You accepted."
+    assert intro_text(replace(CARD, method="CANCEL", own_mail="sent")) == "You sent this cancellation."
+    assert status_text(replace(CARD, stored_in="Personal (account)", own_mail="sent")) == ""
+
+
+def test_add_all_needs_more_than_one_item_to_add() -> None:
+    several = replace(CARD, method="PUBLISH", parts=(CARD, CARD), events=2, left=2)
+    assert adds_all(several) and not adds_all(replace(several, events=1)) and not adds_all(replace(several, own_mail="sent"))
+
+
+def test_a_file_that_does_not_name_you_greys_the_answers_with_a_reason(reader: ReaderWidget, qtbot: QtBot) -> None:
+    others = tuple(replace(person, you=False) for person in CARD.attendees)
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, position=-1, attendees=others)))
+    card = reader._card  # noqa: SLF001
+    assert card.accept_button.isVisibleTo(card) and not card.accept_button.isEnabled() and not card.delegate_button.isEnabled()
+    assert card.answers_mark.isVisibleTo(card) and "no address to answer with" in card.answers_mark.toolTip()
+
+
+def test_a_mail_that_does_not_name_you_can_be_answered_as_an_invitation_passed_on(reader: ReaderWidget, qtbot: QtBot) -> None:
+    others = tuple(replace(person, you=False) for person in CARD.attendees)
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, attendees=others)))
+    assert reader._card.accept_button.isEnabled()  # noqa: SLF001
+
+
+def test_a_block_of_your_own_mail_stays_without_buttons_when_it_is_read_again(reader: ReaderWidget, qtbot: QtBot) -> None:
+    part = replace(CARD, method="PUBLISH", item=0)
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="PUBLISH", parts=(part, replace(part, item=1)), items=2, events=2, own_mail="sent")))
+    card = reader._card  # noqa: SLF001
+    assert not card.blocks[0].add_button.isVisibleTo(card.blocks[0])
+    card.update_blocks((part,), 0)
+    assert not card.blocks[0].add_button.isVisibleTo(card.blocks[0])

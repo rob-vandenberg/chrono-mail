@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.524"
+__version__ = "test_ui_invitation_window.py 4.4.525"
 
 # --- Version history ----------------------------------------------------
+# v4.4.525: Add all greyed when fewer than two items are left (D-310)
 # v4.4.524: Add all in the main window reaches its action (D-310)
 # v4.4.523: the card shows the meeting's text and who wrote a comment (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
@@ -351,24 +352,13 @@ def test_add_all_puts_each_kind_in_its_place_and_the_window_stays_open(world: Wo
     window.close()
 
 
-def test_items_already_there_ask_replace_or_skip_with_the_owners_words(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_all_is_greyed_with_its_reason_when_fewer_than_two_items_are_left(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = opened_file(world, qtbot, calendar_file(tmp_path, TWO_ITEMS))
+    assert window.card.add_all_button.isEnabled()
     first_choice(monkeypatch)
     window.card.blocks[0].add_button.click()
-    qtbot.waitUntil(lambda: bool(window.card.blocks) and not window.card.blocks[0].add_button.isVisible(), timeout=5000)
-    asked: list[str] = []
-
-    def skip(box: QMessageBox) -> int:
-        asked.append(box.text())
-        assert [button.text() for button in box.buttons()] == ["Replace", "Skip"] or [button.text() for button in box.buttons()] == ["Skip", "Replace"]
-        next(button for button in box.buttons() if button.text() == "Skip").click()
-        return 0
-
-    monkeypatch.setattr(QMessageBox, "exec", skip)
-    window.card.add_all_button.click()
-    qtbot.waitUntil(lambda: kept_items(world, CollectionKind.TASKS) == 1, timeout=5000)
-    assert asked == ["1 of these items is already in this calendar and task list. Replace it?"]
-    assert kept_items(world, CollectionKind.EVENTS) == 1 and window.isVisible()
+    qtbot.waitUntil(lambda: not window.card.add_all_button.isEnabled(), timeout=5000)
+    assert window.card.add_all_button.isVisible() and window.card.add_all_mark.isVisibleTo(window.card)
     window.close()
 
 
