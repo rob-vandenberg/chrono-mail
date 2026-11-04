@@ -1,6 +1,7 @@
 """Calendar messages sent by mail (iTIP, RFC 5546; iMIP, RFC 6047): what a text/calendar part asks or tells. No I/O."""
 import copy
-from collections.abc import Iterable
+import hashlib
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from itertools import groupby
@@ -16,9 +17,11 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.507"
+__version__ = "itip.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: text_items: a calendar text split into its items, of every kind, each a text of its own (items_text: some of them together);
+#           journal entries and damaged items counted; a shared item without a UID gets a lasting one; item_count is gone (D-310)
 # v4.4.507: busy times (VFREEBUSY): read from a message (BusyPeriod), made from your calendars (busy_periods) and written as an answer
 #           (busy_reply); item_count: how many items a calendar text holds (D-310 step 4)
 # v4.4.506: you are the organizer: an attendee's answer into your meeting, a proposal accepted (new time, SEQUENCE + 1, attendees
@@ -1071,15 +1074,79 @@ def declinecounter_text(counter: str, now: datetime) -> str | None:
     return message.to_ical().decode("utf-8")
 
 
-def item_count(text: str | bytes) -> int:
-    """How many items a calendar text holds, of the kind written first (the changed dates of a series are that series; an item without a UID counts by itself)."""
+@dataclass(frozen=True, slots=True)
+class TextItems:
+    """What a calendar text holds, item by item: an event with its changed dates is one item, an item without a UID is one by itself."""
+
+    texts: tuple[str, ...] = ()  # each item as a calendar text of its own, with the text's METHOD and the time zones it uses
+    kinds: tuple[MessageKind, ...] = ()
+    uids: tuple[str, ...] = ()
+    journals: int = 0  # journal entries: left out (B-32)
+    damaged: int = 0  # items that cannot be read: left out
+
+
+def _method_of(calendar: icalendar.Calendar) -> str:
+    method = _text(calendar, "METHOD").upper()
+    return method if method in METHODS else ""  # an unknown method asks nothing Chrono Mail can answer: a calendar file
+
+
+def _readable(component: icalendar.Component, method: str, kind: MessageKind) -> bool:
+    try:
+        return _message_of(component, method, kind) is not None
+    except Exception:  # noqa: BLE001 - one damaged item is left out, whatever the library raises
+        return False
+
+
+def _items_in(calendar: icalendar.Calendar) -> tuple[list[list[icalendar.Component]], int, int]:
+    """The items of a calendar in the order written, how many journal entries and how many damaged items it holds. A shared item without a UID
+    gets one made from its contents: reading the text again finds the same item, and it can be found in a calendar."""
+    method = _method_of(calendar)
+    found: dict[tuple[str, str], list[icalendar.Component]] = {}
+    journals = 0
+    for position, component in enumerate(calendar.subcomponents[:MAXIMUM_COMPONENTS]):
+        if component.name == "VJOURNAL":
+            journals += 1
+        elif component.name in _KINDS:
+            uid = _first(component, "UID")
+            if not uid and method in ("", "PUBLISH"):
+                uid = f"{hashlib.sha256(component.to_ical()).hexdigest()[:32]}@chrono-mail"
+                component["UID"] = icalendar.vText(uid)
+            found.setdefault((component.name, uid or f"\0{position}"), []).append(component)
+    items = [group for group in found.values() if any(_readable(each, method, _KINDS[str(each.name)]) for each in group)]
+    return items, journals, len(found) - len(items)
+
+
+def _calendar_of(calendar: icalendar.Calendar, components: list[icalendar.Component]) -> str:
+    """These components in a calendar text of their own: the properties of the calendar, and the time zones they use."""
+    used = {each.params["TZID"] for component in components for value in component.values() for each in (value if isinstance(value, list) else [value])
+            if "TZID" in getattr(each, "params", {})}
+    made = copy.copy(calendar)
+    made.subcomponents = [*(each for each in calendar.subcomponents if each.name == "VTIMEZONE" and _text(each, "TZID") in used), *components]
+    return made.to_ical().decode("utf-8")
+
+
+def text_items(text: str | bytes) -> TextItems:
+    """The items of a calendar text, read once: every event, task and busy time, of whatever kind is written first or later. Never raises."""
     calendar = _parse(text)
     if calendar is None:
-        return 0
-    kind_name = next((each.name for each in calendar.subcomponents if each.name in _KINDS), None)
-    items = [each for each in calendar.subcomponents if each.name == kind_name][:MAXIMUM_COMPONENTS]
-    uids = {uid for each in items if (uid := _first(each, "UID"))}
-    return len(uids) + sum(1 for each in items if not _first(each, "UID"))
+        return TextItems()
+    every_uid = all(_first(each, "UID") for each in calendar.subcomponents if each.name in _KINDS)
+    items, journals, damaged = _items_in(calendar)
+    if len(items) == 1 and every_uid and not journals and not damaged:  # one item and nothing else: as it was written
+        texts: list[str] = [text.decode("utf-8", "replace") if isinstance(text, bytes) else text]
+    else:
+        texts = [_calendar_of(calendar, item) for item in items]
+    return TextItems(tuple(texts), tuple(_KINDS[str(item[0].name)] for item in items), tuple(_first(item[0], "UID") for item in items), journals, damaged)
+
+
+def items_text(text: str | bytes, positions: Collection[int]) -> str:
+    """Some items of a calendar text (their places in text_items) together in one text; "": none of them."""
+    calendar = _parse(text)
+    if calendar is None:
+        return ""
+    items = _items_in(calendar)[0]
+    chosen = [component for position, item in enumerate(items) if position in positions for component in item]
+    return _calendar_of(calendar, chosen) if chosen else ""
 
 
 # --- busy times (D-310 step 4) -----------------------------------------------------------------------------------------------------------

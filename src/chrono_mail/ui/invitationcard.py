@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import override
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal, SignalInstance
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -20,9 +20,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.507"
+__version__ = "invitationcard.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: a text with several items: one block per item with its own details and buttons, and Add all at the top for items that ask no
+#           answer; the card says what the text holds and what is left out (D-310)
 # v4.4.507: a task says task and task list, with a due moment and the answers COMPLETED and IN-PROCESS; busy times with Send my busy times…;
 #           a file that asks nothing or holds several items says so (D-310 step 4)
 # v4.4.506: your own meeting: Take their answer, Accept proposal and Decline proposal, Send the latest version (D-310 step 3)
@@ -104,10 +106,10 @@ def _busy_intro(info: InvitationInfo) -> str:
 def intro_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return _busy_intro(info)
-    if info.items > 1:
-        return f"This file holds {info.items} items. The first is shown here."
+    if info.parts or info.journals or info.damaged:
+        return _holds_text(info)
     if info.plain:
-        return "This file holds one item."
+        return "" if info.item >= 0 else "This file holds one item."  # a block of a file: the top of the card said it
     item = item_word(info)
     writer = next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
     who = (writer.name or writer.address) if writer is not None else "Someone"
@@ -115,6 +117,37 @@ def intro_text(info: InvitationInfo) -> str:
         return _PROGRESS[writer.answer].format(who=who)
     answered = _ANSWERED.get(writer.answer, "answered") if writer is not None else "answered"
     return _INTRO.get(info.method, "This {item} was sent to you.").format(item=item, who=who, answered=answered)
+
+
+def _counted(number: int, one: str, more: str) -> str:
+    return f"{number} {one if number == 1 else more}"
+
+
+def _holds_text(info: InvitationInfo) -> str:
+    """What a text holds, by kind, and what is left out of it."""
+    kinds = [_counted(number, one, more) for number, one, more in ((info.events, "event", "events"), (info.tasks, "task", "tasks")) if number]
+    others = info.items - info.events - info.tasks  # busy times
+    if others:
+        kinds.append(_counted(others, "list of busy times", "lists of busy times"))
+    text = f"This file holds {', '.join(kinds[:-1])} and {kinds[-1]}." if len(kinds) > 1 else f"This file holds {kinds[0] if kinds else 'no items'}."
+    if info.journals:
+        text += f" {_counted(info.journals, 'journal entry is', 'journal entries are')} left out."
+    if info.damaged:
+        text += f" {_counted(info.damaged, 'item cannot be read and is', 'items cannot be read and are')} left out."
+    if len(info.parts) < info.items and info.parts:
+        text += f" The first {len(info.parts)} are shown here."
+    return text
+
+
+def adds_all(info: InvitationInfo) -> bool:
+    """Whether the card offers Add all: several items, and they ask no answer."""
+    return bool(info.parts) and info.method == "PUBLISH" and info.events + info.tasks > 0
+
+
+def all_kept(info: InvitationInfo) -> bool:
+    """Whether every item on the card that can be kept is in one of your calendars."""
+    blocks = info.parts or (info,)
+    return len(blocks) == info.items and all(each.stored_in or each.kind == "freebusy" for each in blocks)
 
 
 def busy_text(info: InvitationInfo) -> str:
@@ -211,6 +244,7 @@ class InvitationCard(QFrame):
     delegate_requested = Signal()  # Delegate…: someone else goes in your place
     organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
     busy_requested = Signal()  # Send my busy times…
+    add_all_requested = Signal()  # Add all
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -219,6 +253,7 @@ class InvitationCard(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self._sections: list[QVBoxLayout] = []  # their margins follow the size factor (restyle)
+        self._section_parts: list[QWidget] = []
         self.intro = self._plain()
         self.title = self._plain()
         self.when = self._plain()
@@ -239,17 +274,29 @@ class InvitationCard(QFrame):
 
         top = self._section(outer)
         top.addWidget(self.intro)
-        outer.addWidget(self._line())
+        self.add_all_button = QPushButton("Add all", self)
+        self.add_all_button.clicked.connect(self.add_all_requested)
+        top.addWidget(self.add_all_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._intro_line = self._line()
+        outer.addWidget(self._intro_line)
+        self._blocks = QWidget(self)  # a text with several items: a card per item
+        self._block_rows = QVBoxLayout(self._blocks)
+        self._sections.append(self._block_rows)
+        outer.addWidget(self._blocks)
+        self.blocks: list[InvitationCard] = []
+        self.pressed_item: int = -1  # the block whose button was pressed last (read while its signal is handled); -1: the card itself
         middle = self._section(outer)
         middle.addWidget(self.title)
         middle.addWidget(self.when)
         middle.addWidget(self.busy_times)
-        outer.addWidget(self._line())
+        self._details_line = self._line()
+        outer.addWidget(self._details_line)
         bottom = self._section(outer)
         bottom.addWidget(self._organizer_row)
         bottom.addWidget(self._place_row)
         bottom.addWidget(self._people_row)
         bottom.addWidget(self.status)
+        self._intro_section, self._middle_section, self._bottom_section = self._section_parts
         self._answer_line = self._line()
         outer.addWidget(self._answer_line)
         answers = QWidget(self)
@@ -290,6 +337,23 @@ class InvitationCard(QFrame):
         if parent is not None:
             parent.installEventFilter(self)  # its palette tells of another theme (eventFilter)
 
+    def _forward(self, position: int, block: "InvitationCard") -> None:
+        """The buttons of a block reach whoever listens to this card; pressed_item says which block it was."""
+
+        def pressed(signal: SignalInstance) -> Callable[..., None]:
+            def forward(*values: str) -> None:
+                self.pressed_item = position
+                signal.emit(*values)
+            return forward
+
+        block.answer_requested.connect(pressed(self.answer_requested))
+        block.organize_requested.connect(pressed(self.organize_requested))
+        block.apply_requested.connect(pressed(self.apply_requested))
+        block.delegate_requested.connect(pressed(self.delegate_requested))
+        block.busy_requested.connect(pressed(self.busy_requested))
+        block.link_activated.connect(self.link_activated)
+        block.link_hovered.connect(self.link_hovered)
+
     def _organize(self, position: int) -> None:
         if position < len(self._organize_actions):
             self.organize_requested.emit(self._organize_actions[position])
@@ -308,6 +372,7 @@ class InvitationCard(QFrame):
         section = QWidget(self)
         layout = QVBoxLayout(section)
         self._sections.append(layout)
+        self._section_parts.append(section)
         outer.addWidget(section)
         return layout
 
@@ -368,15 +433,44 @@ class InvitationCard(QFrame):
     def clear(self) -> None:
         """Nothing of the message before stays: its card and its attendees go."""
         self.info = None
+        self._clear_blocks()
         self.people.clear()
         for label in (self.intro, self.title, self.when, self.busy_times, self.organizer, self.place, self.status):
             label.clear()
 
+    def _clear_blocks(self) -> None:
+        for block in self.blocks:
+            block.setParent(None)
+            block.deleteLater()
+        self.blocks = []
+
+    def _show_blocks(self, info: InvitationInfo) -> None:
+        """A text with several items: what it holds at the top, then a block per item (D-310)."""
+        self._clear_blocks()
+        self._blocks.setVisible(bool(info.parts))
+        for part in (self._middle_section, self._details_line, self._bottom_section):
+            part.setVisible(not info.parts)
+        self.add_all_button.setVisible(adds_all(info))
+        for part in info.parts:
+            block = InvitationCard(self._blocks)
+            block.show_invitation(part)
+            self._forward(part.item, block)
+            self._block_rows.addWidget(block)
+            self.blocks.append(block)
+
     def show_invitation(self, info: InvitationInfo) -> None:
         self.info = info
+        self.pressed_item = -1
         self.restyle()
         colours = self._theme()
         self.intro.setText(intro_text(info))
+        for part in (self._intro_section, self._intro_line):
+            part.setVisible(bool(self.intro.text()))
+        self._show_blocks(info)
+        if info.parts:
+            self._answers.setVisible(False)
+            self._answer_line.setVisible(False)
+            return
         busy = info.kind == "freebusy"
         self.title.setText("Busy times" if busy else info.title or "(no title)")
         when = when_text(info.start, info.end, info.all_day) + (" (repeats)" if info.repeats else "")

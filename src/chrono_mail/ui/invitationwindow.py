@@ -16,9 +16,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationwindow.py 4.4.507"
+__version__ = "invitationwindow.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: CalendarSource.item: the one item of a text with several (D-310)
 # v4.4.507: Initial: a calendar attachment or file as a card in a window of its own (D-310 step 4)
 
 
@@ -31,6 +32,7 @@ class CalendarSource:
     message: str = ""
     part: int = -1
     file: str = ""
+    item: int = -1  # in a text with several items, the one meant
 
 
 def is_calendar_file(name: str) -> bool:

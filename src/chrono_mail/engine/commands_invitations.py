@@ -12,7 +12,7 @@ from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS, I
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, card_of, several_items, your_addresses
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, card_of, your_addresses
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -21,15 +21,17 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, updated_copy, with_added, without_occurrence,
+    BusyPeriod, CalendarMessage, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, updated_copy, with_added, without_occurrence,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.507"
+__version__ = "commands_invitations.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: a text with several items: every command works on one item (`item`), of whatever kind; invitation.add: all items that ask no
+#           answer, events into the chosen calendar, tasks into the chosen task list, those already there replaced or skipped (D-310)
 # v4.4.507: every command also takes an attachment or a file (SourceParameters), invitation.card shows one; several items of a shared text
 #           are imported, each on its own; invitation.busy: your busy times answered from the calendars you tick; a task says task and
 #           task list, never meeting and calendar (D-310 step 4)
@@ -73,6 +75,12 @@ class SourceParameters(MessageParameters):
 
     part: int = field(default=-1, metadata=option("An attachment's position in the message; -1: the message's own calendar message"))
     file: str = field(default="", metadata=option("Or a calendar file (.ics) on this computer"))
+    item: int = field(default=-1, metadata=option("In a text with several items: the place of the one meant; -1: the text has one"))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChoicesParameters(SourceParameters):
+    kind: Literal["", "event", "task"] = field(default="", metadata=option("event or task: the calendars or task lists for all items of that kind; empty: for the one item"))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -100,7 +108,8 @@ class _Opened:
     text: str  # the calendar part's text
     receiving: AccountSettings | None  # the account the mail was sent to (D-292)
     plain: bool = False  # a calendar text that asks nothing (no METHOD): offered as PUBLISH
-    several: bool = False  # a shared text with several items: each is its own object in a calendar, so they are imported
+    several: bool = False  # a text with several items and none chosen: only the card and Add all work on all of them
+    whole: str = ""  # the whole text, also of what is left out: the card says what it holds
 
 
 def _file_text(path: str) -> bytes:
@@ -113,12 +122,12 @@ def _file_text(path: str) -> bytes:
         raise UsageError(f"The file {path} could not be read") from None
 
 
-def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False) -> _Opened:
-    """The calendar message of a mail, an attachment or a file. busy: the caller also takes busy times; everything else has nothing to do with them."""
+def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, whole: bool = False) -> _Opened:
+    """The calendar message of a mail, an attachment or a file, or the one item of it that is meant. busy: the caller also takes busy times;
+    everything else has nothing to do with them. whole: the caller also takes a text with several items, with no item chosen."""
     message_id: str | None = None
     senders: tuple[str, ...] = ()
     receiving: str | None = None
-    found: tuple[int, CalendarMessage] | None = None
     if parameters.file:
         data = _file_text(parameters.file)
     else:
@@ -135,16 +144,23 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False) ->
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
-    message = found[1] if found is not None else read_calendar_message(data)
-    if message is None or message.kind == "journal":
+    text = data.decode("utf-8", "replace")
+    items = text_items(text)
+    if parameters.item >= len(items.texts):
+        raise UsageError("This text has no such item" if items.texts else "This holds no calendar item that can be shown")
+    several = parameters.item < 0 and len(items.texts) > 1
+    if several and not whole:
+        raise UsageError("Choose one of these items")
+    message = read_calendar_message(items.texts[max(parameters.item, 0)]) if items.texts else None
+    if message is None:
         raise UsageError("This holds no calendar item that can be shown")
     if message.kind == "freebusy" and not busy:
         raise UsageError("This message holds busy times: there is nothing to answer or to keep")
-    text = data.decode("utf-8", "replace")
+    whole_text = text
+    text = text if several else items.texts[max(parameters.item, 0)]
     plain = message.method == ""
-    several = message.kind != "freebusy" and several_items(message, text) > 1
     settings = engine.config().find(receiving) if receiving else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several)
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text)
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -222,9 +238,9 @@ def _label(engine: Engine, account: str, info: CollectionInfo) -> str:
     return f"{info.name} ({account_name(engine, account)})"
 
 
-def invitation_choices(engine: Engine, parameters: SourceParameters) -> ChoicesResult:
-    opened = _opened(engine, parameters, busy=True)
-    kind = _kind(opened.message)
+def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> ChoicesResult:
+    opened = _opened(engine, parameters, busy=True, whole=bool(parameters.kind))
+    kind = {"event": CollectionKind.EVENTS, "task": CollectionKind.TASKS}.get(parameters.kind, _kind(opened.message))
     calendars: list[CalendarChoice] = []
     chosen = ""
     receiving = opened.receiving.account.account_id if opened.receiving is not None else ""
@@ -238,7 +254,7 @@ def invitation_choices(engine: Engine, parameters: SourceParameters) -> ChoicesR
                         chosen = info.collection_id
         except ChronoMailError:
             continue
-    stored = _stored(engine, kind, opened.message.uid) if not opened.several and opened.message.kind != "freebusy" else None
+    stored = _stored(engine, kind, opened.message.uid) if not parameters.kind and opened.message.kind != "freebusy" else None
     return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving)
 
 
@@ -265,8 +281,6 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     you = _you(engine, opened) if message.method != "PUBLISH" else _You("", "", "")  # a shared item asks no address
     kind = _kind(message)
     item_word, home = _item(message), _home(kind)
-    if opened.several or (opened.plain and not message.uid):  # each item its own object; a calendar file may leave out the UID: the import gives one
-        return _imported(engine, opened, parameters)
     stored = _stored(engine, kind, message.uid)
     # Everything is worked out and checked before anything is written: a step that fails leaves nothing half done.
     if stored is not None:
@@ -325,17 +339,53 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     return AnswerResult(parameters.answer, stored_in, server, draft_folder, draft_message, draft_account)
 
 
-def _imported(engine: Engine, opened: _Opened, parameters: AnswerParameters) -> AnswerResult:
-    """A shared text with several items into the chosen calendar, each item its own object, as Import does; one of them kept already is replaced."""
-    if parameters.answer != "ACCEPTED":
-        raise UsageError("These items can only be added")
-    kind = _kind(opened.message)
-    account, info = _collection(engine, kind, parameters.calendar)
-    if kind == CollectionKind.TASKS:
-        task_import(engine, TaskImportParameters(parameters.calendar, opened.text))
-    else:
-        event_import(engine, ImportParameters(parameters.calendar, opened.text))
-    return AnswerResult("ACCEPTED", _label(engine, account, info), False, None, None)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AddParameters(SourceParameters):
+    calendar: str = field(default="", metadata=option("The calendar the events go into"))
+    task_list: str = field(default="", metadata=option("The task list the tasks go into"))
+    existing: Literal["ask", "replace", "skip"] = field(default="ask", metadata=option("Items already in that calendar: ask (nothing is added then), replace or skip"))
+
+
+@dataclass(frozen=True, slots=True)
+class AddResult:
+    already: int  # existing=ask: how many items are in the chosen calendar or task list already; nothing was added
+    added: int
+    replaced: int
+    skipped: int
+
+
+def invitation_add(engine: Engine, parameters: AddParameters) -> AddResult:
+    """Add all (D-310): the items of a text that ask no answer, each its own object: events in the chosen calendar, tasks in the chosen task
+    list, read once. An item kept in another calendar is added all the same: the person chose this one, and it is then there twice."""
+    opened = _opened(engine, parameters, busy=True, whole=True)
+    if opened.message.method != "PUBLISH":
+        raise UsageError("These items ask for an answer: each has its own buttons")
+    items = text_items(opened.text)
+    chosen = {"event": parameters.calendar, "task": parameters.task_list}
+    places = {kind: [position for position, each in enumerate(items.kinds) if each == kind] for kind in chosen}
+    known: set[int] = set()
+    for kind, collection_kind in (("event", CollectionKind.EVENTS), ("task", CollectionKind.TASKS)):
+        if places[kind]:
+            account, info = _collection(engine, collection_kind, chosen[kind])
+            if info.read_only:
+                raise UsageError(f"This {_home(collection_kind)} is read-only")
+            with open_pim(engine, account) as store:
+                known.update(position for position in places[kind] if store.index.find_uid(info.collection_id, items.uids[position]) is not None)
+    if not places["event"] and not places["task"]:
+        raise UsageError("This holds nothing to add")
+    if parameters.existing == "ask" and known:
+        return AddResult(len(known), 0, 0, 0)
+    skipped = known if parameters.existing == "skip" else set()
+    events = items_text(opened.text, set(places["event"]) - skipped)
+    tasks = items_text(opened.text, set(places["task"]) - skipped)
+    added = replaced = 0
+    if events:
+        done = event_import(engine, ImportParameters(parameters.calendar, events))
+        added, replaced = done.imported, done.updated
+    if tasks:
+        finished = task_import(engine, TaskImportParameters(parameters.task_list, tasks))
+        added, replaced = added + finished.imported, replaced + finished.updated
+    return AddResult(0, added, replaced, len(skipped))
 
 
 def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None = None) -> str:
@@ -395,8 +445,6 @@ def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResul
     message = opened.message
     kind = _kind(message)
     item_word, home = _item(message), _home(kind)
-    if opened.several:
-        raise UsageError("These items can only be added")
     stored = _stored(engine, kind, message.uid)
     try:
         you = _you(engine, opened)
@@ -637,8 +685,11 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
 
 def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationInfo:
     """The card of an attachment or a file, for a window of its own: the mail's own card comes with message.show."""
-    opened = _opened(engine, parameters, busy=True)
-    return card_of(engine, parameters.part, opened.message, opened.text, opened.plain)
+    opened = _opened(engine, parameters, busy=True, whole=True)
+    card = card_of(engine, parameters.part, opened.whole)
+    if card is None:
+        raise UsageError("This holds no calendar item that can be shown")
+    return card
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -740,7 +791,8 @@ def invitation_busy(engine: Engine, parameters: BusyParameters) -> BusyResult:
 
 INVITATION_CARD: TypedCommand[SourceParameters, InvitationInfo] = TypedCommand("invitation.card", SourceParameters, InvitationInfo)
 INVITATION_BUSY: TypedCommand[BusyParameters, BusyResult] = TypedCommand("invitation.busy", BusyParameters, BusyResult)
-INVITATION_CHOICES: TypedCommand[SourceParameters, ChoicesResult] = TypedCommand("invitation.choices", SourceParameters, ChoicesResult)
+INVITATION_CHOICES: TypedCommand[ChoicesParameters, ChoicesResult] = TypedCommand("invitation.choices", ChoicesParameters, ChoicesResult)
+INVITATION_ADD: TypedCommand[AddParameters, AddResult] = TypedCommand("invitation.add", AddParameters, AddResult)
 INVITATION_ANSWER: TypedCommand[AnswerParameters, AnswerResult] = TypedCommand("invitation.answer", AnswerParameters, AnswerResult)
 INVITATION_APPLY: TypedCommand[SourceParameters, ApplyResult] = TypedCommand("invitation.apply", SourceParameters, ApplyResult)
 INVITATION_DELEGATE: TypedCommand[DelegateParameters, DelegateResult] = TypedCommand("invitation.delegate", DelegateParameters, DelegateResult)
@@ -751,8 +803,10 @@ def register(registry: CommandRegistry) -> None:
     registry.register(INVITATION_CARD.id, "The card of a calendar attachment or file", SourceParameters, invitation_card, doing="Reading the calendar file")
     registry.register(INVITATION_BUSY.id, "Answer a request for your busy times from these calendars: a draft to send", BusyParameters, invitation_busy,
                       doing="Working out your busy times")
-    registry.register(INVITATION_CHOICES.id, "The calendars an invitation can go into, and the one to start on", SourceParameters, invitation_choices,
+    registry.register(INVITATION_CHOICES.id, "The calendars an invitation can go into, and the one to start on", ChoicesParameters, invitation_choices,
                       doing="Reading the invitation")
+    registry.register(INVITATION_ADD.id, "Add all items of a calendar text that ask no answer: events to a calendar, tasks to a task list", AddParameters, invitation_add,
+                      doing="Adding the items")
     registry.register(INVITATION_APPLY.id, "Take the organizer's change into your calendar: a newer version, a cancellation, added occurrences",
                       SourceParameters, invitation_apply, doing="Changing your calendar")
     registry.register(INVITATION_DELEGATE.id, "Pass an invitation on to someone who goes in your place", DelegateParameters, invitation_delegate,

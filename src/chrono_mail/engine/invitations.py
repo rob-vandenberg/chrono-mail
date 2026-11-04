@@ -1,7 +1,7 @@
 """What a calendar message in a mail asks or tells, for the card shown above its text (iTIP, RFC 5546; D-310)."""
 import sqlite3
 from html.parser import HTMLParser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Literal, override
 
@@ -10,12 +10,14 @@ from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
 from chrono_mail.pim.ical import Attendee
-from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, item_count, occurrences_of, proposal_usable, read_calendar_message
+from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.507"
+__version__ = "invitations.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: a text with several items has a card per item (parts), of every kind, and says what it holds: events, tasks, journal entries and
+#           damaged items left out (D-310)
 # v4.4.507: busy times have a card (kind freebusy, busy); card_of: the card of any calendar text, also of a file that asks nothing (plain,
 #           items), D-310 step 4
 # v4.4.506: a request for the latest version is never out of date (it has no SEQUENCE), D-310 step 3
@@ -25,6 +27,7 @@ __version__ = "invitations.py 4.4.507"
 
 CALENDAR_TYPES: frozenset[str] = frozenset({"text/calendar", "application/ics"})
 Version = Literal["new", "same", "newer", "older"]  # the message against the copy in your calendar ("new": there is none)
+MOST_BLOCKS: int = 50  # items of one text that get a block of their own; Add all still adds them all
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +61,13 @@ class InvitationInfo:
     proposal_usable: bool = True  # a proposal changes something and its times can be used (Accept proposal)
     busy: tuple[BusyPeriod, ...] = ()  # busy times: the periods someone is busy
     plain: bool = False  # a calendar file that asks nothing (no METHOD): it is offered as PUBLISH
-    items: int = 1  # how many items it holds; several: the first one is shown, and all of them are added
+    items: int = 1  # how many items it holds
+    item: int = -1  # the place of this item in a text with several items (the commands' `item`); -1: the text has one, or this is its whole card
+    parts: tuple["InvitationInfo", ...] = ()  # a text with several items: the card of each, at most MOST_BLOCKS
+    events: int = 0  # the whole card of a text: how many events and tasks it holds
+    tasks: int = 0
+    journals: int = 0  # journal entries in the text: left out
+    damaged: int = 0  # items that cannot be read: left out
 
 
 class _VisibleText(HTMLParser):
@@ -186,21 +195,30 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     found = calendar_part(attachments)
     if found is None:
         return None
-    position, message = found
-    return card_of(engine, position, message, attachments[position].data.decode("utf-8", "replace"))
+    return card_of(engine, found[0], attachments[found[0]].data.decode("utf-8", "replace"))
 
 
-def several_items(message: CalendarMessage, message_text: str) -> int:
-    """How many items a calendar text offers to keep: a shared text may hold many, every other message is about one (RFC 5546 section 1.4)."""
-    return max(1, item_count(message_text)) if message.method in ("", "PUBLISH") else 1
-
-
-def card_of(engine: Engine, position: int, message: CalendarMessage, message_text: str, plain: bool = False) -> InvitationInfo:
-    """The card of a calendar message. plain: a file that asks nothing, offered as a shared item. Of several items the first is shown, and your
-    calendars are not searched: what they hold of one says nothing of the others."""
+def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
+    """The card of a calendar text, or None when it holds nothing to show. Several items: the card of each in `parts`, the first one's details
+    in the card itself, and what the text holds."""
     addresses = your_addresses(engine)
-    items = several_items(message, message_text)
-    kept = _stored(engine, message, message_text, addresses) if message.uid and items == 1 and message.kind != "freebusy" else _Kept()
+    found = text_items(text)
+    cards: list[InvitationInfo] = []
+    for place, item in enumerate(found.texts[:MOST_BLOCKS]):
+        message = read_calendar_message(item)
+        if message is not None:
+            cards.append(replace(_card_of_item(engine, position, message, item, addresses), item=place if len(found.texts) > 1 else -1))
+    if not cards:
+        return None
+    return replace(cards[0], item=-1, parts=tuple(cards) if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
+                   tasks=found.kinds.count("task"), journals=found.journals, damaged=found.damaged)
+
+
+def _card_of_item(engine: Engine, position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> InvitationInfo:
+    """The card of one item. A text that asks nothing (no METHOD) is offered as a shared item."""
+    plain = not message.method
+    message = replace(message, method="PUBLISH") if plain else message
+    kept = _stored(engine, message, message_text, addresses) if message.uid and message.kind != "freebusy" else _Kept()
     event, task = message.event, message.task
     start = event.start if event is not None else (task.due if task is not None else message.period_start)
     end = event.end if event is not None else message.period_end
@@ -210,5 +228,5 @@ def card_of(engine: Engine, position: int, message: CalendarMessage, message_tex
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_person(each, addresses) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
-        busy=message.busy, plain=plain, items=items,
+        busy=message.busy, plain=plain,
     )

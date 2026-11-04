@@ -50,9 +50,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.507"
+__version__ = "reader.py 4.4.508"
 
 # --- Version history ----------------------------------------------------
+# v4.4.508: Add all on the card reaches the reading pane; pressed_item: which block of the card was pressed (D-310)
 # v4.4.507: Send my busy times… on the card reaches the reading pane (invitation_busy_requested), D-310 step 4
 # v4.4.506: the card's buttons for your own meeting reach the reading pane (invitation_organize_requested)
 # v4.4.505: the card's Accept, Tentative, Decline, Delegate and apply buttons reach the reading pane (invitation_*_requested); the
@@ -1047,6 +1048,7 @@ class ReaderWidget(QWidget):
     invitation_delegate_requested = Signal()  # Delegate… on the invitation card
     invitation_organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest (D-310 step 3)
     invitation_busy_requested = Signal()  # Send my busy times… on the card (D-310 step 4)
+    invitation_add_all_requested = Signal()  # Add all on the card of a text with several items (D-310)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1120,6 +1122,7 @@ class ReaderWidget(QWidget):
         self._card.delegate_requested.connect(self.invitation_delegate_requested)
         self._card.organize_requested.connect(self.invitation_organize_requested)
         self._card.busy_requested.connect(self.invitation_busy_requested)
+        self._card.add_all_requested.connect(self.invitation_add_all_requested)
         self._card_area.viewport().installEventFilter(self)  # its height follows its width (_fit_card)
         card_row.addWidget(self._card, 1)
         card_row.addStretch(0)
@@ -1318,6 +1321,11 @@ class ReaderWidget(QWidget):
     def invitation(self) -> InvitationInfo | None:
         """The card on screen, if any."""
         return self._card.info
+
+    @property
+    def pressed_item(self) -> int:
+        """Of a text with several items, the item whose button was pressed last."""
+        return self._card.pressed_item
 
     def _card_sizes(self) -> None:
         """The room around the card and its widest, at the size factor of now."""
