@@ -1,4 +1,5 @@
 import ctypes
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -23,9 +24,10 @@ from chrono_mail.ui.invitationwindow import is_calendar_file
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_open, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 4.4.507"
+__version__ = "app.py 4.4.540"
 
 # --- Version history ----------------------------------------------------
+# v4.4.540: end_of_program: the process ends with the window, also while a mail check waits for a server that does not answer
 # v4.4.507: an .ics file as first argument opens as a card; a second start hands it to the running program (D-310 step 4)
 # v4.2.459: credential_stores: a profile's entries not moved yet are found under its former wallet name (D-274)
 # v4.2.434: a copy run from the project folder tells the desktop it belongs to chrono-mail-project, the built program to chrono-mail (desktop_file_name)
@@ -130,6 +132,15 @@ def second_start(calendar_file: str = "") -> int:
     return 1
 
 
+def end_of_program(backend: Backend, settings: QSettings, code: int) -> int:
+    """The window has closed. Qt's thread pools keep the process alive until their last command ended, and a mail check that waits for a
+    server that does not answer ends only at its timeout: then the process ends here, once the window's settings are on disk."""
+    if backend.only_checks_left():
+        settings.sync()
+        os._exit(code)
+    return code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Start the graphical program with the real credential store and the user's own directories."""
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -165,4 +176,4 @@ def main(argv: Sequence[str] | None = None) -> int:
     QTimer.singleShot(0, window.start)
     if calendar_file:
         window.open_calendar_file(calendar_file)  # waits until the window has started
-    return app.exec()
+    return end_of_program(backend, settings, app.exec())

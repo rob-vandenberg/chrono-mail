@@ -34,9 +34,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.4.538"
+__version__ = "session.py 4.4.540"
 
 # --- Version history ----------------------------------------------------
+# v4.4.540: leave_imap_links: the end of the program waits for no server and for no command that holds a connection
 # v4.4.538: working is told also during a quiet big job (a step of a long job)
 # v4.2.453: rules_lock: every read-change-save of the rules file; rules_changed is told also during a quiet big job (D-302)
 # v4.2.441: certificates the person accepted until Chrono Mail closes (run_pins, trust_for_run; never saved), taken by every connection;
@@ -151,6 +152,12 @@ class ImapLink:
         self.validity.clear()
         if client is not None:
             client.logout()
+
+    def leave(self) -> None:
+        """The program ends: as close, without waiting for the server's answer."""
+        client, self.client = self.client, None
+        if client is not None:
+            client.leave()
 
 
 
@@ -473,6 +480,18 @@ class Engine:
         for link in links:
             with link.lock:
                 link.close()
+
+    def leave_imap_links(self) -> None:
+        """The program ends: every open IMAP connection says goodbye and waits for nothing, so a server that does not answer never holds the
+        end up. A link a command holds is left to that command: a sync holds its lock for as long as it runs, and its connection ends with it."""
+        with self._imap_links_lock:
+            links = list(self._imap_links.values())
+        for link in links:
+            if link.lock.acquire(blocking=False):
+                try:
+                    link.leave()
+                finally:
+                    link.lock.release()
 
     def trust_for_run(self, pin: str) -> None:
         """The person accepted a certificate until Chrono Mail closes (Connect without Don't ask me again): kept in memory only (D-299)."""

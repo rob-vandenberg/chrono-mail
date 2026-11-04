@@ -3956,3 +3956,11 @@ Measured on a throw-away copy, 140,542 messages, file out of memory: upgrade 16 
 Tests: tests/test_index_folder_rows.py (20 new; 11 fail on 4.4.538, the 9 that guard behaviour 4.4.538 already had each fail when their line in the new code is broken); tests/index_formats.py turns an index back into format 19 for the upgrade tests. Pyrefly Linux and win32, layer check pass.
 Open: a rename on an IMAP server is not measured.
 
+
+## 2026-11-04 4.4.540 Closing waits for no server (D-315)
+
+Cause, measured on a copy of the ICS test profile with a local server that stops answering: after Quit anyway closeEvent stood still on the window's own thread: 3.00 s in wait_for_done, then 54.29 s in close_imap_links at `with link.lock` (a sync holds that lock for its whole run), or 60.06 s per account for the answer to LOGOUT. With those steps gone the process still lived 54.5 s, because Qt's thread pools wait for a stuck worker.
+Built: closeEvent hides the window first; Backend.wind_down gives the commands the same 3 s with the event loop running; Engine.leave_imap_links says LOGOUT without waiting and leaves a link a command holds to that command; app.end_of_program waits for the person's own commands and ends the process when only mail checks or waits for new mail still run.
+Measured after: the real window (X11) unmapped 10 ms after the click, event loop never blocked, process gone 3 s after the click (was 57 s frozen, 64 s in all).
+Tests: tests/ui/test_ui_closing.py (7 new; all fail on 4.4.539, the first 4 by the freeze itself, the last 3 because end_of_program did not exist).
+Open: a send, calendar sync or server action of the person that hangs at closing is waited for after the window has gone, up to its timeout.

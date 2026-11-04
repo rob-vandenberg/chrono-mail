@@ -6,15 +6,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast, override
 
-from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 4.2.392"
+__version__ = "backend.py 4.4.540"
 
 # --- Version history ----------------------------------------------------
+# v4.4.540: wind_down and only_checks_left: the end of the program, which no server that does not answer can hold up
 # v4.2.392: progress_ended: when a command ends (done, stopped or failed), each progress line it posted is told as ended, so its count leaves the status bar
 # v4.0.374: alive() is public: work a closed window started looks before it writes into that window
 # v3.6.353: cancel_waiting: the commands of one kind that wait their turn for an account are answered as not done (a failed Delete stops the rest, D-266)
@@ -39,6 +40,8 @@ __version__ = "backend.py 4.2.392"
 Success = Callable[[object], None]
 Failure = Callable[[ChronoMailError], None]
 
+
+WIND_DOWN_LOOK_MILLISECONDS: int = 20  # how often the end of the program looks whether the commands ended
 
 @dataclass(frozen=True, slots=True)
 class RunningJob:
@@ -275,6 +278,30 @@ class Backend(QObject):
             if not self._queued or not finished or time.monotonic() >= deadline:
                 break
         return finished and not self._queued and self._waiting_pool.waitForDone(max(0, int((deadline - time.monotonic()) * 1000)))
+
+    def wind_down(self, milliseconds: int) -> None:
+        """The program ends: the running commands get this long to end, with the event loop running, so the window that closed leaves the
+        screen at once and no other window stops answering. What the person does meanwhile is left out: nothing starts now."""
+        if self.wait_for_done(0):
+            return
+        deadline = time.monotonic() + milliseconds / 1000
+        loop = QEventLoop()
+        timer = QTimer()
+
+        def look() -> None:
+            if self.wait_for_done(0) or time.monotonic() >= deadline:
+                loop.quit()
+
+        timer.timeout.connect(look)
+        timer.start(WIND_DOWN_LOOK_MILLISECONDS)
+        loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def only_checks_left(self) -> bool:
+        """The window is gone: the person's own commands (a send, a backup, a restore) end first, however long that takes. True when mail
+        checks or waits for new mail still run then: they may be waiting for a server that does not answer, and they are safe to stop
+        anywhere, as a crash is (their store and sync state are written step by step, 4.1)."""
+        self._pool.waitForDone()
+        return self._checking_pool.activeThreadCount() + self._waiting_pool.activeThreadCount() > 0
 
 
 def alive(owner: QObject) -> bool:

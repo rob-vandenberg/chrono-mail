@@ -248,6 +248,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.433) A selected message that moves under a folded group bar opens it and stays in view (D-146).
 - DONE (4.2.432) Block 6: a message that changed where it is moves to its new place in the sort (D-146); the Contact mark and sort judge the person the row shows, one rule per list (D-295).
 - DONE (4.4.539) A folder is an object in the index: a rename or a move of a tree changes one row, whatever its size (index format 20, D-314).
+- DONE (4.4.540) Closing waits for no server: the window goes at once after Quit anyway and the process ends, also on a server that does not answer (D-315).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

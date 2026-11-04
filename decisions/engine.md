@@ -14,3 +14,4 @@ Read before work on the engine, commands, the CLI.
 - [[D-143]] No checks during an import
 - [[D-175]] Typed calls
 - [[D-239]] Busy bar says what runs
+- [[D-315]] Closing waits for no server

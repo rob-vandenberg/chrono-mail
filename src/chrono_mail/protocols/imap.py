@@ -13,9 +13,10 @@ from chrono_mail.protocols.tls import client_context, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 4.2.441"
+__version__ = "imap.py 4.4.540"
 
 # --- Version history ----------------------------------------------------
+# v4.4.540: leave: LOGOUT without waiting for the answer, for the end of the program
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.349: a refusal keeps what the server sent before it; uid_fetch_what_comes gives it (RV-202); a refused SELECT leaves no folder
@@ -317,6 +318,14 @@ class ImapClient:
     def logout(self) -> None:
         try:
             self._command("LOGOUT", allow_bye=True)
+        except ProtocolError:
+            pass
+        self.close()
+
+    def leave(self) -> None:
+        """The program ends: LOGOUT is said and the connection closed, without waiting for an answer nothing depends on."""
+        try:
+            self._connection.send(f"{self._next_tag()} LOGOUT\r\n".encode())
         except ProtocolError:
             pass
         self.close()
