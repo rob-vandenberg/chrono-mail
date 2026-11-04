@@ -15,14 +15,15 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Occurrence, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
-from chrono_mail.pim.itip import you_declined
+from chrono_mail.pim.itip import attendee_addresses, you_declined
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.528"
+__version__ = "commands_calendar.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.521: a declined date of a series is left out as a skipped date; hidden: deleted and declined dates of a series, shown greyed when asked for (D-310)
 # v4.4.518: A meeting you make names you as organizer and invites its attendees, a change or cancellation tells them when you say so (D-310)
@@ -135,6 +136,7 @@ class EventInfo:
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
     yours: bool = False  # event.show: a meeting you organize, so its attendees can be told of a change
     draft: MeetingDraft = MeetingDraft()  # the mail to the attendees, ready to send
+    cancel_draft: MeetingDraft = MeetingDraft()  # the cancellation to the attendees taken off, ready to send
 
 
 def colour_of(palette: tuple[PaletteColour, ...], colour_id: str, other: str) -> str:
@@ -539,6 +541,7 @@ def _clear(event: Event, names: tuple[str, ...]) -> Event:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AddParameters(EventFields):
     calendar: str = field(metadata=option("The calendar id (see collection.list)"))
+    tell: bool = field(default=True, metadata=option("A meeting: invite its attendees; false: nobody is told"))
 
 
 def _with_organizer(event: Event, settings: AccountSettings | None) -> Event:
@@ -559,6 +562,7 @@ def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
             series = EventSeries(_with_organizer(event, you))
             text = events_to_text(series)
             mails = who_mails(engine, (account, info), account, you.account.email_address.strip().lower(), answers=False) if you is not None else None
+            mails = quiet(mails) if mails is not None and not parameters.tell else mails
             with item_writer(engine, account, store) as writer:
                 item = writer.put(info, copy_for(text, mails) if mails is not None else text)
             draft = MeetingDraft()
@@ -611,6 +615,16 @@ def _occurrence_event(series: EventSeries, moment: Moment) -> Event:
     return replace(master, start=moment, end=moment + _duration(master.start, master.end), rrule="", exdates=(), rdates=(), recurrence_id=moment)
 
 
+def _taken_off_mail(engine: Engine, you: AccountSettings, before: EventSeries, original: str, text: str, dates: tuple[Moment, ...]) -> MeetingDraft:
+    """The cancellation for the attendees taken off your meeting (RFC 5546 section 3.2.5): the meeting as they knew it, one version on, so their programs take it."""
+    gone = frozenset(address.lower() for address in attendee_addresses(original)) - frozenset(address.lower() for address in attendee_addresses(text))
+    if not gone:
+        return MeetingDraft()
+    newer = replace(before, master=replace(before.master, sequence=before.master.sequence + 1), overrides=tuple(replace(each, sequence=each.sequence + 1) for each in before.overrides))
+    title = before.master.summary
+    return meeting_mail(engine, you, events_to_text(newer, original), title, "CANCEL", "Cancelled", f"You are no longer on the list for {title or 'this meeting'}.\n", dates, only=gone)
+
+
 def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
     try:
         with located(engine, parameters.item, CollectionKind.EVENTS) as found:
@@ -618,6 +632,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 raise UsageError("This calendar is read-only")
             original = found.store.get(found.item.collection, parameters.item)
             series = _series(original)
+            before = series
             moment: Moment | None = None
             if parameters.occurrence:
                 try:
@@ -642,7 +657,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if parameters.colour is not None:
                     master = _with_colour(master, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 series = _following_the_start(series, master)
-            if not _organizes(engine, series.master):
+            if not _organizes(engine, series.master) and not _organizes(engine, before.master):  # (the last attendee taken off still hears of it)
                 with item_writer(engine, found.account, found.store) as writer:
                     writer.put(found.collection, events_to_text(series, original), parameters.item)
                 return _info(parameters.item, found.account, found.item.collection, series)
@@ -659,10 +674,11 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
             with item_writer(engine, found.account, found.store) as writer:
                 writer.put(found.collection, copy_for(text, mails), parameters.item)
             draft = MeetingDraft()
+            dates = (moment,) if moment is not None else ()
             if you is not None and mails.chrono:
-                dates = (moment,) if moment is not None else ()
                 draft = meeting_mail(engine, you, text, series.master.summary, "REQUEST", "Changed", f"{series.master.summary or 'The meeting'} has changed.\n", dates)
-            return replace(_info(parameters.item, found.account, found.item.collection, series), draft=draft)
+            cancel = _taken_off_mail(engine, you, before, original, text, dates) if you is not None and mails.chrono else MeetingDraft()
+            return replace(_info(parameters.item, found.account, found.item.collection, series), draft=draft, cancel_draft=cancel)
     except StorageError as error:
         raise UsageError(str(error)) from None
 

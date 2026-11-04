@@ -15,6 +15,7 @@ from chrono_mail.engine import Engine, build_registry
 from chrono_mail.engine.newkey import recovery_code_stored
 from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.calendarmail import CalendarMailDialog, Choice
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import KIND_ROLE
 from chrono_mail.ui.passwordfield import PasswordBox
@@ -25,9 +26,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 4.2.463"
+__version__ = "world.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.2.463: record_recovery_codes answers the recovery code window of the Import window, ticked or not (UR-08)
 # v4.2.454: answer_input answers the text box of a given width too (TextBox.ask, Rename folder)
 # v4.2.437: answer_input answers the password box too, from the same list
@@ -152,6 +154,22 @@ def reject_dialog(monkeypatch: pytest.MonkeyPatch, dialog_class: type) -> None:
         return int(QDialog.DialogCode.Rejected)
 
     monkeypatch.setattr(dialog_class, "exec", exec_rejected)
+
+
+def answer_calendar_mail(monkeypatch: pytest.MonkeyPatch, choice: Choice, note: str = "", address: str = "") -> list[CalendarMailDialog]:
+    """Every calendar mail question is answered with this choice; the list holds the questions asked."""
+    asked: list[CalendarMailDialog] = []
+
+    def answered(dialog: CalendarMailDialog) -> int:
+        asked.append(dialog)
+        dialog.note_field.setPlainText(note)
+        if address:
+            dialog.to_field.setText(address)
+        dialog.choice = choice
+        return int(QDialog.DialogCode.Rejected if choice is Choice.BACK else QDialog.DialogCode.Accepted)
+
+    monkeypatch.setattr(CalendarMailDialog, "exec", answered)
+    return asked
 
 
 def record_opened_urls(monkeypatch: pytest.MonkeyPatch) -> list[str]:

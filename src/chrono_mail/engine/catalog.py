@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_calendarmail, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 4.4.505"
+__version__ = "catalog.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.505: the invitation commands (invitation.choices, invitation.answer), D-310
 # v4.2.419: update.* (D-293)
 # v4.2.402: Start at login (autostart.show, autostart.set, D-284)
@@ -62,6 +63,7 @@ def build_registry() -> CommandRegistry:
     undo.register(registry)
     commands_combined.register(registry)
     commands_invitations.register(registry)
+    commands_calendarmail.register(registry)
     commands_view.register(registry)
     commands_local.register(registry)
     commands_sidebar.register(registry)

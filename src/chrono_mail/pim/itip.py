@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.528"
+__version__ = "itip.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: more_attendees: attendees past those read are counted; keeps_busy: what blocks its time, for the warning too (D-310)
 # v4.4.523: description and comment of a calendar message (D-310)
@@ -355,10 +356,10 @@ def _delegated_from(component: icalendar.Component, address: str) -> str:
     return next((str(person.params["DELEGATED-FROM"]) for person in people if _address_of(person) == address and person.params.get("DELEGATED-FROM")), "")
 
 
-def reply_text(message_text: str, address: str, answer: str, now: datetime, name: str = "", copy_text: str | None = None) -> str | None:
+def reply_text(message_text: str, address: str, answer: str, now: datetime, name: str = "", copy_text: str | None = None, organizer: str = "") -> str | None:
     """Your answer to the organizer (METHOD:REPLY, RFC 5546 section 3.2.3): per item its UID, the SEQUENCE of the request, DTSTAMP now, the
     organizer, your attendee line with your answer, the RECURRENCE-ID of one occurrence, and its title and time to read. None when the text
-    holds nothing to answer."""
+    holds nothing to answer. organizer: who it goes to, for an item that names nobody."""
     message = _parse(message_text)
     if message is None or not _items_of(message):
         return None
@@ -378,6 +379,9 @@ def reply_text(message_text: str, address: str, answer: str, now: datetime, name
             value = item.get(key)
             if value is not None and not isinstance(value, list):
                 answer_item[key] = value
+        if organizer:
+            answer_item.pop("ORGANIZER", None)  # (a line with a name and no address reaches nobody)
+            answer_item.add("ORGANIZER", f"mailto:{organizer}")
         answer_item.add("DTSTAMP", now)
         own = kept_answers.get(str(_moment(item, "RECURRENCE-ID")), "")
         _set_answer(answer_item, lower, own if own and own != "NEEDS-ACTION" else answer, name)

@@ -12,9 +12,10 @@ from chrono_mail.pim.itip import BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, attend
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "meetingmail.py 4.4.518"
+__version__ = "meetingmail.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.518: Who mails about a meeting, moved here from commands_invitations.py, and the mail about your own meeting (D-310)
 
 
@@ -123,12 +124,12 @@ class MeetingDraft:
     message: str = ""
 
 
-def meeting_mail(engine: Engine, settings: AccountSettings, text: str, title: str, method: str, word: str, body: str, dates: tuple[Moment, ...] = ()) -> MeetingDraft:
+def meeting_mail(engine: Engine, settings: AccountSettings, text: str, title: str, method: str, word: str, body: str, dates: tuple[Moment, ...] = (), only: frozenset[str] | None = None) -> MeetingDraft:
     """The mail to the attendees of your meeting, or nothing when nobody can be written to. Sent only when the person presses Send, as every calendar
-    mail of Chrono Mail (RFC 6047)."""
+    mail of Chrono Mail (RFC 6047). only: of the attendees, just these addresses (in lower case)."""
     calendar = request_of(text, datetime.now(UTC), method, dates)
     yours = your_addresses_lower(engine)
-    to = tuple(address for address in attendee_addresses(calendar or "") if address.lower() not in yours)
+    to = tuple(address for address in attendee_addresses(calendar or "") if address.lower() not in yours and (only is None or address.lower() in only))
     if calendar is None or not to:
         return MeetingDraft()
     saved = draft_save(engine, DraftSaveParameters(account=settings.account.account_id, to=to, subject=f"{word}: {title or '(no title)'}", body=body, kind="new", calendar=calendar))

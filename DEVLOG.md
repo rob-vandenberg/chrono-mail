@@ -3906,3 +3906,8 @@ Open: items 4, 5, 6, 8, 9, 10, 13.
 Built: _Opened.own by own_mail, invitation.card gives it to the card of an attachment.
 Tests: tests/test_engine_invitation_files.py; the new test fails without the change. Review: one round.
 Open: items 4, 5, 6, 8, 10, 13.
+
+## 2026-11-04, 4.4.532: one dialog for every calendar mail (the owner, D-310, round 3 items 4, 5, 6)
+Built: ui/calendarmail.py and forms/calendar_mail.ui; engine/commands_calendarmail.py with calendar.mail-send and event.mailing; dry on invitation.answer, apply and organize; to on invitation.answer; mail on invitation.delegate; tell on event.add; cancel_draft on event.edit. Gone: the composer for these mails, open_draft, answer_waiting.
+Tests: tests/test_engine_calendar_mail.py, tests/ui/test_ui_calendar_mail.py; they fail on the previous version (the commands and the dialog do not exist there). Review: two rounds.
+Open: items 8, 10, 13.

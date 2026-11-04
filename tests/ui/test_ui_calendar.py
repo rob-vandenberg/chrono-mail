@@ -12,19 +12,20 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.colours import theme
+from chrono_mail.ui.calendarmail import Choice
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.collectionpanel import collection_items
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.sections import CALENDAR
-from types import SimpleNamespace
 
 from tests.ui.test_ui_window import started
-from tests.ui.world import World, wait
+from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.528"
+__version__ = "test_ui_calendar.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a hidden event's menu (D-310); open_calendar waits for the anchor's own event, never for what the view of today still shows
 # v4.4.521: Show deleted and declined dates (D-310)
 # v4.4.518: Your meeting asks before it is deleted (D-310)
@@ -269,15 +270,17 @@ def test_your_meeting_asks_whether_to_tell_the_attendees_and_the_cancellation_op
     world.call("event.add", calendar=calendar_id(world), summary="Budget", start="2026-10-14T15:00", end="2026-10-14T16:00", time_zone="UTC", attendee=("sam@example.org",))
     wait(qtbot, lambda: "Budget" in summaries(page))
     opened: list[str] = []
-    page.mail_ready.connect(lambda _account, _folder, message: opened.append(message))
-    monkeypatch.setattr("chrono_mail.ui.calendarview.plain_box", lambda *_: SimpleNamespace(exec=lambda: QMessageBox.StandardButton.Cancel))
+    page.mail_ready.connect(lambda _account, _folder, message, note: opened.append(f"{message} {note}"))
+    asked = answer_calendar_mail(monkeypatch, Choice.BACK)
     page._entry_clicked(next(e for e in page.entries if e.summary == "Budget"))  # noqa: SLF001
     page.delete_selected()
+    wait(qtbot, lambda: bool(asked))
     qtbot.wait(200)
     assert "Budget" in summaries(page)
-    monkeypatch.setattr("chrono_mail.ui.calendarview.plain_box", lambda *_: SimpleNamespace(exec=lambda: QMessageBox.StandardButton.Yes))
+    answer_calendar_mail(monkeypatch, Choice.SEND, "See you next time")
     page.delete_selected()
     wait(qtbot, lambda: "Budget" not in summaries(page) and bool(opened))
+    assert opened[0].endswith("See you next time")
 
 
 def series_scope(verb: str) -> str:

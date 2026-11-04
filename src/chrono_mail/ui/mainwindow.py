@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.528"
+__version__ = "mainwindow.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.518: The calendar page opens mails to attendees in the composer (D-310)
 # v4.4.507: open_calendar_file: a calendar file given at the start or by a second start, once the window has started (D-310 step 4)
@@ -472,7 +473,7 @@ class MainWindow(QMainWindow):
         self.pages: dict[str, PimPage] = {CALENDAR: CalendarPage(self.backend, self.settings, self), TASKS: TasksPage(self.backend, self.settings, self), CONTACTS: self.contacts_page}
         calendar_page = self.pages[CALENDAR]
         if isinstance(calendar_page, CalendarPage):
-            calendar_page.mail_ready.connect(self.composing.open_draft)
+            calendar_page.mail_ready.connect(self.composing.send_calendar_mail)
             calendar_page.answer_wanted.connect(self.reading.answer_event)
             calendar_page.delegate_wanted.connect(self.reading.delegate_event)
         for page in self.pages.values():

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>CalendarMail</class>
+ <widget class="QWidget" name="CalendarMail">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QHBoxLayout" name="top">
+     <item>
+      <widget class="QLabel" name="question">
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+       <property name="textFormat">
+        <enum>Qt::PlainText</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="info" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QFormLayout" name="fields">
+     <item row="0" column="0">
+      <widget class="QLabel" name="toLabel">
+       <property name="text">
+        <string>To:</string>
+       </property>
+       <property name="buddy">
+        <cstring>to</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="to" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="noteLabel">
+     <property name="text">
+      <string>Message (optional):</string>
+     </property>
+     <property name="buddy">
+      <cstring>note</cstring>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="note" />
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons" />
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -23,7 +23,8 @@ from chrono_mail.engine.changes import Change
 from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.ui.plainboxes import plain_box
+from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
+from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
 from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList
 from chrono_mail.engine.commands_calendar import RestoreParameters as EventRestore
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
@@ -47,9 +48,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.528"
+__version__ = "calendarview.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.528: Show declined; hidden events have a menu: answer again, delete, or Restore (D-310)
 # v4.4.521: Show deleted and declined dates: dates of a series that are hidden show greyed and can only be looked at (D-310)
@@ -166,7 +168,7 @@ class TimeGridPanel(QWidget):
 class CalendarPage(PimPage):
     answer_wanted = Signal(str, str, str)  # a hidden event: its item, its date ("": all of it), the answer
     delegate_wanted = Signal(str, str)
-    mail_ready = Signal(str, str, str)  # a mail to the attendees, ready to send: account, folder, message
+    mail_ready = Signal(str, str, str, str)  # a mail to the attendees to send: account, folder, message, the person's own message
     """Calendars (with ticks) and a small month on the left; the days, the weeks, the month or the agenda on the right."""
 
     kind = "events"
@@ -555,20 +557,31 @@ class CalendarPage(PimPage):
     def _delete_chosen(self, entry: Entry, values: EventDelete, event: EventInfo | None) -> None:
         """Your own meeting: the attendees hear of it as the person says (D-310); anything else asks only when it is the whole event."""
         if event is not None and event.yours:
-            box = plain_box(QMessageBox.Icon.Question, self.content, "Delete", f"Send the attendees a mail that “{entry.summary}” is cancelled?",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
-            answer = QMessageBox.StandardButton(box.exec())
-            if answer == QMessageBox.StandardButton.Cancel:
-                return
-            values = dataclasses.replace(values, tell=answer == QMessageBox.StandardButton.Yes)
-        elif (not entry.row.repeats or entry.row.hidden) and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
+            self._backend.ask(EVENT_MAILING, MailingParameters(item=values.item, deleting=not values.occurrence), lambda mailing: self._delete_meeting(entry, values, mailing), self._failed, owner=self)
             return
+        if (not entry.row.repeats or entry.row.hidden) and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
+            return
+        self._delete(values, "")
+
+    def _delete_meeting(self, entry: Entry, values: EventDelete, mailing: MailingResult) -> None:
+        """Chrono Mail would mail the cancellation: the person says so first; closing the question keeps the meeting. The server mails: it is told to."""
+        note = ""
+        tell = True
+        if mailing.chrono:
+            dialog = CalendarMailDialog("Delete", f"Send the attendees a mail that “{entry.summary}” is cancelled?", EXPLANATION, self.content)
+            choice = dialog.ask()
+            if choice is Choice.BACK:
+                return
+            tell, note = choice is Choice.SEND, dialog.note
+        self._delete(dataclasses.replace(values, tell=tell), note)
+
+    def _delete(self, values: EventDelete, note: str) -> None:
         self.selected = None
 
         def deleted(result: DeleteResult) -> None:
             self._saved("")
             if result.draft.message:
-                self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message)
+                self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message, note)
 
         self._backend.ask(EVENT_DELETE, values, deleted, self._failed, owner=self)
 

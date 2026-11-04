@@ -15,11 +15,11 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import SeriesClash, INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
+from chrono_mail.engine.commands_invitations import SeriesClash, INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
 from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.composing import Composing
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.mailstate import MailState
@@ -27,6 +27,7 @@ from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messageactions import MessageActions
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.messagewindow import MessageWindow
+from chrono_mail.ui.calendarmail import EXPLANATION, MISSING_ORGANIZER, CalendarMailDialog, Choice
 from chrono_mail.ui.plainboxes import plain_box
 from chrono_mail.ui.prefs import READING_PANES, InUse
 from chrono_mail.ui.printing import print_message
@@ -39,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.529"
+__version__ = "readingpane.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: a warning before Accept or Tentative when you already have something at that time; a calendar attachment opens as a card by what it is (D-310)
@@ -88,6 +90,11 @@ def series_clash_text(clashes: tuple[SeriesClash, ...]) -> str:
         return ""
     more = f" and {len(clashes) - len(named)} more" if len(clashes) > len(named) else ""
     return f"This series clashes with {len(clashes)} of your appointment{'s' if len(clashes) != 1 else ''}: {', '.join(named)}{more}. Add it anyway?"
+
+
+_ANSWER_QUESTIONS: dict[str, str] = {"ACCEPTED": "Tell the organizer that you accept?", "TENTATIVE": "Tell the organizer that you accept tentatively?", "DECLINED": "Tell the organizer that you decline?"}
+_ORGANIZE_QUESTIONS: dict[str, tuple[str, str]] = {"accept_proposal": ("Accept proposal", "Send the attendees a mail about this change?"), "decline_proposal": ("Decline proposal", "Tell them that you decline the proposal?"),
+                                                   "send_latest": ("Send the latest version", "Send them the latest version?")}
 
 
 class ReadingPane(QObject):
@@ -552,17 +559,21 @@ class ReadingPane(QObject):
         self.busy_invitation(self.reader, self._in_pane())
 
     def busy_invitation(self, reader: ReaderWidget | InvitationWindow, source: CalendarSource | None) -> None:
-        """Send my busy times…: the calendars they are made from, then the answer in the composer, sent only with Send (D-310 step 4)."""
+        """Send my busy times…: the calendars they are made from, then the question whether to send them (D-310 step 4)."""
         if source is None:
             return
-
-        def made(result: BusyResult) -> None:
-            self._tell(reader, "Your busy times are ready to send.")
-            self._composing.open_draft(result.account, result.folder, result.message)
 
         def listed(choices: ChoicesResult) -> None:
             dialog = InvitationBusyDialog(choices, self._parent)
             if dialog.exec() == InvitationBusyDialog.DialogCode.Accepted and dialog.chosen:
+                question = self._mail_dialog("Send my busy times", "Send your busy times?")
+                if question.ask() is not Choice.SEND:
+                    return
+
+                def made(result: BusyResult) -> None:
+                    self._tell(reader, "Your busy times are on their way.")
+                    self._composing.send_calendar_mail(result.account, result.folder, result.message, question.note)
+
                 parameters = BusyParameters(source.account, source.folder, source.message, part=source.part, file=source.file, item=source.item, calendars=dialog.chosen)
                 self._backend.ask(INVITATION_BUSY, parameters, made, lambda error: self._tell(reader, "Could not make your busy times", error), owner=self)
 
@@ -573,79 +584,107 @@ class ReadingPane(QObject):
 
     def organize_invitation(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None, action: str) -> None:
         """Your own meeting (D-310 step 3): an attendee's answer into it, a proposal accepted or declined, the latest version sent; a mail to
-        the attendees opens in the composer."""
+        the attendees or the proposer goes after the question whether to send it."""
         if place is None or action not in ("take", "accept_proposal", "decline_proposal", "send_latest"):
             return
         info = self._card_of(reader, place)
         item = item_word(info) if info is not None else "meeting"
         chosen: Organize = "take" if action == "take" else ("accept_proposal" if action == "accept_proposal" else ("decline_proposal" if action == "decline_proposal" else "send_latest"))
 
+        note = ""
+
         def organized(result: OrganizeResult) -> None:
-            words = {"taken": f"Their answer is in your {item}.", "moved": f"Your {item} follows the proposal.", "declined": "Your answer to the proposal",
-                     "sent": "The latest version"}
-            if result.done in ("declined", "sent"):
-                self._tell(reader, f"{words[result.done]} is ready to send.")
-            else:
-                mailer = " The calendar server tells the attendees." if result.server_mails and result.done == "moved" else ""
-                ready = " The change is ready to send to the attendees." if result.draft_message is not None else ""
-                self._tell(reader, words.get(result.done, "Done.") + mailer + ready)
+            mailed = result.draft_message is not None
+            words = {"taken": f"Their answer is in your {item}.", "moved": f"Your {item} follows the proposal.", "declined": "Your answer to the proposal is on its way." if mailed else "You declined the proposal.",
+                     "sent": "The latest version is on its way." if mailed else "Nothing was sent."}
+            mailer = " The calendar server tells the attendees." if result.server_mails and result.done == "moved" else ""
+            self._tell(reader, words.get(result.done, "Nothing was sent.") + mailer)
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
+                self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
-        tell = True
-        if chosen == "accept_proposal":
-            box = plain_box(QMessageBox.Icon.Question, self._parent, "Accept proposal", "Send the attendees a mail about this change?",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Yes)
-            answer = QMessageBox.StandardButton(box.exec())
-            if answer == QMessageBox.StandardButton.Cancel:
-                return
-            tell = answer == QMessageBox.StandardButton.Yes
-        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen, mail=tell)
-        self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._tell(reader, f"Could not change your {item}", error), owner=self)
+        def refused(error: ChronoMailError) -> None:
+            self._tell(reader, f"Could not change your {item}", error)
+
+        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen)
+
+        def checked(check: OrganizeResult) -> None:
+            nonlocal note, parameters
+            if check.chrono:
+                title, question = _ORGANIZE_QUESTIONS[chosen]
+                dialog = self._mail_dialog(title, question)
+                choice = dialog.ask()
+                if choice is Choice.BACK:
+                    return
+                note, parameters = dialog.note, changed(parameters, mail=choice is Choice.SEND)
+            self._backend.ask(INVITATION_ORGANIZE, parameters, organized, refused, owner=self)
+
+        self._backend.ask(INVITATION_ORGANIZE, changed(parameters, dry=True), checked, refused, owner=self)
 
     def _delegate_in_pane(self) -> None:
         self.delegate_invitation(self.reader, self._in_pane())
 
     def delegate_invitation(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
-        """Delegate…: the address of who goes in your place, then the invitation for them and your answer to the organizer in the composer."""
+        """Delegate…: the address of who goes in your place, then the question whether the invitation for them and your answer to the organizer are sent."""
         if place is None:
             return
         info = self._card_of(reader, place) if not place.event else None
         dialog = InvitationDelegateDialog(self._parent, task=info is not None and info.kind == "task")
         if dialog.exec() != InvitationDelegateDialog.DialogCode.Accepted:
             return
+        question = self._mail_dialog("Delegate", f"Send {dialog.address} the invitation, and tell the organizer?")
+        choice = question.ask()
+        if choice is Choice.BACK:
+            return
 
         def delegated(result: DelegateResult) -> None:
             told = " The calendar server tells the organizer." if result.server_answers else " Nothing goes to the organizer: confirmation emails are off for this account."
-            self._tell(reader, "The invitation for them and your answer to the organizer are ready to send, in two mails." if result.answer_message else f"The invitation for them is ready to send.{told}")
-            self._composing.open_draft(result.account, result.folder, result.request_message, lambda: self._show_again(reader, place))
+            if not result.request_message:
+                self._tell(reader, "You passed the invitation on. Nobody got a mail.")
+            else:
+                self._tell(reader, "The invitation for them and your answer to the organizer are on their way." if result.answer_message else f"The invitation for them is on its way.{told}")
+                self._composing.send_calendar_mail(result.account, result.folder, result.request_message, question.note, lambda: self._show_again(reader, place))
             if result.answer_message:  # "": the calendar's server mails your answer
-                self._composing.open_draft(result.account, result.folder, result.answer_message, lambda: self._show_again(reader, place))
+                self._composing.send_calendar_mail(result.account, result.folder, result.answer_message, question.note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
-        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address), delegated,
+        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address, mail=choice is Choice.SEND), delegated,
                           lambda error: self._tell(reader, "Could not pass the invitation on", error), owner=self)
 
     def _apply_in_pane(self) -> None:
         self.apply_invitation(self.reader, self._in_pane())
 
     def apply_invitation(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
-        """The organizer's change into your calendar (D-310); a request for the latest version opens in the composer."""
+        """The organizer's change into your calendar (D-310); a request for the latest version goes after the question whether to send it."""
         if place is None:
             return
         info = self._card_of(reader, place)
         home = home_word(info) if info is not None else "calendar"
 
+        note = ""
+
         def applied(result: ApplyResult) -> None:
-            words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is ready to send."}
+            words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is on its way."}
             self._tell(reader, words.get(result.done, "Done."))
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
+                self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
-        self._backend.ask(INVITATION_APPLY, self._parameters(place), applied,
-                          lambda error: self._tell(reader, f"Could not change your {home}", error), owner=self)
+        def refused(error: ChronoMailError) -> None:
+            self._tell(reader, f"Could not change your {home}", error)
+
+        parameters = carried(self._parameters(place), ApplyParameters)
+
+        def checked(check: ApplyResult) -> None:
+            nonlocal note
+            if check.done == "asked":  # the mail is all this does: without it nothing happens
+                dialog = self._mail_dialog("Ask for the invitation", "Ask the organizer to send the original invite again?")
+                if dialog.ask() is not Choice.SEND:
+                    return
+                note = dialog.note
+            self._backend.ask(INVITATION_APPLY, parameters, applied, refused, owner=self)
+
+        self._backend.ask(INVITATION_APPLY, changed(parameters, dry=True), checked, refused, owner=self)
 
     def _refresh_others(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
         """Every other open window of that mail or file says what your calendar holds now (D-310): the reading pane, message windows, card windows."""
@@ -748,16 +787,37 @@ class ReadingPane(QObject):
         shared = info is not None and info.method == "PUBLISH"
         home = home_word(info) if info is not None else "calendar"
 
+        note = ""
+
         def answered(result: AnswerResult) -> None:
             words = {"ACCEPTED": "accepted", "TENTATIVE": "accepted tentatively", "DECLINED": "declined"}[result.answer]
             where = f" It is in {result.stored_in}." if result.stored_in else ""
             mailer = (" The calendar server sends your answer when the connection is back." if result.waiting else " The calendar server sends your answer.") if result.server_answers else ""
             self._tell(reader, f"Added to your {home}.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
+                self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)  # the card says what your calendar holds now
 
-        self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._tell(reader, "Could not answer the invitation", error), owner=self)
+        def refused(error: ChronoMailError) -> None:
+            self._tell(reader, "Could not answer the invitation", error)
+
+        def checked(check: AnswerResult) -> None:
+            nonlocal note
+            chosen_parameters = parameters
+            if check.chrono:
+                dialog = self._mail_dialog("Missing organizer", MISSING_ORGANIZER, check.sender) if check.no_organizer else self._mail_dialog("Send your answer", _ANSWER_QUESTIONS[chosen])
+                choice = dialog.ask()
+                if choice is Choice.BACK:
+                    return
+                note = dialog.note
+                chosen_parameters = changed(parameters, mail=choice is Choice.SEND, to=dialog.address if check.no_organizer and choice is Choice.SEND else "")
+            self._backend.ask(INVITATION_ANSWER, chosen_parameters, answered, refused, owner=self)
+
+        self._backend.ask(INVITATION_ANSWER, changed(parameters, dry=True), checked, refused, owner=self)
+
+    def _mail_dialog(self, title: str, question: str, address: str | None = None) -> CalendarMailDialog:
+        """The one question of every calendar mail; as every dialog of an invitation it belongs to the main window (the action outlives the message window)."""
+        return CalendarMailDialog(title, question, EXPLANATION, self._parent, address)
 
     def _add_all_in_pane(self) -> None:
         self.add_all_invitation(self.reader, self._in_pane())

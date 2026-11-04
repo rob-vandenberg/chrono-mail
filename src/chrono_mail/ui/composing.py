@@ -10,7 +10,8 @@ from PySide6.QtWidgets import QApplication, QWidget
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, AccountSummary, NoParameters
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DraftOpenParameters, DraftOpenResult
-from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters, ComposeResult
+from chrono_mail.engine.commands_calendarmail import CALENDAR_MAIL_SEND, CalendarMailParameters
+from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters, ComposeResult, SendResult
 from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResult, OutboxMessageParameters, SentAlready
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
 from chrono_mail.engine.compose import ComposeKind
@@ -25,9 +26,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.4.520"
+__version__ = "composing.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.520: open_draft: tells when the draft was sent (D-310)
 # v4.4.505: open_draft: a draft made by the engine (the answer to an invitation) opens in the composer (D-310)
 # v4.2.442: a message window's Send stopped by a certificate is passed on (certificate_stopped, D-299)
@@ -178,19 +180,18 @@ class Composing(QObject):
             drafted, lambda error: self._status.report("Could not start the message", error), owner=self,
         )
 
-    def open_draft(self, account: str, folder: str, message_id: str, sent: Callable[[], None] | None = None) -> None:
-        """A draft the engine made (the answer to an invitation, D-310) opens in the composer, to be sent with Send; `sent` follows when it went."""
+    def send_calendar_mail(self, account: str, folder: str, message_id: str, note: str = "", sent: Callable[[], None] | None = None) -> None:
+        """A calendar mail the person said Send to (D-310): it goes as from the composer, with Settings > General's waiting; `sent` follows when the engine has it."""
+        chosen = self._prefs.read()
 
-        def opened(result: DraftOpenResult) -> None:
-            window = self.open_composer(account, result, None, resume=(result.folder, result.message_id))
+        def went(result: SendResult) -> None:
+            if not result.sent:
+                self._status.show(f"The mail waits in the Outbox: {result.error}" if result.error else "The mail waits in the Outbox.")
             if sent is not None:
+                sent()
 
-                def went(_account: str) -> None:
-                    sent()
-
-                window.sent.connect(went)
-
-        self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the answer", error), owner=self)
+        parameters = CalendarMailParameters(account, folder, message_id, note, chosen.send_delay_seconds if chosen.send_delay else 0, chosen.send_on_refresh)
+        self._backend.ask(CALENDAR_MAIL_SEND, parameters, went, lambda error: self._status.report("Could not send the mail, it is in Drafts", error), owner=self)
 
     def edit_draft(self) -> None:
         """Open the selected message of Drafts (or Outbox) in the composer, to continue writing or to send it."""

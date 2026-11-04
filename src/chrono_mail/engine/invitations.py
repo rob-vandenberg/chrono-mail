@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.530"
+__version__ = "invitations.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: card_copies: one invitation is shown once; is_calendar_part: a calendar text by what it is; more_attendees (D-310)
@@ -88,7 +89,6 @@ class InvitationInfo:
     journals: int = 0  # journal entries in the text: left out
     damaged: int = 0  # items that cannot be read: left out
     answered_on_mail: bool = False  # your answer is known from the mark on the mail: no copy of it says so (with_mark)
-    answer_waiting: bool = False  # your answer to this mail is a draft in Drafts: nobody has it yet
     writer: str = ""  # an answer, proposal or request to you: the address of who wrote it, as the commands choose it; "": not known (a file)
     kept_answers: tuple[tuple[str, str], ...] = ()  # an answer to your meeting: each attendee in your copy (lower case) with their answer there
     description: str = ""  # the meeting's own text, as plain text
@@ -332,23 +332,6 @@ def _writer_of(card: InvitationInfo, senders: Iterable[str]) -> str:
     return (answering(lines, wrote) if card.method == "REPLY" else None) or writing(lines, wrote, own) or ""
 
 
-def answer_waiting(mailbox: Mailbox, message_id: str | None) -> bool:
-    """Whether an answer to this mail waits in Drafts: a draft that answers it and holds a calendar message. What is really in Drafts decides, so a draft
-    sent or thrown away, here or on another computer, stops counting by itself. A mail can always be shown: what cannot be read counts as none."""
-    if not message_id:
-        return False
-    try:
-        drafts = mailbox.role_folder(FolderRole.DRAFTS)
-        for row in mailbox.index.thread_members(message_id):
-            if row.folder == drafts:
-                reference = mailbox.reference(drafts, row.store_id)
-                draft = parse_message(mailbox.store.read(reference, hint=mailbox.hint(row.store_id)))
-                if draft.in_reply_to == message_id and calendar_part(draft.attachments) is not None:
-                    return True
-    except (ChronoMailError, OSError, sqlite3.Error):
-        return False
-    return False
-
 
 def own_mail(mailbox: Mailbox, folder: tuple[str, ...]) -> str:
     """Whether a mail lies in your Sent or Drafts folder, known by role (OR-26). The folder tells, not the sender: another account of yours can invite this one."""
@@ -381,12 +364,12 @@ def with_writers(card: InvitationInfo, senders: Iterable[str]) -> InvitationInfo
     return replace(written, parts=tuple(with_writers(part, wrote) for part in card.parts)) if card.parts else written
 
 
-def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = (), waiting: bool = False) -> InvitationInfo:
+def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = ()) -> InvitationInfo:
     """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves its copy on this computer only, so its mark is what tells the
     others; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
     A proposal you declined or a request you answered also exists only as that mark: the mail you wrote is all there is."""
     senders = tuple(senders)
-    card = with_writers(replace(card, answer_waiting=waiting), senders)
+    card = with_writers(card, senders)
     if card.method in ("COUNTER", "REFRESH"):
         return replace(card, answered_on_mail=bool(flags & ANSWER_MARKS) and card.items <= 1)
     answer = "DECLINED" if MessageFlag.INVITE_DECLINED in flags else "DELEGATED" if MessageFlag.INVITE_DELEGATED in flags else ""

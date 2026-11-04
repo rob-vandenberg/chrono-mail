@@ -12,7 +12,7 @@ from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, ChronoMailError, Co
 from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS, in_event_zone
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -31,9 +31,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.531"
+__version__ = "commands_invitations.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.531: A calendar file opened from your own Sent or Drafts is your own: no buttons (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
@@ -124,6 +125,8 @@ class AnswerParameters(SourceParameters):
     answer: Answer = field(metadata=option("ACCEPTED, TENTATIVE or DECLINED"))
     calendar: str = field(default="", metadata=option("Accept or Tentative of an item not kept yet: the calendar (task list) to keep it in"))
     mail: bool = field(default=True, metadata=option("When Chrono Mail mails the answer: make it (a draft to send); false: no answer mail"))
+    to: str = field(default="", metadata=option("An invitation that names no organizer: the address the answer goes to"))
+    dry: bool = field(default=False, metadata=option("Change nothing: only check the answer and say who would mail it"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +138,9 @@ class AnswerResult:
     draft_message: str | None
     draft_account: str | None = None  # the account the answer mail is a draft of
     waiting: bool = False  # the server could not be reached: the change goes when the connection is back
+    chrono: bool = False  # dry: Chrono Mail would mail this answer
+    no_organizer: bool = False  # dry: the invitation names nobody to answer
+    sender: str = ""  # dry: who sent the mail it came in; "": a file
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +155,6 @@ class _Opened:
     whole: str = ""  # the whole text, also of what is left out: the card says what it holds
     marks: frozenset[MessageFlag] | None = None  # the marks of the mail this is the one invitation of; None: no mark can speak for it (a file, another attachment, several items)
     source: tuple[str, str] | None = None  # the folder and id of the mail: an answer to it marks it as replied once it is sent; a file has none
-    waiting: bool = False  # an answer to this mail waits in Drafts
     own: str = ""  # the mail lies in your Sent ("sent") or Drafts ("draft"): what it carries is your own and asks nothing
 
 
@@ -185,7 +190,6 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     message_id: str | None = None
     senders: tuple[str, ...] = ()
     source: tuple[str, str] | None = None
-    waiting = False
     own = ""
     receiving: str | None = None
     own_part = False
@@ -212,7 +216,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
             flags = mailbox.current_flags(reference)
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
-            source, waiting = (parameters.folder, parameters.message), answer_waiting(mailbox, parsed.message_id)
+            source = (parameters.folder, parameters.message)
             own = own_mail(mailbox, mailbox.folder(parameters.folder))
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
     text = data.decode("utf-8", "replace")
@@ -232,7 +236,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     plain = message.method == ""
     settings = engine.config().find(receiving) if receiving else None
     marks = flags if own_part and len(items.texts) == 1 else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, waiting, own)
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, own)
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -479,8 +483,16 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         if target[1].read_only:
             raise UsageError(f"This {home} is read-only")
     mails = who_mails(engine, target, you.account, you.address, item if text is None and item is not None else "")
+    missing = message.method != "PUBLISH" and (message.organizer is None or not message.organizer.address)
+    if missing:  # a server has nobody to mail: only an address the person gives can reach anyone
+        mails = replace(mails, server=False, chrono=mails.chrono or mails.server)
+    if parameters.dry:
+        return AnswerResult(parameters.answer, "", mails.server, None, None, chrono=mails.chrono and message.method != "PUBLISH", no_organizer=missing, sender=next(iter(opened.senders), "") if opened.source else "")
+    to = parameters.to.strip()
+    if to:
+        _check_address(to, "Write the e-mail address of the organizer")
     mailing = mails.chrono and parameters.mail and message.method != "PUBLISH"  # a published item asks no answer
-    reply = _answer_text(opened, you, parameters.answer, text) if mailing else None
+    reply = _answer_text(opened, you, parameters.answer, text, to if missing else "") if mailing else None
     waiting = False
     try:
         if target is not None:
@@ -502,7 +514,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     draft_folder = draft_message = draft_account = None
     if reply is not None:
         draft_folder, draft_message = _save_mail(engine, opened, you.account, _SUBJECT_WORD[parameters.answer],
-                                                 f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply)
+                                                 f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply, to if missing else None)
         draft_account = you.account
     _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None, mails.server and message.method != "PUBLISH")
     return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account, waiting)
@@ -557,12 +569,17 @@ def _put_items(engine: Engine, kind: CollectionKind, collection: str, items: lis
     return len(items)
 
 
-def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None = None) -> str:
-    """The calendar answer for the organizer (METHOD:REPLY), checked before anything is written."""
+def _check_address(address: str, wanted: str) -> None:
+    if "@" not in address or any(character.isspace() or character in "<>,;\"" for character in address) or len(address) > 254:
+        raise UsageError(wanted)
+
+
+def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None = None, to: str = "") -> str:
+    """The calendar answer for the organizer (METHOD:REPLY), checked before anything is written. to: the organizer the person named for an item that names none."""
     organizer = opened.message.organizer
-    if organizer is None or not organizer.address:
+    if not to and (organizer is None or not organizer.address):
         raise UsageError("This invitation names no organizer to answer")
-    reply = reply_text(opened.text, you.address, answer, datetime.now(UTC), you.name, copy_text)  # each date as your copy says
+    reply = reply_text(opened.text, you.address, answer, datetime.now(UTC), you.name, copy_text, to)  # each date as your copy says
     if reply is None:
         raise UsageError("The invitation could not be read")
     return reply
@@ -598,6 +615,11 @@ def _collection(engine: Engine, kind: CollectionKind, collection: str) -> tuple[
     raise UsageError(f"There is no such {_home(kind)}")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApplyParameters(SourceParameters):
+    dry: bool = field(default=False, metadata=option("Change nothing: only say whether this makes a mail (done: asked)"))
+
+
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
     done: str  # updated, removed, asked (a request for the original invite is ready to send)
@@ -607,7 +629,7 @@ class ApplyResult:
     draft_account: str | None = None
 
 
-def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResult:
+def invitation_apply(engine: Engine, parameters: ApplyParameters) -> ApplyResult:
     """What the organizer changed, into your calendar: a newer version (your answer kept unless its time changed), a cancellation (the item,
     or the one occurrence, removed). Added dates of a series you do not have: a request to send it again (of a series you have: an answer). Server first (item_writer). A message older than your copy changes nothing (OR-4:
     the command checks it, not only the window)."""
@@ -626,8 +648,12 @@ def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResul
         refresh = refresh_text(opened.text, you.address, datetime.now(UTC))
         if refresh is None:
             raise UsageError("The calendar message could not be read")
+        if parameters.dry:
+            return ApplyResult("asked", "")
         folder, draft = _save_mail(engine, opened, you.account, "Refresh", f"Please send me the latest version of this {item_word}.\n", refresh)
         return ApplyResult("asked", "", folder, draft, you.account)
+    if parameters.dry:
+        return ApplyResult("", "")
     if stored is None:
         raise UsageError(f"This {item_word} is not in your {home}")
     occurrence = message.occurrence
@@ -674,6 +700,7 @@ def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResul
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DelegateParameters(SourceParameters):
     to: str = field(metadata=option("The address of the person who goes in your place"))
+    mail: bool = field(default=True, metadata=option("Make the mails (drafts to send); false: none, your answer only in your calendar"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,8 +721,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
         raise UsageError("Only an invitation can be passed on")
     _not_yours(engine, opened)
     delegate = parameters.to.strip()
-    if "@" not in delegate or any(character.isspace() or character in "<>,;\"" for character in delegate) or len(delegate) > 254:
-        raise UsageError("Write the e-mail address of the person who goes in your place")
+    _check_address(delegate, "Write the e-mail address of the person who goes in your place")
     you = _you(engine, opened)
     if delegate.lower() == you.address:
         raise UsageError("You cannot pass the invitation on to yourself")
@@ -725,6 +751,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
         text = answered_added(stored.text, opened.text, you.address, "DELEGATED", you.name)
     text = with_delegate(text, you.address, delegate, moments) if text is not None else None  # a server answering itself names them
     mails = who_mails(engine, (stored.account, stored.info) if stored is not None and text is not None else None, you.account, you.address)
+    mails = mails if parameters.mail else quiet(mails)
     if stored is not None and text is not None:  # the calendar first: a refusal leaves no drafts behind
         try:
             with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
@@ -734,6 +761,9 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     who = you.name or you.address
     task = message.kind == "task"
     asked = f"{who} asks you to do this task in their place.\n" if task else f"{who} asks you to go to this meeting in their place.\n"
+    if not parameters.mail:
+        _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
+        return DelegateResult(you.account, "", "", "")
     passed = _save_mail(engine, opened, you.account, "Invitation", asked, request, to=delegate)
     _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
     if not mails.chrono:  # the server mails your answer DELEGATED itself, or you want no such mails (D-310)
@@ -750,7 +780,8 @@ _ORGANIZE_FOR: dict[str, str] = {"take": "REPLY", "accept_proposal": "COUNTER", 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OrganizeParameters(SourceParameters):
     action: Organize = field(metadata=option("take (an attendee's answer), accept_proposal, decline_proposal, or send_latest (to whoever asks)"))
-    mail: bool = field(default=True, metadata=option("When Chrono Mail mails the attendees: make the mail (a draft to send); false: none"))
+    mail: bool = field(default=True, metadata=option("When Chrono Mail mails: make the mail (a draft to send); false: none"))
+    dry: bool = field(default=False, metadata=option("Change nothing: only check the action and say whether Chrono Mail would mail"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -761,6 +792,7 @@ class OrganizeResult:
     draft_account: str | None = None
     draft_folder: str | None = None
     draft_message: str | None = None
+    chrono: bool = False  # dry: Chrono Mail would mail
 
 
 def _sender(opened: _Opened, yours: Iterable[str]) -> str:
@@ -841,9 +873,11 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     mails = who_mails(engine, (stored.account, stored.info) if stored is not None else None, own.account.account_id, own.account.email_address.strip().lower(), answers=False)
     server = mails.server
     # A refusal of a proposal and the latest version exist only as mails: always made. A moved meeting: what the person said (D-310).
-    mailing = calendar is not None and (parameters.action in ("decline_proposal", "send_latest") or (parameters.mail and mails.chrono))
+    mailing = calendar is not None and parameters.mail and (parameters.action in ("decline_proposal", "send_latest") or mails.chrono)
     if mailing and not to:
         raise UsageError(f"This {item_word} has no attendees to write to")
+    if parameters.dry:
+        return OrganizeResult("", "", server, chrono=mailing)
     if parameters.action == "accept_proposal" and not parameters.mail:
         mails, server = quiet(mails), False  # nobody is told, as the person said
     if stored is not None and text is not None:
@@ -854,6 +888,8 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
             raise UsageError(str(error)) from None
     stored_in = _label(engine, stored.account, stored.info) if stored is not None else ""
     if not mailing or calendar is None:
+        if parameters.action == "decline_proposal":
+            _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED)  # refused without a mail: handled all the same
         return OrganizeResult(done, stored_in, server)
     title = (base.title if base is not None else "") or message.title or "(no title)"  # your meeting's: a request for the latest version has none
     body = {"Changed": f"The {item_word} has changed.\n", "Proposal declined": f"Thank you for your proposal; the {item_word} stays as it is.\n",
@@ -929,7 +965,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
     card = replace(card, own_mail=opened.own)
-    return with_mark(card, opened.marks, opened.senders, opened.waiting) if opened.marks is not None else with_writers(card, opened.senders)
+    return with_mark(card, opened.marks, opened.senders) if opened.marks is not None else with_writers(card, opened.senders)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1034,7 +1070,7 @@ INVITATION_BUSY: TypedCommand[BusyParameters, BusyResult] = TypedCommand("invita
 INVITATION_CHOICES: TypedCommand[ChoicesParameters, ChoicesResult] = TypedCommand("invitation.choices", ChoicesParameters, ChoicesResult)
 INVITATION_ADD: TypedCommand[AddParameters, AddResult] = TypedCommand("invitation.add", AddParameters, AddResult)
 INVITATION_ANSWER: TypedCommand[AnswerParameters, AnswerResult] = TypedCommand("invitation.answer", AnswerParameters, AnswerResult)
-INVITATION_APPLY: TypedCommand[SourceParameters, ApplyResult] = TypedCommand("invitation.apply", SourceParameters, ApplyResult)
+INVITATION_APPLY: TypedCommand[ApplyParameters, ApplyResult] = TypedCommand("invitation.apply", ApplyParameters, ApplyResult)
 INVITATION_DELEGATE: TypedCommand[DelegateParameters, DelegateResult] = TypedCommand("invitation.delegate", DelegateParameters, DelegateResult)
 INVITATION_ORGANIZE: TypedCommand[OrganizeParameters, OrganizeResult] = TypedCommand("invitation.organize", OrganizeParameters, OrganizeResult)
 
@@ -1050,7 +1086,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(INVITATION_ADD.id, "Add all items of a calendar text that ask no answer: events to a calendar, tasks to a task list", AddParameters, invitation_add,
                       doing="Adding the items")
     registry.register(INVITATION_APPLY.id, "Take the organizer's change into your calendar: a newer version, a cancellation, added occurrences",
-                      SourceParameters, invitation_apply, doing="Changing your calendar")
+                      ApplyParameters, invitation_apply, doing="Changing your calendar")
     registry.register(INVITATION_DELEGATE.id, "Pass an invitation on to someone who goes in your place", DelegateParameters, invitation_delegate,
                       doing="Passing the invitation on")
     registry.register(INVITATION_ORGANIZE.id, "Your meeting: take an attendee's answer, accept or decline a proposal, send the latest version",

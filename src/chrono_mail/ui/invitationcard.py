@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.527"
+__version__ = "invitationcard.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; attendees past those read are counted (D-310)
 # v4.4.526: whole sentences and the right words: is in your calendar, event, mail or file, a task you are asked to do, a date; a web address in the place is a link (D-310)
 # v4.4.525: a mail of your own says what you sent, with no buttons; a file that does not name you greys its answers with an (i); Add all only with more than one item, greyed when fewer than two are left (D-310)
@@ -236,10 +237,8 @@ def busy_text(info: InvitationInfo) -> str:
 
 
 def status_text(info: InvitationInfo) -> str:
-    """What became of it, and that your answer has not gone yet while it waits in Drafts. A mail of your own says what it is, at the top."""
-    if info.own_mail:
-        return ""
-    return f"{_kept_text(info)} Your answer is waiting in Drafts.".strip() if info.answer_waiting else _kept_text(info)
+    """What became of it. A mail of your own says what it is, at the top."""
+    return "" if info.own_mail else _kept_text(info)
 
 
 def _kept_text(info: InvitationInfo) -> str:

@@ -16,6 +16,7 @@ from chrono_mail.engine.invitations import InvitationPerson
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.pim.itip import BusyPeriod
 from chrono_mail.ui import app
+from chrono_mail.ui.calendarmail import Choice
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog
 from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, comment_text, only_update, organize_done, proposal_when, status_text, organize_reason, status_text
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
@@ -25,12 +26,13 @@ from chrono_mail.ui.singleinstance import ShowRequests, ask_to_open, requested_f
 from tests.ui.test_ui_invitation_answers import CHOICES
 from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
-from tests.ui.world import World
+from tests.ui.world import World, answer_calendar_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.527"
+__version__ = "test_ui_invitation_window.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; the warning before Accept (D-310)
 # v4.4.526: results show in the window clicked (D-310)
 # v4.4.525: Add all greyed when fewer than two items are left (D-310)
@@ -170,6 +172,7 @@ def test_an_update_that_asks_a_new_answer_is_not_handled(reader: ReaderWidget, q
 def test_change_my_answer_asks_first_and_then_the_four_answers_return(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = opened_file(world, qtbot, calendar_file(tmp_path, REQUEST_FILE))
     first_choice(monkeypatch)
+    answer_calendar_mail(monkeypatch, Choice.QUIET)
     window.card.accept_button.click()
     qtbot.waitUntil(lambda: window.card.change_button.isVisible(), timeout=5000)
     assert window.invitation is not None and [person.answer for person in window.invitation.attendees if person.you] == ["ACCEPTED"]  # never "Not answered yet" beside "You accepted"
@@ -379,7 +382,8 @@ def test_a_window_that_was_opened_with_everything_kept_stays_open(world: World, 
     again.close()
 
 
-def test_declining_keeps_the_window_open(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+def test_declining_keeps_the_window_open(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    answer_calendar_mail(monkeypatch, Choice.QUIET)
     request = CALENDAR_FILE.replace("VERSION:2.0", "VERSION:2.0\r\nMETHOD:REQUEST").replace("SUMMARY:", "ORGANIZER:mailto:olivia@example.org\r\nATTENDEE:mailto:me@example.com\r\nSUMMARY:")
     window = opened_file(world, qtbot, calendar_file(tmp_path, request))
     window.card.decline_button.click()
@@ -539,11 +543,6 @@ def test_a_proposal_shows_the_time_now_beside_the_time_proposed() -> None:
     proposal = replace(OWN, method="COUNTER", start=start, end=end, kept_start=start.replace(hour=9), kept_end=start)
     shown = proposal_when(proposal, "the new time")
     assert shown.startswith("Proposed: the new time\nNow: ") and proposal_when(replace(proposal, kept_start=start, kept_end=end), "the new time") == "the new time"
-
-
-def test_an_answer_not_sent_yet_is_said_beside_what_your_calendar_holds() -> None:
-    accepted = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="same", your_answer="ACCEPTED")
-    assert status_text(replace(accepted, answer_waiting=True)) == f"{status_text(accepted)} Your answer is waiting in Drafts."
 
 
 KEPT = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="newer", your_answer="ACCEPTED")

@@ -12,9 +12,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.530"
+__version__ = "test_engine_invitation_organizer.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.523: the meeting's text and an attendee's comment reach the card (D-310)
 # v4.4.522: an update knows the old times and whether it asks your answer again; one date says so (D-310)
@@ -134,8 +135,16 @@ def test_a_proposal_accepted_once_is_out_of_date_after(setup: Setup) -> None:
 def test_a_refusal_of_a_proposal_is_made_whatever_the_tick(setup: Setup) -> None:
     """Step 3 review: with the tick off the refusal said it was ready, and nothing was made."""
     stored(setup, meeting())
-    result = organize(setup, deliver(setup, from_sam(meeting("COUNTER", start="20261030T140000Z", end="20261030T143000Z"))), "decline_proposal", mail=False)
+    result = organize(setup, deliver(setup, from_sam(meeting("COUNTER", start="20261030T140000Z", end="20261030T143000Z"))), "decline_proposal")
     assert result.draft_message is not None and len(drafts(setup)) == 1
+
+
+def test_a_refusal_of_a_proposal_without_a_mail_makes_none_and_is_handled(setup: Setup) -> None:
+    stored(setup, meeting())
+    message = deliver(setup, from_sam(meeting("COUNTER", start="20261030T140000Z", end="20261030T143000Z")))
+    result = organize(setup, message, "decline_proposal", mail=False)
+    assert result.done == "declined" and result.draft_message is None and not drafts(setup)
+    assert call(setup.engine, "invitation.card", account=setup.account_id, folder="Inbox", message=message).answered_on_mail
 
 
 def test_a_meeting_kept_with_another_organizer_is_never_changed(setup: Setup) -> None:

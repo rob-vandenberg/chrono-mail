@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.528"
+__version__ = "test_engine_invitation_answers.py 4.4.532"
 
 # --- Version history ----------------------------------------------------
+# v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a Decline keeps its copy on this computer (D-310)
 # v4.4.521: a declined date is hidden, the series stays whole; shown greyed when asked for (D-310)
 # v4.4.520: your answer waits in Drafts until it is sent; the Replied mark (D-310)
@@ -671,26 +672,6 @@ def flags_of(setup: Setup, message: str) -> frozenset[MessageFlag]:
         return mailbox.current_flags(mailbox.reference(mailbox.folder("Inbox"), message))
 
 
-def with_id(mail: bytes) -> bytes:
-    return b"Message-ID: <invite-1@example.org>\r\n" + mail
-
-
-def test_an_unsent_answer_waits_in_drafts_until_the_draft_is_gone(setup: Setup) -> None:
-    message = deliver(setup, with_id(invitation_mail(calendar_text())))
-    assert not card(setup, message).answer_waiting
-    result = answer(setup, message, "ACCEPTED", local_calendar(setup))
-    assert card(setup, message).answer_waiting
-    call(setup.engine, "message.delete", account=setup.account_id, folder="Drafts", message=result.draft_message)
-    assert not card(setup, message).answer_waiting
-
-
-def test_a_text_reply_in_drafts_is_no_answer_waiting(setup: Setup) -> None:
-    message = deliver(setup, with_id(invitation_mail(calendar_text())))
-    call(setup.engine, "draft.save", account=setup.account_id, to=("olivia@example.org",), subject="Re: colours", body="Which ones?", kind="reply",
-         in_reply_to="invite-1@example.org", references=("invite-1@example.org",))
-    assert not card(setup, message).answer_waiting
-
-
 def test_the_draft_of_an_answer_names_the_mail_so_sending_it_sets_the_replied_mark(setup: Setup) -> None:
     message = deliver(setup, invitation_mail(calendar_text()))
     result = answer(setup, message, "ACCEPTED", local_calendar(setup))
@@ -702,7 +683,7 @@ def test_the_draft_of_an_answer_names_the_mail_so_sending_it_sets_the_replied_ma
 def test_without_the_tick_nothing_is_sent_so_no_replied_mark_and_nothing_waits(setup: Setup) -> None:
     message = deliver(setup, invitation_mail(calendar_text()))
     answer(setup, message, "TENTATIVE", local_calendar(setup), mail=False)
-    assert MessageFlag.REPLIED not in flags_of(setup, message) and not card(setup, message).answer_waiting
+    assert MessageFlag.REPLIED not in flags_of(setup, message)
 
 
 def weekly() -> str:
