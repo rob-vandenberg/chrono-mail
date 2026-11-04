@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.4.505"
+__version__ = "colours.py 4.4.534"
 
 # --- Version history ----------------------------------------------------
+# v4.4.534: the four answer buttons of an invitation are gradients, top to bottom: Accept green, Tentative orange, Delegate blue, Decline red (the owner, D-310)
 # v4.4.505: accept_button and decline_button: Accept green and Decline red on the invitation card, with on_answer_button for their text (D-310)
 # v4.2.476: The message list and other lists #151c1c (dark theme, the owner; was #181e1f)
 # v4.2.480: The second accent, accent_alternative: orange in the dark theme, red in the light one (the owner)
@@ -72,9 +73,15 @@ class Theme:
     chip_text_dark: str  # text on a light tag colour
     notice_border: str  # the outline of the notice of a delayed send, at the bottom left of the main window
     accent_alternative: str  # the second accent: the outline of what differs in a sync conflict (the owner; picked in Settings later, B-29)
-    accept_button: str = "#0f9d58"  # Accept on the invitation card (D-310), as the reference client's green
-    decline_button: str = "#c62828"  # Decline on the invitation card
-    on_answer_button: str = "#ffffff"  # the text on those two
+    accept_button: str = "#2aa873"  # the top of the Accept gradient on the invitation card (D-310)
+    accept_button_bottom: str = "#0d7a48"  # its bottom
+    tentative_button: str = "#dc7a35"  # the top of the Tentative gradient
+    tentative_button_bottom: str = "#a9571c"
+    delegate_button: str = "#5aa2f0"  # the top of the Delegate gradient
+    delegate_button_bottom: str = "#2a6fc9"
+    decline_button: str = "#e8505b"  # the top of the Decline gradient
+    decline_button_bottom: str = "#b81f2d"
+    on_answer_button: str = "#ffffff"  # the text on the four answer buttons
 
 
 # --- Shades of the blue ---------------------------------------------------------------------------------------------------
@@ -111,6 +118,11 @@ def _with_lightness(colour: str, change: float) -> tuple[str, float]:
     new = min(1.0, max(0.0, lightness + change))
     shade = "#" + "".join(f"{round(part * 255):02x}" for part in colorsys.hls_to_rgb(hue, new, saturation))
     return shade, abs(new - lightness)
+
+
+def answer_button_hover(colour: str) -> str:
+    """An answer button's gradient colour under the pointer: a little lighter."""
+    return _with_lightness(colour, HOVER_LIGHTNESS_STEP)[0]
 
 
 def blue_hover_of(blue: str, on_blue: str, dark: bool) -> str:

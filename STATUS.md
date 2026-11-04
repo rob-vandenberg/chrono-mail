@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.533 (round 3 finished: meeting text, marks on moved mail, Try again)*
+*Last updated: 2026-11-04, version 4.4.534 (answer buttons: gradients and order)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.534 done (D-310).** To check by the owner: an invitation shows Accept (green), Tentative (orange), Delegate (blue), Decline (red), each a gradient, in that order, in both themes; a disabled one is grey; hover is lighter, focus has an outline.
 
 **4.4.533 done (D-310, round 3 items 8, 10, 13); round 3 is finished.** To check by the owner: an invite with a long text shows 250 characters and a …; a click shows more. Decline offline, move the mail, go online: the mark is on the server. A card with many items whose file is gone: a calm line with Try again.
 

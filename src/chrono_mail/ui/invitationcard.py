@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal, Sig
 from PySide6.QtGui import QFont, QIcon, QShowEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from chrono_mail.core.colours import Theme
+from chrono_mail.core.colours import Theme, answer_button_hover
 from chrono_mail.engine.invitations import InvitationInfo, InvitationPerson
 from chrono_mail.pim.times import local_time
 from chrono_mail.ui.colours import css, theme
@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.533"
+__version__ = "invitationcard.py 4.4.534"
 
 # --- Version history ----------------------------------------------------
+# v4.4.534: the four answer buttons are gradients (Accept green, Tentative orange, Delegate blue, Decline red) and stand in that order (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; attendees past those read are counted (D-310)
@@ -462,15 +463,18 @@ class InvitationCard(QFrame):
         self.accept_button = QPushButton("Accept", answers)
         self.accept_button.setObjectName("invitationAccept")
         self.tentative_button = QPushButton("Tentative", answers)
+        self.tentative_button.setObjectName("invitationTentative")
+        self.delegate_button = QPushButton("Delegate…", answers)  # made in the order they read: Tab goes along the row as it reads
+        self.delegate_button.setObjectName("invitationDelegate")
         self.decline_button = QPushButton("Decline", answers)
         self.decline_button.setObjectName("invitationDecline")
         self.add_button = QPushButton("Add to calendar", answers)
-        for button, answer in ((self.accept_button, "ACCEPTED"), (self.tentative_button, "TENTATIVE"), (self.decline_button, "DECLINED"), (self.add_button, "ACCEPTED")):
-            button.clicked.connect(partial(self.answer_requested.emit, answer))
+        for button, answer in ((self.accept_button, "ACCEPTED"), (self.tentative_button, "TENTATIVE"), (self.delegate_button, ""), (self.decline_button, "DECLINED"), (self.add_button, "ACCEPTED")):
+            if answer:
+                button.clicked.connect(partial(self.answer_requested.emit, answer))
+            else:
+                button.clicked.connect(self.delegate_requested)
             row.addWidget(button)
-        self.delegate_button = QPushButton("Delegate…", answers)  # made after the answers: Tab goes along the row as it reads
-        self.delegate_button.clicked.connect(self.delegate_requested)
-        row.addWidget(self.delegate_button)
         self.change_button = QPushButton("Change my answer", answers)
         self.change_button.clicked.connect(self.change_requested)
         row.addWidget(self.change_button)
@@ -567,6 +571,31 @@ class InvitationCard(QFrame):
         if self.info is not None and self._theme().name != self._theme_shown:
             self.show_invitation(self.info)  # another theme: the colours, marks and icons of the new one
 
+    def _answer_styles(self, colours: Theme) -> str:
+        """The four answer buttons: a gradient from the top colour to the bottom one; lighter under the pointer, an outline with the
+        focus, the grey of a disabled button when they cannot be used."""
+        radius = px_for(self, 4)
+        pad = f"{px_for(self, 4)}px {px_for(self, 12)}px"
+        focus = css(colours.roles["Highlight"][0])
+        disabled = css(colours.roles["Button"][2])
+        disabled_text = css(colours.roles["ButtonText"][2])
+        parts: list[str] = []
+        for name, top, bottom, text in (
+            ("Accept", colours.accept_button, colours.accept_button_bottom, colours.on_answer_button),
+            ("Tentative", colours.tentative_button, colours.tentative_button_bottom, colours.on_answer_button),
+            ("Delegate", colours.delegate_button, colours.delegate_button_bottom, colours.on_answer_button),
+            ("Decline", colours.decline_button, colours.decline_button_bottom, colours.on_answer_button),
+        ):
+            def gradient(first: str, second: str) -> str:
+                return f"qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 {css(first)}, stop: 1 {css(second)})"
+            selector = f"QPushButton#invitation{name}"
+            parts.append(f" {selector} {{ background: {gradient(top, bottom)}; color: {css(text)}; border: 1px solid {css(bottom)};"
+                         f" border-radius: {radius}px; padding: {pad}; }}")
+            parts.append(f" {selector}:hover {{ background: {gradient(answer_button_hover(top), answer_button_hover(bottom))}; }}")
+            parts.append(f" {selector}:focus {{ border: 1px solid {focus}; }}")
+            parts.append(f" {selector}:disabled {{ background: {disabled}; color: {disabled_text}; border: 1px solid {disabled}; }}")
+        return "".join(parts)
+
     def restyle(self) -> None:
         """The colours of the theme and the sizes of the size factor of now (D-158, D-135)."""
         colours = self._theme()
@@ -577,10 +606,7 @@ class InvitationCard(QFrame):
             f" QFrame#invitationLine {{ background: {css(border)}; border: none; }}"
             f" QLabel#invitationPerson {{ background: {css(colours.roles['Button'][0])}; border-radius: {px_for(self, 10)}px;"
             f" padding: {px_for(self, 2)}px {px_for(self, 8)}px; }}"
-            f" QPushButton#invitationAccept {{ background: {css(colours.accept_button)}; color: {css(colours.on_answer_button)}; }}"
-            f" QPushButton#invitationDecline {{ background: {css(colours.decline_button)}; color: {css(colours.on_answer_button)}; }}"
-            f" QPushButton#invitationAccept:disabled, QPushButton#invitationDecline:disabled {{ background: {css(colours.roles['Button'][2])};"
-            f" color: {css(colours.roles['ButtonText'][2])}; }}"
+            f"{self._answer_styles(colours)}"
         )
         margin = px_for(self, 24)
         self._answer_row.setContentsMargins(margin, px_for(self, 16), margin, px_for(self, 16))

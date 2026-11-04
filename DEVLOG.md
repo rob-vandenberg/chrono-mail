@@ -3916,3 +3916,8 @@ Open: items 8, 10, 13.
 Built: SHORT_TEXT and LONGEST_TEXT with the dots on the card; _moved records only the marks the server has, so the next sync writes the rest; blocks_failed shows a line with Try again. Also: a Pyrefly error in tests/test_engine_calendar_mail.py that went out with 4.4.532.
 Tests: tests/ui/test_ui_invitation_window.py, tests/test_engine_imap_online.py; the move test fails without the fix. Review: one round, nothing real.
 Open: nothing of round 3.
+
+## 2026-11-04, 4.4.534: answer buttons as gradients (the owner, D-310)
+Built: Accept, Tentative, Delegate, Decline in that order, each a top-to-bottom gradient (colours in core/colours.py, OR-9; answer_button_hover for the pointer); disabled stays grey, focus outlined.
+Tests: tests/ui/test_ui_invitation_answers.py (the new one fails on 4.4.533; the Tab-order test follows the new order). Review: one Sonnet round.
+Open: nothing.

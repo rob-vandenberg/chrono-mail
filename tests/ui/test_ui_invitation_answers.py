@@ -109,7 +109,7 @@ def test_the_buttons_read_and_tab_in_one_order(reader: ReaderWidget, qtbot: QtBo
     reader.show_message(replace(shown(html="<p></p>"), invitation=CARD))
     card = reader._card  # noqa: SLF001
     qtbot.waitUntil(lambda: card.delegate_button.isVisible())
-    row = [card.accept_button, card.tentative_button, card.decline_button, card.delegate_button]
+    row = [card.accept_button, card.tentative_button, card.delegate_button, card.decline_button]
     assert [button.x() for button in row] == sorted(button.x() for button in row)
     seen: list[QWidget] = [card.accept_button]
     current: QWidget | None = card.accept_button
@@ -118,6 +118,22 @@ def test_the_buttons_read_and_tab_in_one_order(reader: ReaderWidget, qtbot: QtBo
         if current is not None and current in row and current not in seen:
             seen.append(current)
     assert seen == row
+
+
+def test_the_four_answers_are_gradients_in_the_order_accept_tentative_delegate_decline(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """The owner (D-310): top to bottom colours, light text on three of them; a disabled button is grey."""
+    reader.show_message(replace(shown(html="<p></p>"), invitation=CARD))
+    card = reader._card  # noqa: SLF001
+    qtbot.waitUntil(lambda: card.delegate_button.isVisible())
+    sheet = card.styleSheet().lower()
+    for name, top, bottom, text in (("Accept", "2aa873", "0d7a48", "ffffff"), ("Tentative", "dc7a35", "a9571c", "ffffff"),
+                                    ("Delegate", "5aa2f0", "2a6fc9", "ffffff"), ("Decline", "e8505b", "b81f2d", "ffffff")):
+        rule = sheet[sheet.index(f"qpushbutton#invitation{name.lower()} {{"):].split("}")[0]
+        assert "qlineargradient" in rule and f"#{top}" in rule and f"#{bottom}" in rule and f"color: #{text}" in rule
+        assert "border: 1px solid" in sheet.split(f"qpushbutton#invitation{name.lower()}:focus")[1].split("}")[0]  # the focus keeps the size
+        assert f"qpushbutton#invitation{name.lower()}:disabled" in sheet and f"qpushbutton#invitation{name.lower()}:hover" in sheet
+    assert [button.objectName() for button in (card.accept_button, card.tentative_button, card.delegate_button, card.decline_button)] == [
+        "invitationAccept", "invitationTentative", "invitationDelegate", "invitationDecline"]
 
 
 def test_a_date_added_to_your_series_has_the_four_answers_and_no_other_button(reader: ReaderWidget, qtbot: QtBot) -> None:
