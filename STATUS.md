@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.522 (An update says it changed and shows old and new time, with only the buttons it needs, and a mail about one date says so)*
+*Last updated: 2026-11-04, version 4.4.523 (The card shows the meeting's own text and what an attendee wrote)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.523 done (D-310, item 11 of the changelist after the review).** To check by the owner: open an invitation with an agenda: its text stands on the card. An answer with a comment shows "Sam wrote: ...".
 
 **4.4.522 done (D-310, items 12 to 15 of the changelist after the review).** To check by the owner: open an update of a meeting you accepted. Time unchanged: "This meeting was changed." with only Update calendar. Time moved: "Please answer again.", From and To, and only the four answers. A mail about one date says "this date of the series", also on its button. A cancellation no longer speaks of a newer version.
 

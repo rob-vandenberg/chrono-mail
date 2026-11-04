@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.522"
+__version__ = "invitationcard.py 4.4.523"
 
 # --- Version history ----------------------------------------------------
+# v4.4.523: the meeting's own text and an attendee's comment are shown (D-310)
 # v4.4.522: an update says so and what changed; Update calendar when your answer stands, the four answers when it moved; a mail about one date says so; a cancellation has no newer-version sentence (D-310)
 # v4.4.520: the card says when your answer waits in Drafts (D-310)
 # v4.4.519: a message about your own meeting has two states (organize_done); the sentence names who wrote the mail; a proposal shows the time now beside its own (D-310)
@@ -128,6 +129,14 @@ def _writer(info: InvitationInfo) -> InvitationPerson | None:
     if found is None and wrote:
         return InvitationPerson(info.writer, "", "NEEDS-ACTION", False)
     return found or next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
+
+
+def comment_text(info: InvitationInfo) -> str:
+    """What an attendee wrote with an answer or a proposal, with who wrote it."""
+    if not info.comment:
+        return ""
+    writer = _writer(info)
+    return f"{(writer.name or writer.address) if writer is not None else 'Someone'} wrote: {info.comment}"
 
 
 def is_update(info: InvitationInfo) -> bool:
@@ -348,6 +357,8 @@ class InvitationCard(QFrame):
         self.intro = self._plain()
         self.title = self._plain()
         self.when = self._plain()
+        self.comment = self._plain()
+        self.description = self._plain()
         self.busy_times = self._plain()
         self.organizer = QLabel(self)
         self.organizer.setTextFormat(Qt.TextFormat.RichText)  # built with html.escape
@@ -379,6 +390,8 @@ class InvitationCard(QFrame):
         middle = self._section(outer)
         middle.addWidget(self.title)
         middle.addWidget(self.when)
+        middle.addWidget(self.comment)
+        middle.addWidget(self.description)
         middle.addWidget(self.busy_times)
         self._details_line = self._line()
         outer.addWidget(self._details_line)
@@ -532,7 +545,7 @@ class InvitationCard(QFrame):
         self.info = None
         self._clear_blocks()
         self.people.clear()
-        for label in (self.intro, self.title, self.when, self.busy_times, self.organizer, self.place, self.status):
+        for label in (self.intro, self.title, self.when, self.comment, self.description, self.busy_times, self.organizer, self.place, self.status):
             label.clear()
 
     def _clear_blocks(self) -> None:
@@ -647,6 +660,10 @@ class InvitationCard(QFrame):
         else:
             self.organizer.setText(f"Organizer is <b>{name}</b>" if name else f"Organizer is {link}")
         self._organizer_row.setVisible(bool(name or address))
+        self.comment.setText(comment_text(info))
+        self.comment.setVisible(bool(self.comment.text()))
+        self.description.setText(info.description)
+        self.description.setVisible(bool(info.description))
         self.place.setText(info.location)
         self._place_row.setVisible(bool(info.location))
         self.people.clear()

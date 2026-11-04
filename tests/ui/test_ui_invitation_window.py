@@ -16,7 +16,7 @@ from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.pim.itip import BusyPeriod
 from chrono_mail.ui import app
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog
-from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, only_update, organize_done, proposal_when, status_text, organize_reason, status_text
+from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, comment_text, only_update, organize_done, proposal_when, status_text, organize_reason, status_text
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.522"
+__version__ = "test_ui_invitation_window.py 4.4.523"
 
 # --- Version history ----------------------------------------------------
+# v4.4.523: the card shows the meeting's text and who wrote a comment (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.520: an answer that waits in Drafts is said (D-310)
 # v4.4.519: the two states of a message about your own meeting, its writer, a proposal with the time now (D-310)
@@ -581,4 +582,13 @@ def test_a_mail_about_one_date_says_so_also_on_its_button() -> None:
     assert intro_text(replace(date_of, method="CANCEL")) == "This date of the series was cancelled by its organizer."
     assert apply_text(replace(date_of, method="CANCEL")) == "Remove this date from calendar" and apply_text(date_of) == "Update this date in calendar"
     assert intro_text(replace(date_of, version="same")) == "You have been invited to this date of the series."
+
+
+def test_the_card_shows_the_meetings_text_as_plain_text_and_names_who_commented(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
+    reader.show()
+    reader.card.show_invitation(replace(OWN, method="REPLY", description="<b>Agenda</b>", comment="I am away"))
+    assert reader.card.description.text() == "<b>Agenda</b>" and not reader.card.description.isHidden()
+    assert reader.card.comment.text() == "Sam wrote: I am away" == comment_text(replace(OWN, method="REPLY", comment="I am away"))
+    reader.card.show_invitation(CARD)
+    assert reader.card.description.isHidden() and reader.card.comment.isHidden()
 

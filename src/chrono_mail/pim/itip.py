@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.518"
+__version__ = "itip.py 4.4.523"
 
 # --- Version history ----------------------------------------------------
+# v4.4.523: description and comment of a calendar message (D-310)
 # v4.4.518: request_of: a date of a series that has no changed version of its own is made an item, so a mail about it never speaks for the series
 # v4.4.516: without_dates: dates out of a copy until they are answered again; an answered date comes back (D-310)
 # v4.4.515: text_items remembers the last text it read; ready_to_delete: a copy as the server should hold it before its delete, also when that delete waits for the connection (D-310)
@@ -81,6 +82,8 @@ class CalendarMessage:
     busy: tuple[BusyPeriod, ...] = ()  # busy times: what is busy in the period below
     period_start: Moment | None = None  # busy times: the period they are about (a request: the period asked for)
     period_end: Moment | None = None
+    description: str = ""  # the item's own text
+    comment: str = ""  # what the one who wrote added (COMMENT), in an answer or a proposal
 
 
 def read_calendar_message(text: str | bytes, occurrence: Moment | None | Literal["main"] = "main") -> CalendarMessage | None:
@@ -140,6 +143,7 @@ def _message_of(component: icalendar.Component, method: str, kind: MessageKind) 
     found = CalendarMessage(
         method, kind, uid, sequence, _stamp(component, "DTSTAMP"), _moment(component, "RECURRENCE-ID"), _first(component, "SUMMARY"),
         _first(component, "LOCATION"), _person(organizer) if organizer is not None and str(organizer).strip() else None, _attendees(component),
+        description=_first(component, "DESCRIPTION"), comment=_first(component, "COMMENT"),
     )
     if kind == "event":
         event = _event_from(component)

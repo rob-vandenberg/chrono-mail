@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.522"
+__version__ = "invitations.py 4.4.523"
 
 # --- Version history ----------------------------------------------------
+# v4.4.523: description and comment on the card (D-310)
 # v4.4.522: one_date, answer_again, the times now also for an update (D-310)
 # v4.4.520: answer_waiting: a card knows that your answer still waits in Drafts (D-310)
 # v4.4.519: the two states of an answer to your meeting: writer, kept_answers, kept_start and kept_end; a proposal or request marked as answered (D-310)
@@ -85,6 +86,8 @@ class InvitationInfo:
     answer_waiting: bool = False  # your answer to this mail is a draft in Drafts: nobody has it yet
     writer: str = ""  # an answer, proposal or request to you: the address of who wrote it, as the commands choose it; "": not known (a file)
     kept_answers: tuple[tuple[str, str], ...] = ()  # an answer to your meeting: each attendee in your copy (lower case) with their answer there
+    description: str = ""  # the meeting's own text, as plain text
+    comment: str = ""  # what the attendee wrote with an answer or a proposal
     one_date: bool = False  # it is about one date of a series
     answer_again: bool = False  # an update: taking it asks your answer again, as its time changed
     kept_start: date | datetime | None = None  # a proposal or an update: the times your meeting has now
@@ -383,5 +386,5 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
-        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again,
+        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again, description=message.description, comment=message.comment,
     )

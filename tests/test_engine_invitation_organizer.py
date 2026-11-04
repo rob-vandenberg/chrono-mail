@@ -11,9 +11,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.522"
+__version__ = "test_engine_invitation_organizer.py 4.4.523"
 
 # --- Version history ----------------------------------------------------
+# v4.4.523: the meeting's text and an attendee's comment reach the card (D-310)
 # v4.4.522: an update knows the old times and whether it asks your answer again; one date says so (D-310)
 # v4.4.519: a message about your own meeting has two states, knows who wrote it, and a proposal knows the times now (D-310)
 # v4.4.514: a delegator's answer adds the delegate as not answered yet (D-310)
@@ -675,4 +676,11 @@ def test_an_update_of_the_title_leaves_your_answer_standing(setup: Setup) -> Non
 def test_a_card_knows_it_is_about_one_date(setup: Setup) -> None:
     stored(setup, series())
     assert card(setup, deliver(setup, from_sam(for_date(meeting("REPLY", sam="ACCEPTED"), "20261105T100000Z")))).one_date
+
+
+def test_the_card_carries_the_meetings_text_and_the_attendees_comment(setup: Setup) -> None:
+    stored(setup, meeting())
+    answer_text = meeting("REPLY", sam="DECLINED").replace("SUMMARY:Planning", "SUMMARY:Planning\r\nDESCRIPTION:The agenda\r\nCOMMENT:I am away")
+    shown = card(setup, deliver(setup, from_sam(answer_text)))
+    assert shown.description == "The agenda" and shown.comment == "I am away"
 

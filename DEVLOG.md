@@ -3861,3 +3861,8 @@ Open: items 11 to 19, 21 to 25.
 Built: InvitationInfo one_date, answer_again (worked out with updated_copy, so card and command cannot differ), times now also for an update; is_update, only_update; a card with the four answers never also has Update calendar.
 Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.521.
 Open: item 11, items 16 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.523: the meeting's text and an attendee's comment (the owner, D-310, item 11)
+Built: CalendarMessage and InvitationInfo description, comment; two plain-text labels on the card, never markup.
+Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.522.
+Open: items 16 to 19, 21 to 25.
