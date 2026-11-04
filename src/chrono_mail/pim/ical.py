@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.514"
+__version__ = "ical.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: the size limit of a text is measured and says so
 # v4.4.514: calendars_in: a text of several calendars one after the other is read whole, each time zone once; zones_used: also of one item (D-310)
 # v4.2.385: kept_from: a text built afresh for an import keeps from the text it came in only the time zones it uses (VTIMEZONE), its own
 #           X- properties (CREATED it carries already); never anything a server would refuse; given_parts reads the imported text once for all
@@ -25,9 +26,9 @@ __version__ = "ical.py 4.4.514"
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.58: Initial events and tasks from and to iCalendar, reminders, attendees, recurrence
 
-MAXIMUM_TEXT_CHARACTERS: int = 16 * 1024 * 1024
+MAXIMUM_TEXT_CHARACTERS: int = 16 * 1024 * 1024  # measured: a file this size holds some 140,000 items and takes 28 s and 423 MB to read, in the background
 MAXIMUM_COMPONENTS: int = 20_000
-MAXIMUM_ATTENDEES: int = 500
+MAXIMUM_ATTENDEES: int = 500  # kept of one item: every one is a part of the window; the card counts the rest
 MAXIMUM_REMINDERS: int = 20
 MAXIMUM_DATES: int = 5_000  # exceptions and extra dates of one repeating item
 MAXIMUM_OCCURRENCES: int = 5_000  # one range of a calendar view

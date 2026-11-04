@@ -22,7 +22,7 @@ from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GROUPS, TOLERANCE_SECONDS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, invitation_of, own_mail, shows_text, with_mark
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, card_copies, invitation_of, is_calendar_part, own_mail, shows_text, with_mark
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.receiving import own_place, receiving_account
@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.526"
+__version__ = "commands_mail.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: a part that repeats the card leaves the file row; an attachment says whether it is a calendar text (D-310)
 # v4.4.526: message.show says the card is of a mail (D-310)
 # v4.4.525: message.show says when a card is of a mail of your own (D-310)
 # v4.4.520: the card knows whether your answer waits in Drafts (D-310)
@@ -842,6 +843,7 @@ class AttachmentInfo:
     size: int
     inline: bool
     suggested_name: str
+    calendar: bool = False  # a calendar text, by what it is: it opens as a card, whatever its name
     card: bool = False  # the calendar message shown as the card above the text: not offered as a file (D-310)
 
 
@@ -923,7 +925,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
                 invitation = replace(invitation, text_shows_nothing=True)  # the white page of an empty HTML text gives way to the card
             elif not html_shows and plain_shows:
                 html_body = None  # the HTML text shows nothing but the plain text does: the plain text below the card, no empty page
-        card = invitation.position if invitation is not None else -1
+        copies = card_copies(parsed.attachments, invitation.position) if invitation is not None else frozenset[int]()
         return ShowResult(
             reference.store_id,
             "/".join(folder),
@@ -936,7 +938,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
             parsed.message_id,
             parsed.text_body,
             html_body,
-            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position), position == card)
+            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position), calendar=is_calendar_part(a), card=position in copies)
                   for position, a in enumerate(parsed.attachments)),
             parsed.defects,
             referenced,

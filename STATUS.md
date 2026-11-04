@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.526 (answers in the window you clicked, the card's words, a web address as a place)*
+*Last updated: 2026-11-04, version 4.4.527 (the changelist after the review is finished: a warning before Accept, no made-up limits, one invitation shown once)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.527 done (D-310, items 22, 23, 24; the changelist after the review is finished).** To check by the owner: Accept an invitation at a time you already have something: the question "Add it anyway?" comes, No leaves it unanswered; a mail carrying the invitation again as invite.ics shows one card and no file; a new invitation has no paperclip in the list (mail indexed earlier keeps it until the index is rebuilt); an attachment called "invite" opens as a card; all busy times are listed.
 
 **4.4.526 done (D-310, item 19 and the texts of item 25).** To check by the owner: click Accept in a message window or an .ics window: the result shows in that window's status bar; the card says "This meeting is in your calendar Personal (account)."; a web address as a place is a link; Delegate and an offline Accept with the server mailing say what really happens.
 

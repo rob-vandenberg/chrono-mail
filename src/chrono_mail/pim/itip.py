@@ -12,15 +12,16 @@ import icalendar
 from dateutil.rrule import rrulestr
 
 from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: one reading of iCalendar
-    MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, calendars_in, new_uid, zones_used,
+    MAXIMUM_ATTENDEES, MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, calendars_in, new_uid, zones_used,
     occurrences,
 )
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.523"
+__version__ = "itip.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: more_attendees: attendees past those read are counted; keeps_busy: what blocks its time, for the warning too (D-310)
 # v4.4.523: description and comment of a calendar message (D-310)
 # v4.4.518: request_of: a date of a series that has no changed version of its own is made an item, so a mail about it never speaks for the series
 # v4.4.516: without_dates: dates out of a copy until they are answered again; an answered date comes back (D-310)
@@ -77,6 +78,7 @@ class CalendarMessage:
     location: str = ""
     organizer: Attendee | None = None
     attendees: tuple[Attendee, ...] = ()
+    more_attendees: int = 0  # attendees past MAXIMUM_ATTENDEES: counted, not read
     event: Event | None = None  # the event, when it has a start (an answer or a request for the latest version may have none)
     task: Task | None = None
     busy: tuple[BusyPeriod, ...] = ()  # busy times: what is busy in the period below
@@ -131,6 +133,11 @@ def _first(component: icalendar.Component, name: str) -> str:
     return str(value).strip() if value is not None else ""
 
 
+def _attendees_past(component: icalendar.Component) -> int:
+    props: Any = component.get("ATTENDEE")
+    return max(0, len(props) - MAXIMUM_ATTENDEES) if isinstance(props, list) else 0
+
+
 def _message_of(component: icalendar.Component, method: str, kind: MessageKind) -> CalendarMessage | None:
     try:
         sequence = max(0, int(str(component.get("SEQUENCE", 0))))
@@ -143,7 +150,7 @@ def _message_of(component: icalendar.Component, method: str, kind: MessageKind) 
     found = CalendarMessage(
         method, kind, uid, sequence, _stamp(component, "DTSTAMP"), _moment(component, "RECURRENCE-ID"), _first(component, "SUMMARY"),
         _first(component, "LOCATION"), _person(organizer) if organizer is not None and str(organizer).strip() else None, _attendees(component),
-        description=_first(component, "DESCRIPTION"), comment=_first(component, "COMMENT"),
+        description=_first(component, "DESCRIPTION"), comment=_first(component, "COMMENT"), more_attendees=_attendees_past(component),
     )
     if kind == "event":
         event = _event_from(component)
@@ -1319,6 +1326,12 @@ def text_items(text: str | bytes) -> TextItems:
 # --- busy times (D-310 step 4) -----------------------------------------------------------------------------------------------------------
 
 
+def keeps_busy(event: Event, addresses: frozenset[str]) -> bool:
+    """Whether an event blocks its time: not when it does not block time (TRANSPARENT), is cancelled, or you declined it."""
+    yours = next((person.status.upper() for person in event.attendees if person.address.strip().lower() in addresses), "")
+    return not (event.transparency.upper() == "TRANSPARENT" or event.status.upper() == "CANCELLED" or yours == "DECLINED")
+
+
 def busy_periods(found: Iterable[Occurrence], first: datetime, last: datetime, addresses: frozenset[str], zone: tzinfo) -> tuple[BusyPeriod, ...]:
     """The times between two moments that these occurrences keep you busy, merged, in UTC, in order: only times, never what the item is. An
     occurrence that does not block the time (TRANSPARENT), a cancelled one and one you declined are left out; a tentative one (its own status,
@@ -1327,7 +1340,7 @@ def busy_periods(found: Iterable[Occurrence], first: datetime, last: datetime, a
     for occurrence in found:
         event = occurrence.event
         yours = next((person.status.upper() for person in event.attendees if person.address.strip().lower() in addresses), "")
-        if event.transparency.upper() == "TRANSPARENT" or event.status.upper() == "CANCELLED" or yours == "DECLINED":
+        if not keeps_busy(event, addresses):
             continue
         start, end = max(first, _as_aware(occurrence.start, zone)), min(last, _as_aware(occurrence.end, zone))
         if end <= start:

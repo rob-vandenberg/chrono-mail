@@ -39,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.526"
+__version__ = "readingpane.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: a warning before Accept or Tentative when you already have something at that time; a calendar attachment opens as a card by what it is (D-310)
 # v4.4.526: results and errors of a card show in the window that was clicked (_tell); Delegate and offline say what really happens (D-310)
 # v4.4.525: the question Replace or Skip is gone: Add all skips what is kept (D-310)
 # v4.4.524: Add all works in the main window (D-310)
@@ -699,6 +700,8 @@ class ReadingPane(QObject):
             return
 
         def listed(choices: ChoicesResult) -> None:
+            if choices.clashes and not self._add_anyway(choices.clashes, "Tentative" if answer == "TENTATIVE" else "Accept"):
+                return
             if choices.stored or info.method == "ADD":  # your calendar holds it now (asked afresh: it may have gone since the card was shown; an added date never goes elsewhere)
                 self._send_answer(reader, place, answer, "", info)
                 return
@@ -707,6 +710,13 @@ class ReadingPane(QObject):
                 self._send_answer(reader, place, answer, dialog.chosen, info)
 
         self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._tell(reader, "Could not read the invitation", error), owner=self)
+
+    def _add_anyway(self, clashes: tuple[str, ...], title: str) -> bool:
+        """You already have something at that time: the person says whether it goes in all the same. No leaves the invitation as it is."""
+        have = f'"{clashes[0]}"' if len(clashes) == 1 else f"{len(clashes)} appointments"
+        box = plain_box(QMessageBox.Icon.Question, self._parent, title, f"You already have {have} at this time. Add it anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        return QMessageBox.StandardButton(box.exec()) == QMessageBox.StandardButton.Yes
 
     def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str, card: InvitationInfo | None = None) -> None:
         chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
@@ -789,7 +799,7 @@ class ReadingPane(QObject):
         pass  # a copy another program still holds stays until the next start
 
     def _open_attachment(self, position: int, name: str) -> None:
-        if self.shown is not None and is_calendar_file(name):
+        if self.shown is not None and (is_calendar_file(name) or position in self.reader.calendar_parts):
             self.open_calendar_card(CalendarSource(*self.shown, part=position), name)
         elif self.shown is not None:
             open_attachment(self._parent, self._backend, self.shown, position, name, self._open_failed, self)

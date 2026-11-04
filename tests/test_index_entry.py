@@ -2,12 +2,15 @@ from datetime import UTC, datetime
 
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index import UNREADABLE_SUBJECT, IndexEntry, entry_from_raw, unreadable_entry
+from chrono_mail.index.entry import _is_invitation  # noqa: PLC2701 - the rule itself
+from chrono_mail.mime import Attachment
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_entry.py 4.1.384"
+__version__ = "test_index_entry.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: no paperclip for an invitation (D-310)
 # v4.1.384: no other mail program named in a docstring (OR-10)
 # v1.9.276: The date is when the mail server received the message: Received, Delivery-date, Date, stored (D-226)
 # v1.1.196: The send time of a scheduled message; a message that cannot be read gets 0 (R-01)
@@ -136,3 +139,10 @@ def test_a_message_without_any_time_shows_when_it_was_stored_here() -> None:
 def test_an_unreadable_received_line_falls_back_without_failing() -> None:
     raw = with_lines(raw_message(date=WHEN), "Received: from somewhere by nowhere; not a date at all", "Delivery-date: also nonsense")
     assert entry(raw).date == WHEN
+
+
+def test_an_invitation_is_no_attachment_to_a_person_and_a_calendar_file_is() -> None:
+    invitation = b"BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n"
+    assert _is_invitation(Attachment(None, "text/calendar", None, False, invitation))
+    assert not _is_invitation(Attachment("agenda.ics", "text/calendar", None, False, b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"))
+    assert not _is_invitation(Attachment("report.pdf", "application/pdf", None, False, b"METHOD:"))

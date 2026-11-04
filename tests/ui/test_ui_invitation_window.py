@@ -3,6 +3,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
+import re
 from pathlib import Path
 
 import pytest
@@ -27,9 +28,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.526"
+__version__ = "test_ui_invitation_window.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: every busy time is listed; the warning before Accept (D-310)
 # v4.4.526: results show in the window clicked (D-310)
 # v4.4.525: Add all greyed when fewer than two items are left (D-310)
 # v4.4.524: Add all in the main window reaches its action (D-310)
@@ -102,9 +104,9 @@ def test_busy_times_are_listed_and_nothing_can_be_answered(reader: ReaderWidget,
     assert organize_choices(info) == [] and apply_text(info) == "" and not card.busy_button.isVisible() and not card.accept_button.isVisible()
 
 
-def test_a_long_list_of_busy_times_is_cut_with_how_many_more() -> None:
+def test_a_long_list_of_busy_times_shows_all_of_them() -> None:
     many = replace(BUSY, busy=BUSY.busy[:1] * 23)
-    assert busy_text(many).split("\n")[-1] == "and 3 more" and len(busy_text(many).split("\n")) == 21
+    assert len(busy_text(many).split("\n")) == 23
     assert busy_text(replace(BUSY, busy=())) == "No busy times in this period."
 
 
@@ -593,3 +595,27 @@ def test_add_all_in_the_main_window_reaches_its_action(world: World, monkeypatch
     pane.reader.invitation_add_all_requested.emit()
     assert asked == [pane.reader]
 
+
+
+def test_accept_warns_when_you_already_have_something_at_that_time_and_no_leaves_it_unanswered(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first_choice(monkeypatch)
+    kept = opened_file(world, qtbot, calendar_file(tmp_path))
+    kept.card.add_button.click()
+    qtbot.waitUntil(lambda: kept_items(world, CollectionKind.EVENTS) == 1, timeout=5000)
+    kept.close()
+    qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
+    request = CALENDAR_FILE.replace("VERSION:2.0", "VERSION:2.0\r\nMETHOD:REQUEST").replace("SUMMARY:", "ORGANIZER:mailto:olivia@example.org\r\nATTENDEE:mailto:me@example.com\r\nSUMMARY:")
+    other = re.sub(r"UID:[^\r]*", "UID:other@example.com", request)
+    window = opened_file(world, qtbot, calendar_file(tmp_path, other))
+    asked: list[str] = []
+
+    def no(box: QMessageBox) -> int:
+        asked.append(box.text())
+        return QMessageBox.StandardButton.No.value
+
+    monkeypatch.setattr(QMessageBox, "exec", no)
+    window.card.accept_button.click()
+    qtbot.waitUntil(lambda: bool(asked), timeout=5000)
+    qtbot.wait(100)
+    assert "at this time. Add it anyway?" in asked[0] and kept_items(world, CollectionKind.EVENTS) == 1 and window.card.accept_button.isVisible()
+    window.close()

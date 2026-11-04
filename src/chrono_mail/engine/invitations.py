@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.526"
+__version__ = "invitations.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: card_copies: one invitation is shown once; is_calendar_part: a calendar text by what it is; more_attendees (D-310)
 # v4.4.526: in_mail: the card of a mail itself (D-310)
 # v4.4.525: own_mail: a mail in Sent or Drafts is your own; left, kept_items and items_left: what Add all still has to add (D-310)
 # v4.4.523: description and comment on the card (D-310)
@@ -96,6 +97,7 @@ class InvitationInfo:
     kept_end: date | datetime | None = None
     own_mail: str = ""  # a mail of your own: "sent" in the Sent folder, "draft" in Drafts; it says what you wrote and asks nothing
     in_mail: bool = False  # the card of a mail itself, not of a file or an attachment
+    more_attendees: int = 0  # attendees past those listed: they are counted
     left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
 
 
@@ -165,6 +167,18 @@ def calendar_part(attachments: tuple[Attachment, ...] | list[Attachment]) -> tup
         if message is not None and message.method and message.kind in ("event", "task", "freebusy"):
             return position, message
     return None
+
+
+def is_calendar_part(attachment: Attachment) -> bool:
+    """Whether a part is a calendar text, by what it is: its type, or else how it starts. Its name does not tell."""
+    return attachment.content_type.lower() in CALENDAR_TYPES or attachment.data[:64].lstrip(b"\xef\xbb\xbf \t\r\n").upper().startswith(b"BEGIN:VCALENDAR")
+
+
+def card_copies(attachments: tuple[Attachment, ...] | list[Attachment], position: int) -> frozenset[int]:
+    """The parts that hold what the card at `position` shows: one invitation is shown once, also when the mail carries it again as a file. The text itself
+    is compared, whatever its line ends: nothing is parsed, as this runs each time a mail is shown, and another version of the item stays a file."""
+    shown = "".join(calendar_text(attachments[position]).split())
+    return frozenset(place for place, each in enumerate(attachments) if place == position or (is_calendar_part(each) and "".join(calendar_text(each).split()) == shown))
 
 
 def _person(person: Attendee, addresses: frozenset[str]) -> InvitationPerson:
@@ -416,6 +430,6 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
     return InvitationInfo(
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
-        kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
+        kept.stored_in, kept.version, kept.answer, more_attendees=message.more_attendees, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
         busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again, description=message.description, comment=message.comment,
     )

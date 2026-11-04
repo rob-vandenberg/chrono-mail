@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
-from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.mime import parse_message
@@ -13,9 +12,10 @@ from tests.test_engine_invitation_answers import drafts
 from tests.test_engine_invitations import deliver, invitation_mail, show
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_busy.py 4.4.507"
+__version__ = "test_engine_invitation_busy.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: a long period is answered for all of it (D-310)
 # v4.4.507: Initial tests: someone's busy times on the card; a request answered from the calendars you tick, only times, as a draft (D-310 step 4)
 
 
@@ -122,10 +122,10 @@ def test_a_whole_day_counts_from_midnight_on_this_computer(setup: Setup, monkeyp
     assert reply is not None and [(each.start, each.end) for each in reply.busy] == [(datetime(2026, 11, 3, 22, tzinfo=UTC), datetime(2026, 11, 4, 22, tzinfo=UTC))]
 
 
-def test_a_period_too_long_is_answered_as_far_as_the_answer_says(setup: Setup) -> None:
+def test_a_long_period_is_answered_for_all_of_it(setup: Setup) -> None:
     _, data = answered(setup, calendar_of(setup), busy_text(end="20391102T000000Z"))
     reply = read_calendar_message(data)
-    assert reply is not None and reply.period_end == datetime(2026, 11, 2, tzinfo=UTC) + timedelta(days=MAXIMUM_DAYS) and reply.busy == ()
+    assert reply is not None and reply.period_end == datetime(2039, 11, 2, tzinfo=UTC) and reply.busy == ()
 
 
 def test_a_period_that_cannot_be_used_makes_no_answer(setup: Setup) -> None:

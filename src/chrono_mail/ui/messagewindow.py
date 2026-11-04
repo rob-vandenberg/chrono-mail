@@ -21,9 +21,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 4.4.511"
+__version__ = "messagewindow.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: a calendar attachment opens as a card by what it is (D-310)
 # v4.4.511: where: what the window shows, for the windows that follow an answer (D-310)
 # v4.4.507: Open attachment on an .ics file asks for its card in a window of its own (calendar_open_requested), D-310 step 4
 # v4.2.394: Reply, Reply all and Forward act once per press: holding the key opens no more windows (D-266)
@@ -95,7 +96,7 @@ class MessageWindow(QMainWindow):
         super().closeEvent(event)
 
     def _open_attachment(self, position: int, name: str) -> None:
-        if is_calendar_file(name):
+        if is_calendar_file(name) or position in self.reader.calendar_parts:
             self.calendar_open_requested.emit(position, name)
             return
         open_attachment(self, self._backend, self._where, position, name, self._open_failed, self)

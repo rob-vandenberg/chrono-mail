@@ -3881,3 +3881,8 @@ Open: items 19, 22 to 25.
 Built: ReadingPane._tell shows a card's results and errors in the window clicked; whole sentences and the right words on the card; Delegate and offline say what really happens (DelegateResult.server_answers, AnswerResult.waiting); linkify moved to ui/linkhint.py for the place.
 Tests: tests/ui/test_ui_invitation_answers.py, test_ui_invitation_window.py, test_ui_invitation_card.py, tests/test_engine_invitation_mailing.py; the new tests fail on 4.4.525. One review round found nothing real.
 Open: items 22, 23, 24.
+
+## 2026-11-04, 4.4.527: the warning before Accept, no made-up limits, one invitation shown once (the owner, D-310, items 22, 23, 24)
+Built: invitation.choices gives clashes, a question before Accept and Tentative (a series counts for a year ahead); every busy time is listed, a busy-times request is answered for its whole period, attendees past 500 are counted; the 16 MB limit is measured (some 140,000 items, 28 s, 423 MB, in the background) and also said for an attachment; a part with the card's text leaves the file row, an invitation has no paperclip, a calendar part is known by what it is.
+Tests: tests/test_engine_invitation_files.py, tests/test_engine_invitation_busy.py, tests/test_index_entry.py, tests/ui/test_ui_invitation_answers.py, tests/ui/test_ui_invitation_window.py; the new tests fail on 4.4.526. Two review rounds: the first found a stall and two small flaws, fixed; the second nothing real.
+Open: nothing of the changelist after the review.

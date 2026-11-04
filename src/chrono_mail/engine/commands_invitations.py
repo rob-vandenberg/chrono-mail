@@ -4,11 +4,12 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from email.utils import formataddr
 from pathlib import Path
+import sqlite3
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, MessageFlag, StorageError
-from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
+from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, with_mark, your_addresses, your_calendars
@@ -19,8 +20,9 @@ from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
-from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
+from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, _as_aware, occurrences
 from chrono_mail.pim.itip import (
+    keeps_busy,
     BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, without_occurrence, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone
@@ -28,9 +30,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.526"
+__version__ = "commands_invitations.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: invitation.choices says what you have at that time (clashes); busy times with no cut in the text or the period; an attachment too large says so (D-310)
 # v4.4.526: an answer says when it waits for the connection; a delegation says whether the server tells the organizer (D-310)
 # v4.4.525: Add all skips what any of your calendars holds, the choice to replace is gone; invitation.blocks says how many items are left (D-310)
 # v4.4.520: an answer's draft names the mail it answers, so sending it sets the Replied mark; a server that mails sets it at once; the card knows a draft waits (D-310)
@@ -61,7 +64,6 @@ Answer = Literal["ACCEPTED", "TENTATIVE", "DECLINED"]
 _ANSWERABLE: frozenset[str] = frozenset({"REQUEST", "PUBLISH", "ADD"})  # what asks for an answer, or offers an item to keep
 _SUBJECT_WORD: dict[str, str] = {"ACCEPTED": "Accepted", "TENTATIVE": "Tentative", "DECLINED": "Declined"}
 _ANSWER_WORD: dict[str, str] = {"ACCEPTED": "accepted", "TENTATIVE": "tentatively accepted", "DECLINED": "declined"}
-_MOST_BUSY_LINES: int = 100  # busy times written out in the text of the answer; the calendar part holds them all
 _MOST_BUSY_ITEMS: int = 200_000  # occurrences looked at for one answer (only a hostile calendar has more)
 
 
@@ -83,6 +85,7 @@ class ChoicesResult:
     chosen: str  # the one the window starts on: the first own, writable one of the account that received the mail; "": none
     stored: str  # the one that holds the item already ("": none): an answer changes the copy there
     receiving: str = ""  # the account that received the mail ("": none, a file): the busy times window starts on its own calendars
+    clashes: tuple[str, ...] = ()  # an invitation not kept yet: what you have at its time, each once, by title
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -166,6 +169,8 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
                 raise UsageError("This message holds no calendar message")
             position = found[0] if found is not None and parameters.part < 0 else parameters.part
             data = calendar_text(parsed.attachments[position]).encode("utf-8")
+            if len(data) > MAXIMUM_TEXT_CHARACTERS:
+                raise UsageError("This calendar file is too large to read")
             own_part = found is not None and found[0] == position
             flags = mailbox.current_flags(reference)
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
@@ -275,6 +280,34 @@ def _label(engine: Engine, account: str, info: CollectionInfo) -> str:
     return f"{info.name} ({account_name(engine, account)})"
 
 
+def _clashes(engine: Engine, opened: _Opened) -> tuple[str, ...]:
+    """What you already have at the time of an invitation, in your own calendars, for the warning before Accept. A series counts for the year ahead of its
+    first date. What does not block its time is no clash, and a calendar that cannot be read is skipped: the warning never stands in the way of an answer."""
+    message, zone = opened.message, local_zone()
+    event = message.event
+    start = _moment_of(event.start, zone) if event is not None else None
+    if event is None or start is None:
+        return ()
+    end = _moment_of(event.end, zone) or start
+    last = start + timedelta(days=366) if event.repeats else max(end, start + timedelta(minutes=1))
+    wanted = [(_as_aware(each.start, zone), _as_aware(each.end, zone)) for each in occurrences([opened.text], start, last, zone)] or [(start, end)]
+    addresses = your_addresses(engine)
+    found: dict[str, None] = {}
+    with your_calendars(engine, CollectionKind.EVENTS) as places:
+        for _, store, info in places:
+            try:
+                items = store.index.query(ItemQuery(CollectionKind.EVENTS, (info.collection_id,), "", start=int(start.timestamp()), end=int(last.timestamp()), limit=MAXIMUM_EVENTS))
+                for item in items:
+                    if item.uid != message.uid:
+                        for each in occurrences([store.get(item.collection, item.item_id)], start, last, zone):
+                            begins, ends = _as_aware(each.start, zone), _as_aware(each.end, zone)
+                            if keeps_busy(each.event, addresses) and any(begins < until and since < ends for since, until in wanted):
+                                found[item.title or "(no title)"] = None
+            except (ChronoMailError, OSError, sqlite3.Error):
+                continue
+    return tuple(found)
+
+
 def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> ChoicesResult:
     opened = _opened(engine, parameters, busy=True, whole=bool(parameters.kind))
     kind = {"event": CollectionKind.EVENTS, "task": CollectionKind.TASKS}.get(parameters.kind, _kind(opened.message))
@@ -294,7 +327,8 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
         except ChronoMailError:
             continue
     stored = _stored(engine, kind, uid)
-    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving)
+    clashes = _clashes(engine, opened) if not parameters.kind and opened.message.method in ("REQUEST", "ADD") and (stored is None or opened.message.method == "ADD") else ()
+    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes)
 
 
 def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:
@@ -841,7 +875,7 @@ def _moment_of(value: date | datetime | None, zone: tzinfo) -> datetime | None:
 
 
 def _period_asked(message: CalendarMessage) -> tuple[datetime, datetime]:
-    """The period a request asks about, at most MAXIMUM_DAYS long: what is answered is what the answer says it covers."""
+    """The period a request asks about, as long as it asks: a period with too much in it stops the answer (_busy_occurrences), and says so."""
     zone = local_zone()
     first, last = _moment_of(message.period_start, zone), _moment_of(message.period_end, zone)
     if first is None or last is None:
@@ -849,7 +883,7 @@ def _period_asked(message: CalendarMessage) -> tuple[datetime, datetime]:
     try:
         if last <= first:
             raise UsageError("This request names no period")
-        return first.astimezone(UTC), min(last.astimezone(UTC), first.astimezone(UTC) + timedelta(days=MAXIMUM_DAYS))
+        return first.astimezone(UTC), last.astimezone(UTC)
     except (OverflowError, ValueError):
         raise UsageError("The period of this request cannot be used") from None
 
@@ -889,9 +923,7 @@ def _busy_text(who: str, first: datetime, last: datetime, periods: tuple[BusyPer
     def moment(value: datetime) -> str:
         return local_time(value).strftime("%A %d %B %Y, %H:%M")
 
-    lines = [f"{moment(period.start)} - {moment(period.end)}{' (tentative)' if period.kind == 'BUSY-TENTATIVE' else ''}" for period in periods[:_MOST_BUSY_LINES]]
-    if len(periods) > _MOST_BUSY_LINES:
-        lines.append(f"and {len(periods) - _MOST_BUSY_LINES} more")
+    lines = [f"{moment(period.start)} - {moment(period.end)}{' (tentative)' if period.kind == 'BUSY-TENTATIVE' else ''}" for period in periods]
     heading = f"The busy times of {who} from {moment(first)} to {moment(last)}"
     return f"{heading}:\n\n" + "\n".join(lines) + "\n" if lines else f"{heading}: none.\n"
 

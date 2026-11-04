@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index.model import PREVIEW_CHARACTERS, UNKNOWN_SEND_TIME, UNREADABLE_SUBJECT, IndexEntry
 from chrono_mail.index.text import clean_preview, searchable_body
-from chrono_mail.mime import Address, ParsedMessage, delivery_addresses, parse_message, send_time
+from chrono_mail.mime import Address, Attachment, ParsedMessage, delivery_addresses, parse_message, send_time
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 4.2.430"
+__version__ = "entry.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: a calendar message shows as the card: no paperclip for it (D-310)
 # v4.2.430: to_shown: the person From / To shows, from the message's own addresses
 # v4.2.429: header_block: the headers alone, for a filling in that needs nothing else
 # v4.2.417: the sender's address, the recipients' names and addresses (each with the other as its fallback, D-291) and the delivery addresses (D-292)
@@ -21,6 +22,11 @@ __version__ = "entry.py 4.2.430"
 # v0.0.14: the preview is cleaned of web addresses and decoration
 # v0.0.13: preview
 # v0.0.8: Initial index entries
+
+def _is_invitation(attachment: Attachment) -> bool:
+    """A calendar message: it shows as the card, so to a person it is no attachment. A calendar file that asks nothing is one."""
+    return attachment.content_type.lower() in ("text/calendar", "application/ics") and b"METHOD:" in attachment.data.upper()
+
 
 def _person_shown(message: ParsedMessage) -> str:
     """The person From / To shows for mail one sent: the first recipient's name, else its address; without a recipient the sender's. From
@@ -117,7 +123,7 @@ def entry_from_raw(
         recipients=_clean(recipients),
         message_id=own_id,
         thread_key=thread_key,
-        has_attachments=any(not attachment.inline for attachment in message.attachments),
+        has_attachments=any(not attachment.inline and not _is_invitation(attachment) for attachment in message.attachments),
         body=body,
         preview=clean_preview(body, PREVIEW_CHARACTERS),
         people=_people(message),

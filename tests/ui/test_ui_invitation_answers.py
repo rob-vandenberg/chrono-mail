@@ -12,9 +12,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.526"
+__version__ = "test_ui_invitation_answers.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: attendees past those listed are counted (D-310)
 # v4.4.526: the words on the card, the place as a link, the Delegate window of a task (D-310)
 # v4.4.525: your own mails, a file that does not name you, Add all with one item (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
@@ -261,3 +262,8 @@ def test_the_delegate_window_of_a_task_speaks_of_a_task_and_promises_no_answer(q
     dialog = InvitationDelegateDialog(None, task=True)
     qtbot.addWidget(dialog)
     assert all("answer" not in label.text() and "meeting" not in label.text() for label in dialog.findChildren(QLabel))
+
+
+def test_attendees_past_those_listed_are_counted(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, more_attendees=40)))
+    assert any(label.text() == "and 40 more" for label in reader._card.people.findChildren(QLabel))  # noqa: SLF001

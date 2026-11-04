@@ -51,9 +51,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.526"
+__version__ = "reader.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: calendar_parts: which attachments open as a card, whatever their name (D-310)
 # v4.4.526: linkify moved to linkhint.py, for the card too
 # v4.4.516: Change my answer reaches the reading pane (D-310)
 # v4.4.515: the card can be reached (card); its height follows the blocks that came (D-310)
@@ -1119,6 +1120,7 @@ class ReaderWidget(QWidget):
         self._picture_positions: dict[str, int] = {}  # the address a picture is shown by -> its place among the attachments
         self._chips: QButtonGroup = QButtonGroup(self)
         self._names: dict[int, str] = {}
+        self.calendar_parts: frozenset[int] = frozenset()  # the attachments that are calendar texts, whatever their name: they open as a card
         self._page.link_clicked.connect(self.link_activated)
         self._page.linkHovered.connect(self._hover)
         self._stack.addWidget(self._placeholder)
@@ -1420,6 +1422,7 @@ class ReaderWidget(QWidget):
         self._attachment_line.setMinimumHeight(self._attachments.folded_height())
         self._chips = QButtonGroup(self._attachments)  # one file selected at a time
         self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
+        self.calendar_parts = frozenset(position for position, attachment in enumerate(attachments) if attachment.calendar)
         shown = 0
         for position, attachment in enumerate(attachments):
             if attachment.inline or attachment.card:  # shown in the text, or as the invitation card

@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.526"
+__version__ = "invitationcard.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: every busy time is listed; attendees past those read are counted (D-310)
 # v4.4.526: whole sentences and the right words: is in your calendar, event, mail or file, a task you are asked to do, a date; a web address in the place is a link (D-310)
 # v4.4.525: a mail of your own says what you sent, with no buttons; a file that does not name you greys its answers with an (i); Add all only with more than one item, greyed when fewer than two are left (D-310)
 # v4.4.523: the meeting's own text and an attendee's comment are shown (D-310)
@@ -77,7 +78,6 @@ _MARKS: dict[str, tuple[str, Callable[[Theme], str], str]] = {
     "COMPLETED": ("✓", lambda colours: colours.green, "Completed"),
     "IN-PROCESS": ("…", lambda colours: colours.amber, "Working on it"),
 }
-_BUSY_SHOWN: int = 20  # busy times listed on the card; the others are counted
 _BUSY_WORD: dict[str, str] = {"BUSY-TENTATIVE": " (tentative)", "BUSY-UNAVAILABLE": " (unavailable)"}
 
 
@@ -231,9 +231,7 @@ def busy_text(info: InvitationInfo) -> str:
     """The busy times on the card, each on a line, in local time; a request holds none, and shows none."""
     if info.method == "REQUEST":
         return ""
-    lines = [when_text(period.start, period.end, False) + _BUSY_WORD.get(period.kind, "") for period in info.busy[:_BUSY_SHOWN]]
-    if len(info.busy) > _BUSY_SHOWN:
-        lines.append(f"and {len(info.busy) - _BUSY_SHOWN} more")
+    lines = [when_text(period.start, period.end, False) + _BUSY_WORD.get(period.kind, "") for period in info.busy]
     return "\n".join(lines) or "No busy times in this period."
 
 
@@ -725,6 +723,8 @@ class InvitationCard(QFrame):
             chip.setText(f'<span style="color:{css(colour_of(colours))}; font-weight:bold">{mark}</span>&nbsp; {html.escape(_person_text(person))}')
             chip.setToolTip(plain_tip(f"{_person_text(person)}: {hover}"))  # the whole name, also when the chip is cut off; never markup (D-259)
             self.people.add(chip)
+        if info.more_attendees:
+            self.people.add(QLabel(f"and {info.more_attendees} more", self.people))
         self._people_row.setVisible(bool(info.attendees))
         self.status.setText(status_text(info))
         self.status.setVisible(bool(self.status.text()))

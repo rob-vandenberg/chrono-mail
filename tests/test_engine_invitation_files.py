@@ -4,11 +4,12 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, FolderRole
-from chrono_mail.engine.invitations import own_mail
+from chrono_mail.engine.invitations import card_copies, is_calendar_part, own_mail
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.commands_invitations import SourceParameters, invitation_card
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.mime import Attachment
 from chrono_mail.pim.ical import MAXIMUM_TEXT_CHARACTERS
 from chrono_mail.pim.itip import read_calendar_message, text_items
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
@@ -17,9 +18,10 @@ from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_lis
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.525"
+__version__ = "test_engine_invitation_files.py 4.4.527"
 
 # --- Version history ----------------------------------------------------
+# v4.4.527: what you have at that time, one invitation shown once (D-310)
 # v4.4.525: Add all skips what is kept in any calendar; how many are left; a mail in Sent or Drafts (D-310)
 # v4.4.515: every item of a text comes as a block, step by step, however many it holds (D-310)
 # v4.4.514: an export read back identical, every time zone kept, several calendars in one text (D-310)
@@ -210,6 +212,35 @@ def test_a_mail_in_sent_or_drafts_is_your_own_and_one_in_the_inbox_is_not(setup:
     with open_mailbox(setup.engine, setup.account_id) as mailbox:
         assert own_mail(mailbox, mailbox.role_folder(FolderRole.SENT)) == "sent" and own_mail(mailbox, mailbox.role_folder(FolderRole.DRAFTS)) == "draft"
         assert own_mail(mailbox, ("Inbox",)) == ""
+
+
+def timed(uid: str, method: str = "", start: str = "20261103T100000Z", end: str = "20261103T110000Z", more: str = "") -> str:
+    head = f"METHOD:{method}\r\n" if method else ""
+    people = "ORGANIZER:mailto:olivia@example.org\r\nATTENDEE:mailto:me@example.com\r\n" if method else ""
+    return (f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n{head}BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261028T090000Z\r\nDTSTART:{start}\r\nDTEND:{end}\r\n"
+            f"SUMMARY:Item {uid}\r\n{people}{more}END:VEVENT\r\nEND:VCALENDAR\r\n")
+
+
+@pytest.mark.parametrize(("name", "invitation", "kept_more", "found"), [
+    ("the same time", timed("new", "REQUEST"), "", ("Item old",)),
+    ("partly the same time", timed("new", "REQUEST", "20261103T103000Z", "20261103T113000Z"), "", ("Item old",)),
+    ("right after it", timed("new", "REQUEST", "20261103T110000Z", "20261103T120000Z"), "", ()),
+    ("a time that is not blocked", timed("new", "REQUEST"), "TRANSP:TRANSPARENT\r\n", ()),
+    ("a later date of a series", timed("new", "REQUEST", "20261027T100000Z", "20261027T110000Z", "RRULE:FREQ=WEEKLY\r\n"), "", ("Item old",)),
+])
+def test_the_choices_say_what_you_already_have_at_that_time(setup: Setup, tmp_path: Path, name: str, invitation: str, kept_more: str, found: tuple[str, ...]) -> None:
+    on_file(setup, "invitation.answer", file_with(tmp_path, timed("old", more=kept_more), "old.ics"), answer="ACCEPTED", calendar=calendar_id(setup))
+    assert on_file(setup, "invitation.choices", file_with(tmp_path, invitation, "new.ics")).clashes == found
+
+
+def test_one_invitation_is_one_card_also_when_the_mail_carries_it_again_as_a_file() -> None:
+    text = timed("one", "REQUEST").encode()
+    parts = [Attachment(None, "text/calendar", None, False, text), Attachment("invite.ics", "application/ics", None, False, text),
+             Attachment("other", "application/octet-stream", None, False, timed("two").encode()), Attachment("report.pdf", "application/pdf", None, False, b"%PDF")]
+    assert card_copies(parts, 0) == {0, 1}
+    newer = timed("one", "REQUEST", "20261104T100000Z", "20261104T110000Z").encode()
+    assert card_copies([parts[0], Attachment("invite.ics", "text/calendar", None, False, newer)], 0) == {0}  # another version stays a file
+    assert is_calendar_part(parts[2]) and not is_calendar_part(parts[3])
 
 
 def test_add_needs_a_place_for_each_kind_the_file_holds_and_writes_nothing_without(setup: Setup, tmp_path: Path) -> None:
