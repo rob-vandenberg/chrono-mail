@@ -6,18 +6,20 @@ from PySide6.QtCore import QTimer
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import ChronoMailError, ConnectionSecurity, ProtocolError, ServerSettings
-from chrono_mail.engine import Engine, commands_outbox
+from chrono_mail.engine import Engine, commands_outbox, commands_updates
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.ui import mainwindow
+from tests.fakegithub import FakeGitHub
 from tests.fakeimap import FakeImapServer
 from tests.ui.test_ui_delayed_send import delays, held, quitting, written
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_closing.py 4.4.542"
+__version__ = "test_ui_closing.py 4.4.543"
 
 # --- Version history ----------------------------------------------------
+# v4.4.543: closing waits for no update check, and the person sees nothing of the check that was hung up
 # v4.4.542: Initial: closing waits for no server: Quit anyway stood still for a minute while a sync or a LOGOUT waited for a silent server
 
 ANYWAY: float = 5.0  # a wait of these tests ends by itself, so a program that does wait fails its test instead of hanging
@@ -85,6 +87,23 @@ def test_closing_ends_a_sync_that_waits_for_a_silent_server(world: World) -> Non
         world.window.close()
         assert silent.served.wait(ANYWAY)
     assert silent.closed_in_time == [True]
+
+
+def test_closing_ends_an_update_check_that_waits_for_a_silent_server(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(commands_updates, "install_kind", lambda: "deb")
+    monkeypatch.setattr(commands_updates, "program_version", lambda: "4.2.418")
+    with FakeGitHub() as github:
+        github.hold.add("/releases")
+        world.engine.releases_address = github.releases_address
+        world.window.updates.went_online()
+        assert github.held.wait(ANYWAY)
+        answers_anyway = threading.Timer(ANYWAY, github.ended.set)  # a program that does wait ends after this, and fails below
+        answers_anyway.start()
+        world.window.close()
+        closed_in_time = not github.ended.is_set()
+        answers_anyway.cancel()
+    assert closed_in_time
+    assert world.window.updates.open_window is None and "GitHub" not in world.window.report.label.text()
 
 
 def test_closing_says_logout_and_does_not_wait_for_the_answer(world: World) -> None:

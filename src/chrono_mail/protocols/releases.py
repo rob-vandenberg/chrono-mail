@@ -10,11 +10,13 @@ from typing import BinaryIO
 from chrono_mail.core import ChronoMailError, ProtocolError
 from chrono_mail.core.jsontext import load_json
 from chrono_mail.core.words import digits
+from chrono_mail.protocols.hangup import Held, connect
 
 # --- Version ------------------------------------------------------------
-__version__ = "releases.py 4.2.427"
+__version__ = "releases.py 4.4.543"
 
 # --- Version history ----------------------------------------------------
+# v4.4.543: every connection can be hung up at the end of the program, also while it is being made, and none is made after that (D-315)
 # v4.2.427: a download takes what has arrived each time and can be interrupted at once (opened gives the means: its connection is shut),
 #           so a stop never waits for a slow or stalled server (registered as soon as each hop is connected, before its answer, also
 #           for the list of releases a download reads first); GitHubBusy: GitHub answered with something else than what was asked; DownloadInterrupted: the network broke off a download (a full
@@ -138,13 +140,32 @@ def _allowed(address: str) -> urllib.parse.SplitResult:
     raise GitHubUnreachable("An update is only taken from GitHub")  # passed on elsewhere (a network's own sign-in page): GitHub was not reached
 
 
+def _hold(connection: http.client.HTTPConnection) -> Callable[[], None]:
+    """This connection can be hung up at the end of the program, also while it is being made; what closes it for good. That is more than its own
+    close: http.client calls that as soon as a server says it closes after its answer, while the answer still has to be read."""
+    held: list[Held] = []
+
+    def make(address: tuple[str, int], timeout: float | None = None, source: tuple[str, int] | None = None) -> socket.socket:
+        sock, handle = connect(address, timeout, source)
+        held.append(handle)
+        return sock
+
+    def close() -> None:
+        connection.close()
+        while held:
+            held.pop().release()
+
+    setattr(connection, "_create_connection", make)  # http.client's own hook for making the socket
+    return close
+
+
 def _response(
     address: str, accept: str, user_agent: str, timeout: float, connected: Callable[[socket.socket | None], None] | None = None,
     stopped: Callable[[], bool] | None = None,
-) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
+) -> tuple[Callable[[], None], http.client.HTTPResponse]:
     """The answer to a GET of the address, after GitHub's redirects (only to its own addresses). connected gets the socket of every hop as soon
     as it is connected, before anything is asked (a stop shuts it, also while the server keeps its answer back); stopped is asked before each
-    hop. The caller reads the answer and closes the connection."""
+    hop. The caller reads the answer and then calls what closes the connection, which comes with it."""
     for _ in range(MAXIMUM_REDIRECTS + 1):
         parts = _allowed(address)
         host = parts.hostname or ""
@@ -152,6 +173,7 @@ def _response(
             connection: http.client.HTTPConnection = http.client.HTTPSConnection(host, parts.port or 443, timeout=timeout, context=ssl.create_default_context())
         else:
             connection = http.client.HTTPConnection(host, parts.port or 80, timeout=timeout)
+        close = _hold(connection)
         target = parts.path or "/"
         if parts.query:
             target += "?" + parts.query
@@ -166,16 +188,16 @@ def _response(
             connection.request("GET", target, headers={"Accept": accept, "User-Agent": user_agent})
             response = connection.getresponse()
         except BaseException:
-            connection.close()
+            close()
             raise
         if response.status in (301, 302, 303, 307, 308):
             location = response.getheader("Location") or ""
-            connection.close()
+            close()
             if not location:
                 raise ProtocolError("GitHub passed the request on without saying where")
             address = urllib.parse.urljoin(address, location)
             continue
-        return connection, response
+        return close, response
     raise GitHubUnreachable("GitHub passed the request on too often")
 
 
@@ -186,13 +208,13 @@ def fetch_releases(
     """The published releases of Chrono Mail, newest first as GitHub lists them (connected and stopped: as for _response, for a download that
     can be stopped while its list is read)."""
     try:
-        connection, response = _response(address, "application/vnd.github+json", user_agent, timeout, connected, stopped)
+        close, response = _response(address, "application/vnd.github+json", user_agent, timeout, connected, stopped)
         try:
             if response.status != 200:
                 raise GitHubBusy(f"GitHub answered {response.status}")
             body = response.read(MAXIMUM_LIST_BYTES + 1)
         finally:
-            connection.close()
+            close()
     except DownloadStopped:
         raise
     except (OSError, http.client.HTTPException) as error:
@@ -236,7 +258,7 @@ def download(
             opened(interrupter(sock))
 
     try:
-        connection, response = _response(file.address, "application/octet-stream", user_agent, timeout, connected, stopped)
+        close, response = _response(file.address, "application/octet-stream", user_agent, timeout, connected, stopped)
         try:
             if response.status != 200:
                 raise GitHubBusy(f"GitHub answered {response.status}")
@@ -256,7 +278,7 @@ def download(
                     raise _WriteFailed(error) from None  # the disk, told as such
                 progress(received, file.size)
         finally:
-            connection.close()
+            close()
     except DownloadStopped:
         raise
     except _WriteFailed as failed:

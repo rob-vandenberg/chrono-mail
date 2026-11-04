@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-05, version 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
+*Last updated: 2026-11-05, version 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.542 done (D-315).** To check by the owner: with mail in the Outbox, click the close button and Quit anyway, also during a mail check or with a server that does not answer: no Not Responding, the window closes when the program has finished; over 1 second the status bar says "Waiting for messages to be sent…" during a send, then "Shutting down…", and the busy bar moves; the mail being sent finishes, the rest goes at the next start. Not tried: Windows. A name lookup and the update check cannot be hung up: closing then waits for them, with the status line showing.
+**4.4.543 done (D-315).** The update check is hung up at closing like every other connection; a silent update server no longer delays the end of closing, and the person sees nothing of it. Tested with a local silent server only: not with GitHub itself, not on Windows.
+
+**4.4.542 done (D-315).** To check by the owner: with mail in the Outbox, click the close button and Quit anyway, also during a mail check or with a server that does not answer: no Not Responding, the window closes when the program has finished; over 1 second the status bar says "Waiting for messages to be sent…" during a send, then "Shutting down…", and the busy bar moves; the mail being sent finishes, the rest goes at the next start. Not tried: Windows. A name lookup cannot be hung up: closing then waits for it, with the status line showing.
 
 **4.4.539 done (D-314).** To check by the owner: the first start upgrades each index: a short wait (measured on a copy of the largest: 16 s at worst, 3 to 7 s usually), then the bar behind the window runs (about a minute); sorts by a column other than date are slower until it ends. Then rename a large top folder in the folder list: it takes well under a second, its subfolders follow, the numbers stay. Not measured: a rename on an IMAP server.
 

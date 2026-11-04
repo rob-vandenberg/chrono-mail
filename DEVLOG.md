@@ -3976,3 +3976,10 @@ Built: src/chrono_mail/protocols/hangup.py: IMAP, POP3, calendar and certificate
 Measured on a copy of the ICS test profile with a silent server: closing 0.02 s (was 57 s), normal end of the process, window never hidden early. Hanging up woke a stuck read, a secure read, a secure set-up, a connect and a calendar read within 0.001 s (Linux).
 Tests: tests/test_hangup.py, tests/ui/test_ui_closing.py. On 4.4.541 the 5 closing tests that show the fault fail, 3 that guard old behaviour pass; tests/test_hangup.py cannot run there (no module).
 Open: Windows not tried; a name lookup and the update check cannot be hung up; a send on a silent server waits for its timeout, with the status line showing.
+
+## 2026-11-05 4.4.543 The update check is hung up at closing (D-315)
+
+Built: src/chrono_mail/protocols/releases.py: every connection of the update check and of a download goes through hangup.connect, so it can be hung up, also while being made, and none is made after closing began. The handle is let go when the caller is done with the answer, not at http.client's own close, which comes before the answer is read when the server closes after it.
+A check that was hung up ends as "GitHub not reached", does not count as the check of the day, and the person sees nothing.
+Tests: tests/test_hangup.py, tests/ui/test_ui_closing.py. On 4.4.542 the 7 tests of the fault fail; the 8th (nothing stays held) passes there too, it guards the new handle.
+Open: tried with a local silent server only, not with GitHub itself, not on Windows; a name lookup still cannot be hung up (the owner's choice).
