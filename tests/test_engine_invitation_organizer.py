@@ -1,3 +1,4 @@
+from pathlib import Path
 import time
 from datetime import UTC, datetime
 
@@ -11,9 +12,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.523"
+__version__ = "test_engine_invitation_organizer.py 4.4.530"
 
 # --- Version history ----------------------------------------------------
+# v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.523: the meeting's text and an attendee's comment reach the card (D-310)
 # v4.4.522: an update knows the old times and whether it asks your answer again; one date says so (D-310)
 # v4.4.519: a message about your own meeting has two states, knows who wrote it, and a proposal knows the times now (D-310)
@@ -684,3 +686,20 @@ def test_the_card_carries_the_meetings_text_and_the_attendees_comment(setup: Set
     shown = card(setup, deliver(setup, from_sam(answer_text)))
     assert shown.description == "The agenda" and shown.comment == "I am away"
 
+
+
+def test_every_block_of_a_mail_with_several_items_knows_who_wrote_it(setup: Setup, tmp_path: Path) -> None:
+    def item(uid: str) -> str:
+        return (f"BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261027T150900Z\r\nDTSTART:20261029T100000Z\r\nDTEND:20261029T103000Z\r\nSUMMARY:Item\r\n"
+                "ORGANIZER:mailto:me@example.com\r\nATTENDEE:mailto:first@example.org\r\nATTENDEE:mailto:olivia@example.org\r\nEND:VEVENT\r\n")
+
+    text = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nMETHOD:COUNTER\r\n{item('one')}{item('two')}END:VCALENDAR\r\n"
+    message = deliver(setup, invitation_mail(text))
+    shown = call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=message).invitation
+    assert shown is not None and [part.writer for part in shown.parts] == ["olivia@example.org"] * 2
+    blocks = call(setup.engine, "invitation.blocks", account=setup.account_id, folder="Inbox", message=message, first=0, count=2)
+    assert [part.writer for part in blocks.parts] == ["olivia@example.org"] * 2
+    file = tmp_path / "proposals.ics"
+    file.write_text(text)
+    in_file = call(setup.engine, "invitation.card", account="", folder="", message="", file=str(file))
+    assert [part.writer for part in in_file.parts] == ["", ""]  # nobody sent a file

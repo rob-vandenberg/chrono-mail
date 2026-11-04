@@ -12,7 +12,7 @@ from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, ChronoMailError, Co
 from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS, in_event_zone
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, take_mark_off, with_mark, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -31,9 +31,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.529"
+__version__ = "commands_invitations.py 4.4.530"
 
 # --- Version history ----------------------------------------------------
+# v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: invitation.choices says what you have at that time (clashes); busy times with no cut in the text or the period; an attachment too large says so (D-310)
@@ -913,7 +914,8 @@ def invitation_blocks(engine: Engine, parameters: BlocksParameters) -> BlocksRes
     if parameters.first < 0 or parameters.count < 1:
         raise UsageError("Name a place and how many items")
     opened = _opened(engine, replace(parameters, item=-1), busy=True, whole=True)
-    return BlocksResult(blocks_of(engine, parameters.part, opened.whole, parameters.first, parameters.count), items_left(engine, opened.whole))
+    parts = tuple(with_writers(part, opened.senders) for part in blocks_of(engine, parameters.part, opened.whole, parameters.first, parameters.count))
+    return BlocksResult(parts, items_left(engine, opened.whole))
 
 
 def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationInfo:
@@ -922,7 +924,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     card = card_of(engine, parameters.part, opened.whole)
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
-    return with_mark(card, opened.marks, opened.senders, opened.waiting) if opened.marks is not None else card
+    return with_mark(card, opened.marks, opened.senders, opened.waiting) if opened.marks is not None else with_writers(card, opened.senders)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

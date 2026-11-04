@@ -3896,3 +3896,8 @@ Open: the dialog of item 4 is drafted in scratchpad/round3-dialog, not built in;
 Built: invitation.choices gives series_clashes, each appointment a series meets from today for a year; series_clash_text names the first three and the rest as a number. MAXIMUM_INVITATION_BYTES in engine/commands_invitations.py for a mail's calendar part and a file; the 16 MB of pim/ical.py stays for event.import.
 Tests: tests/test_engine_invitation_files.py, tests/ui/test_ui_invitation_answers.py; they need names that 4.4.528 does not have.
 Open: items 4, 5, 6, 8, 9, 10, 11, 13.
+
+## 2026-11-04, 4.4.530: every block knows the mail's sender (the owner, D-310, round 3 item 11)
+Built: with_writers in engine/invitations.py, used by with_mark, invitation.card and invitation.blocks.
+Tests: tests/test_engine_invitation_organizer.py; the new test fails without the change. Review: one round found that a file, with no sender, named its first attendee: fixed.
+Open: items 4, 5, 6, 8, 9, 10, 13.

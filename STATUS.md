@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.529 (round 3: the clash warning on a series names the dates, invites and .ics files up to 1 MB)*
+*Last updated: 2026-11-04, version 4.4.530 (round 3: every block of a mail with several items names who wrote it)*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.529 done (D-310, round 3 items 7, 12).** To check by the owner: Accept a weekly invitation that meets your appointments: the question names how many and the first three with their dates. Open an .ics file over 1 MB: it says so. Left of round 3: items 4, 5, 6, 8, 9, 10, 11, 13.
+**4.4.530 done (D-310, round 3 item 11).** To check by the owner: a mail with several proposals or answers: each block names the mail's sender. Left of round 3: items 4, 5, 6, 8, 9, 10, 13.
+
+**4.4.529 done (D-310, round 3 items 7, 12).** To check by the owner: Accept a weekly invitation that meets your appointments: the question names how many and the first three with their dates. Open an .ics file over 1 MB: it says so.
 
 **4.4.528 done (D-310, round 3 items 1, 2, 3).** To check by the owner: Decline an invitation, turn on Show declined in the calendar and see it greyed; right-click it: Accept picks a calendar and makes it a normal appointment, Delete removes it and the mail shows the invite as new. Delete one date of your own series and right-click it: Restore.
 
