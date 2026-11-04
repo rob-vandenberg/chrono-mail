@@ -3805,3 +3805,9 @@ Open: a corrected copy that cannot reach the server (offline) before its delete;
 Built: readingpane _refresh_others: the reading pane, message windows and card windows of that mail or file show the new card; _parent_of: Choose a calendar opens on the main window when the card window was closed meanwhile.
 Tests: tests/ui/test_ui_invitation_views.py (new); they fail on 4.4.510; Pyrefly 0 (Linux, win32), layer check kept; review rounds found a closed window touched by a late reply and a late refresh in the pane, both fixed.
 Open: A2, B1, A4 (findings in the private hand-over).
+
+## 2026-11-04, 4.4.512: only your own calendars hold a meeting, and a date added to a series is answered (the owner, D-310, A2, B1)
+Built: dav.py RemoteCollection.shared (DAV:owner against the principal), kept as "shared" by the synchronisation; invitations.is_yours, used by both searches, the public round gone; CalendarChoice.shared and holds, greyed with its (i), refused by invitation.answer; ADD in _ANSWERABLE, itip answered_added, added_dates, _name_added_dates; the card's four answers, or the owner's text with only Request; invitation.apply no longer adds dates.
+Tests: tests/test_engine_invitation_added.py (new), tests/test_protocol_dav.py, tests/test_sync_dav.py, tests/ui/test_ui_invitation_answers.py; they fail on 4.4.511; Pyrefly 0 (Linux, win32), layer check kept.
+Open: A4.
+

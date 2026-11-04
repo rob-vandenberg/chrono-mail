@@ -6,9 +6,10 @@ from chrono_mail.protocols.tls import fingerprint
 from tests.fakedav import FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocol_dav.py 1.10.278"
+__version__ = "test_protocol_dav.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a collection whose DAV:owner is someone else is shared (D-310)
 # v1.10.278: read: one item by the multiget first (Kerio's GET of a contact is 404); not there only on 404; a failure raises
 # v1.1.235: an empty answer means not there; a collection made is returned as listed; a yes without a collection is an error (Kerio)
 # v1.1.234: a home that cannot be listed raises; exists confirms only on 404; make_collection makes calendars, task lists and address books (R-25)
@@ -20,6 +21,18 @@ __version__ = "test_protocol_dav.py 1.10.278"
 
 EVENT = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nDTSTART:20261012T090000Z\r\nSUMMARY:Meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 CARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\nFN:Ann Lee\r\nEND:VCARD\r\n"
+
+
+def test_a_collection_of_someone_else_is_told_apart_by_its_owner() -> None:
+    with FakeDav() as server:
+        server.owners = {"events": "/dav/principals/ann/", "tasks": "/dav/principals/bob/", "contacts": "http://127.0.0.1/dav/principals/ann"}
+        found = {c.kind: c.shared for c in DavClient(server.url, "ann", "secret").all_collections()}
+    assert found == {"events": False, "tasks": True, "contacts": False}  # a host or a last slash makes no other person
+
+
+def test_a_server_that_names_no_owner_keeps_everything_the_users_own() -> None:
+    with FakeDav() as server:
+        assert not any(c.shared for c in DavClient(server.url, "ann", "secret").all_collections())
 
 
 def test_discovery_finds_the_homes_and_the_collections_and_skips_what_is_not_a_calendar() -> None:

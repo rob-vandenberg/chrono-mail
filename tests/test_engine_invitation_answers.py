@@ -13,9 +13,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.510"
+__version__ = "test_engine_invitation_answers.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a date added to a series is answered (D-310)
 # v4.4.510: a server that announces nothing never counts as mailing (D-310)
 # v4.4.505: Initial tests: Accept, Tentative and Decline keep the item with your answer, server first, and make the answer to send as a
 #           draft with the calendar answer (METHOD:REPLY) when Chrono Mail mails it; the calendars to choose from (D-310)
@@ -167,15 +168,13 @@ def test_delegate_makes_the_invitation_for_them_and_your_answer(setup: Setup) ->
         call(setup.engine, "invitation.delegate", account=setup.account_id, folder="Inbox", message=message, to="me@example.com")
 
 
-def test_an_added_occurrence_is_added_once_and_asks_no_answer(setup: Setup) -> None:
+def test_an_added_occurrence_is_added_once(setup: Setup) -> None:
     """Step 2 review: Accept on an ADD replaced the whole series; a second Add wrote the occurrence twice."""
     stored(setup, calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
     added = calendar_text(method="ADD", sequence=1).replace("DTSTART:20261029T100000Z", "DTSTART:20261231T100000Z").replace("DTEND:20261029T103000Z", "DTEND:20261231T103000Z")
     message = deliver(setup, invitation_mail(added))
-    with pytest.raises(UsageError, match="asks for no answer"):
-        answer(setup, message, "ACCEPTED")
-    call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=message)
-    call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=message)
+    answer(setup, message, "ACCEPTED")
+    answer(setup, message, "ACCEPTED")
     (text,) = kept(setup)
     assert "RRULE:FREQ=WEEKLY" in text and text.count("RDATE") == 1 and text.count("RECURRENCE-ID") == 1
 
@@ -330,7 +329,7 @@ def test_a_delegated_copy_names_the_delegate() -> None:
 def test_an_added_date_takes_the_series_answer(setup: Setup) -> None:
     stored(setup, calendar_text(method="", answer="ACCEPTED").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
     added = calendar_text(method="ADD", sequence=1).replace("DTSTART:20261029T100000Z", "DTSTART:20261231T100000Z").replace("DTEND:20261029T103000Z", "DTEND:20261231T103000Z")
-    call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(added)))
+    answer(setup, deliver(setup, invitation_mail(added)), "ACCEPTED")
     assert "NEEDS-ACTION" not in kept(setup)[0]
 
 
@@ -506,7 +505,7 @@ def test_an_added_date_for_a_copy_of_single_occurrences_asks_for_the_series(setu
     added = calendar_text(method="ADD", sequence=1).replace("DTSTART:20261029T100000Z", "DTSTART:20261231T100000Z").replace("DTEND:20261029T103000Z", "DTEND:20261231T103000Z")
     message = deliver(setup, invitation_mail(added))
     card = show(setup, message).invitation
-    assert card is not None and card.stored_in == ""  # the card offers Ask for the latest version
+    assert card is not None and card.stored_in == ""  # the card offers Request
     result = call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=message)
     assert result.done == "asked"
 

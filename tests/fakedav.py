@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 4.4.510"
+__version__ = "fakedav.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a collection can state its DAV:owner (owners)
 # v4.4.510: announces, product and user_addresses: what a server says about mailing invitations
 # v4.3.498: like Kerio, a contact's PUT may ignore If-Match (no_contact_match); a new item may be stored the server's own way, after
 #           answering with the version of what was sent (rewrite)
@@ -90,6 +91,7 @@ class FakeDav:
             "events": Collection("Calendar", "calendar", "VEVENT", "#336699FF"), "tasks": Collection("Tasks", "calendar", "VTODO"),
             "contacts": Collection("Contacts", "addressbook"), "inbox": Collection("INBOX", "folder", "VEVENT"),
         }
+        self.owners: dict[str, str] = {}  # the DAV:owner a collection states (none: it does not say)
         self.public_keys: set[str] = set()
         if public:
             self.collections["pubevents"] = Collection("Calendar", "calendar", "VEVENT")
@@ -330,6 +332,7 @@ class FakeDav:
                         + (f"<d:sync-token>token-{collection.version}</d:sync-token>" if self.sync_tokens else "")
                         + (f"<a:calendar-color>{collection.colour}</a:calendar-color>" if collection.colour else "")
                         + ("<d:current-user-privilege-set><d:privilege><d:read/></d:privilege></d:current-user-privilege-set>" if key in self.read_only else "")
+                        + (f"<d:owner><d:href>{self.owners[key]}</d:href></d:owner>" if key in self.owners else "")
                     )
                     responses.append(self.entry(self.collection_path(key), props))
             self.respond_multistatus(handler, responses)

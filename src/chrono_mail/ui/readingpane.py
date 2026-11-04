@@ -39,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.511"
+__version__ = "readingpane.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a date added to a series is answered, never added by a button of its own; it asks for no calendar (D-310)
 # v4.4.511: after an answer every open window of that mail or file shows the new card; Choose a calendar opens on the main window when the card window is gone, and the answer finishes (D-310)
 # v4.4.510: the answer follows the account, no longer the tick of Settings > Calendar (D-310)
 # v4.4.508: a text with several items: every button of a block works on its own item, Add all asks for a calendar and a task list and to
@@ -528,12 +529,11 @@ class ReadingPane(QObject):
         home = home_word(info) if info is not None else "calendar"
 
         def applied(result: ApplyResult) -> None:
-            words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "added": f"Added to your {home}.",
-                     "asked": "Your request for the latest version is ready to send."}
+            words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is ready to send."}
             self._status.show(words.get(result.done, "Done."))
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
-            self._show_again(reader, place, kept=result.done in ("updated", "added"))
+            self._show_again(reader, place, kept=result.done == "updated")
 
         self._backend.ask(INVITATION_APPLY, self._parameters(place), applied,
                           lambda error: self._status.report(f"Could not change your {home}", error), owner=self)
@@ -604,7 +604,7 @@ class ReadingPane(QObject):
             return
 
         def listed(choices: ChoicesResult) -> None:
-            if choices.stored:  # your calendar holds it now (asked afresh: it may have gone since the card was shown)
+            if choices.stored or info.method == "ADD":  # your calendar holds it now (asked afresh: it may have gone since the card was shown; an added date never goes elsewhere)
                 self._send_answer(reader, place, answer, "", info)
                 return
             dialog = InvitationCalendarDialog(choices, task=info.kind == "task", parent=self._parent_of(reader))

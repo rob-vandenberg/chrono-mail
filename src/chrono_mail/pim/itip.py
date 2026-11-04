@@ -17,9 +17,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.510"
+__version__ = "itip.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: an ADD can be answered: answered_added, added_dates, and the answer and the delegate's invitation name the date as an occurrence (D-310)
 # v4.4.510: a delegate's answer carries DELEGATED-FROM; told_silent, with_silence, without_organizer (D-310)
 # v4.4.509: with_attendee_answer takes only the line of the attendee who answered (D-310)
 # v4.4.508: text_items: a calendar text split into its items, of every kind, each a text of its own (items_text: some of them together);
@@ -288,6 +289,7 @@ def reply_text(message_text: str, address: str, answer: str, now: datetime, name
     message = _parse(message_text)
     if message is None or not _items_of(message):
         return None
+    _name_added_dates(message)
     reply = icalendar.Calendar()
     reply.add("PRODID", "-//Chrono Mail//Chrono Mail//EN")
     reply.add("VERSION", "2.0")
@@ -496,6 +498,34 @@ def with_added(stored: str, message_text: str) -> str | None:
     return kept.to_ical().decode("utf-8")
 
 
+def _name_added_dates(message: icalendar.Calendar) -> None:
+    """An ADD names its new dates by their start only; everything said about one of them names it as an occurrence, or it would be about the series."""
+    if str(message.get("METHOD", "")).upper() != "ADD":
+        return
+    for item in _items_of(message):
+        start = _moment(item, "DTSTART")
+        if start is not None and item.get("RECURRENCE-ID") is None:
+            item.add("RECURRENCE-ID", start)
+
+
+def added_dates(message_text: str) -> list[Moment]:
+    """The dates an ADD brings."""
+    message = _parse(message_text)
+    return [start for start in (_moment(each, "DTSTART") for each in _items_of(message)) if start is not None] if message is not None else []
+
+
+def answered_added(text: str, message_text: str, address: str, answer: str, name: str = "") -> str | None:
+    """The copy with your answer on the dates of an ADD it holds; the series itself keeps its own answer. None: it holds none of them."""
+    kept = _parse(text)
+    dates = added_dates(message_text)
+    if kept is None:
+        return None
+    found = [each for each in _items_of(kept) if any(_same_moment(_moment(each, "RECURRENCE-ID"), date) for date in dates)]
+    for item in found:
+        _set_answer(item, address.strip().lower(), answer, name)
+    return kept.to_ical().decode("utf-8") if found else None
+
+
 def refresh_text(message_text: str, address: str, now: datetime) -> str | None:
     """A request to the organizer for the latest version (METHOD:REFRESH, RFC 5546 section 3.2.6): UID, organizer, your attendee line."""
     message = _parse(message_text)
@@ -523,6 +553,7 @@ def delegated_texts(message_text: str, address: str, delegate: str, now: datetim
     message = _parse(message_text)
     if message is None or not _items_of(message):
         return None
+    _name_added_dates(message)
     you, other = address.strip().lower(), delegate.strip().lower()
     for item in _items_of(message):
         _set_answer(item, you, "DELEGATED", name)

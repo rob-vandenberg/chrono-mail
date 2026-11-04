@@ -15,9 +15,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.510"
+__version__ = "dav.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: RemoteCollection.shared: a collection whose DAV:owner is not this user is someone else's (D-310)
 # v4.4.510: announced: the Server header with the DAV header; user_addresses: calendar-user-address-set (D-310)
 # v4.4.505: a header written on several lines (DAV: on three lines) is joined, as RFC 9110 reads a list header: a server's
 #           calendar-auto-schedule on its second DAV line is seen (D-310)
@@ -126,6 +127,7 @@ class RemoteCollection:
     ctag: str
     sync_token: str
     public: bool = False  # one of the public folders next to the user's own (D-182)
+    shared: bool = False  # someone else's: its DAV:owner is not this user (RFC 3744), also when the user may write in it
 
 
 def canonical_href(href: str) -> str:
@@ -264,6 +266,7 @@ class DavClient:
         self._last_used: float = 0.0  # time.monotonic() of its last answer
         self._lock: threading.Lock = threading.Lock()  # one request at a time on the connection
         self._addresses: list[tuple[str, int]] = []  # where the server's name led, looked up once per client (empty: not yet, or forgotten)
+        self._principal: str = ""  # this user on the server, as homes() found it ("": not known, then no collection counts as someone else's)
 
     def close(self) -> None:
         """Close the connection kept open (the next request opens a new one)."""
@@ -434,6 +437,7 @@ class DavClient:
                 calendar_home = calendar_home or next(iter(entry.hrefs(f"{{{CALDAV}}}calendar-home-set")), "")
                 address_home = address_home or next(iter(entry.hrefs(f"{{{CARDDAV}}}addressbook-home-set")), "")
                 principal = next(iter(entry.hrefs(f"{{{DAV}}}current-user-principal")), "")
+                self._principal = principal or self._principal
                 if principal and (not calendar_home or not address_home) and principal not in tried:
                     tried.add(principal)
                     try:
@@ -453,7 +457,7 @@ class DavClient:
         found: list[RemoteCollection] = []
         properties = [
             (DAV, "displayname"), (DAV, "resourcetype"), (CALDAV, "supported-calendar-component-set"), (CALENDARSERVER, "getctag"), (DAV, "sync-token"),
-            (APPLE, "calendar-color"), (DAV, "current-user-privilege-set"),
+            (APPLE, "calendar-color"), (DAV, "current-user-privilege-set"), (DAV, "owner"),
         ]
         for home in (calendar_home, address_home):
             if not home:
@@ -461,7 +465,7 @@ class DavClient:
             for entry in self.propfind(home, properties, depth=1):
                 if entry.href.rstrip("/") == home.rstrip("/"):
                     continue
-                found.extend(_collections_of(entry))
+                found.extend(_collections_of(entry, principal=self._principal))
         return found
 
     def public_collections(self, calendar_home: str, address_home: str) -> list[RemoteCollection]:
@@ -470,7 +474,7 @@ class DavClient:
         found: list[RemoteCollection] = []
         properties = [
             (DAV, "displayname"), (DAV, "resourcetype"), (CALDAV, "supported-calendar-component-set"), (CALENDARSERVER, "getctag"), (DAV, "sync-token"),
-            (APPLE, "calendar-color"), (DAV, "current-user-privilege-set"),
+            (APPLE, "calendar-color"), (DAV, "current-user-privilege-set"), (DAV, "owner"),
         ]
         for home in (calendar_home, address_home):
             parent = home.rstrip("/").rsplit("/", 1)[0] if home.strip("/") else ""
@@ -484,7 +488,7 @@ class DavClient:
             for entry in entries:
                 if entry.href.rstrip("/") == place.rstrip("/"):
                     continue
-                found.extend(_collections_of(entry, public=True))
+                found.extend(_collections_of(entry, public=True, principal=self._principal))
         return found
 
     def all_collections(self) -> list[RemoteCollection]:
@@ -719,7 +723,12 @@ def _etag(text: str) -> str:
     return cleaned.strip('"')
 
 
-def _collections_of(entry: DavEntry, public: bool = False) -> list[RemoteCollection]:
+def _place(href: str) -> str:
+    """The path of a principal in one form: a server may write it with or without its host, its escapes and its last slash."""
+    return canonical_href(urllib.parse.urlsplit(href).path).rstrip("/")
+
+
+def _collections_of(entry: DavEntry, public: bool = False, principal: str = "") -> list[RemoteCollection]:
     types = entry.properties.get(f"{{{DAV}}}resourcetype")
     kinds = {child.tag for child in types} if types is not None else set()
     if f"{{{DAV}}}collection" not in kinds:
@@ -731,15 +740,17 @@ def _collections_of(entry: DavEntry, public: bool = False) -> list[RemoteCollect
     privileges = entry.properties.get(f"{{{DAV}}}current-user-privilege-set")
     writable = privileges is None or any(item.tag in (f"{{{DAV}}}write", f"{{{DAV}}}all", f"{{{DAV}}}write-content", f"{{{DAV}}}bind") for item in privileges.iter())
     read_only = not writable
+    owner = next(iter(entry.hrefs(f"{{{DAV}}}owner")), "")
+    shared = bool(owner and principal) and _place(owner) != _place(principal)  # a server that does not say: the user's own
     if f"{{{CARDDAV}}}addressbook" in kinds:
-        return [RemoteCollection(entry.href, name, "contacts", "VCARD", "", read_only, ctag, token, public)]
+        return [RemoteCollection(entry.href, name, "contacts", "VCARD", "", read_only, ctag, token, public, shared)]
     if f"{{{CALDAV}}}calendar" not in kinds:
         return []  # a folder that is not a calendar (some servers list their mail folders here)
     components_element = entry.properties.get(f"{{{CALDAV}}}supported-calendar-component-set")
     components = {child.get("name", "").upper() for child in components_element} if components_element is not None else {"VEVENT"}
     found: list[RemoteCollection] = []
     if "VEVENT" in components or not components:
-        found.append(RemoteCollection(entry.href, name, "events", "VEVENT", colour, read_only, ctag, token, public))
+        found.append(RemoteCollection(entry.href, name, "events", "VEVENT", colour, read_only, ctag, token, public, shared))
     if "VTODO" in components:
-        found.append(RemoteCollection(entry.href, name, "tasks", "VTODO", colour, read_only, ctag, token, public))
+        found.append(RemoteCollection(entry.href, name, "tasks", "VTODO", colour, read_only, ctag, token, public, shared))
     return found

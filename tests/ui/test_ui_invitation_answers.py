@@ -4,16 +4,18 @@ from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
-from chrono_mail.ui.invitationcalendar import InvitationCalendarDialog, InvitationDelegateDialog
+from chrono_mail.ui.infomark import InfoMark
+from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog, InvitationDelegateDialog
 from chrono_mail.ui.invitationcard import apply_text
 from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.510"
+__version__ = "test_ui_invitation_answers.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a date added to a series: the four answers, or only Request; a calendar that holds the meeting is greyed; a shared one is not ticked for busy times (D-310)
 # v4.4.510: the tick of Settings > Calendar is gone (D-310)
 # v4.4.506: your own meeting: its buttons, greyed with a reason when they cannot work (D-310 step 3)
 # v4.4.505: Initial tests: the card's buttons per kind of message, greyed when out of date; the calendar window; the Delegate window (D-310)
@@ -50,8 +52,8 @@ def test_the_organizers_changes_have_their_own_button() -> None:
     assert apply_text(replace(CARD, method="CANCEL")) == ""
     assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="newer")) == "Update calendar"
     assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="same")) == ""
-    assert apply_text(replace(CARD, method="ADD")) == "Ask for the latest version"
-    assert apply_text(replace(CARD, method="ADD", stored_in="Calendar (Work)", occurrence_kept=True)) == "Add to calendar"
+    assert apply_text(replace(CARD, method="ADD")) == "Request"
+    assert apply_text(replace(CARD, method="ADD", stored_in="Calendar (Work)", occurrence_kept=True)) == ""  # it has the four answers
 
 
 CHOICES = ChoicesResult(
@@ -103,8 +105,42 @@ def test_the_buttons_read_and_tab_in_one_order(reader: ReaderWidget, qtbot: QtBo
     assert seen == row
 
 
-def test_dates_added_already_offer_nothing_more() -> None:
-    assert apply_text(replace(CARD, method="ADD", stored_in="Calendar (Work)", occurrence_kept=False)) == ""
+def test_a_date_added_to_your_series_has_the_four_answers_and_no_other_button(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show()
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="ADD", stored_in="Calendar (Work)", occurrence_kept=True, version="newer", your_answer="TENTATIVE")))
+    card = reader._card  # noqa: SLF001
+    qtbot.waitUntil(lambda: card.accept_button.isVisible())
+    assert all(button.isVisible() and button.isEnabled() for button in (card.tentative_button, card.decline_button, card.delegate_button))
+    assert not card.apply_button.isVisible() and not card.request_label.isVisible()
+    assert card.status.text() == "You accepted tentatively. In Calendar (Work)."  # never "newer": an added date always is
+
+
+def test_a_date_of_a_series_you_do_not_have_offers_only_request(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show()
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="ADD")))
+    card = reader._card  # noqa: SLF001
+    qtbot.waitUntil(lambda: card.apply_button.isVisible())
+    assert card.apply_button.text() == "Request" and card.apply_button.isEnabled()
+    assert card.request_label.isVisible() and card.request_label.text() == "Request to resend the original invite:"
+    assert card.intro.text().startswith("This invite was part of a series that is not in your calendar, so it cannot be added or answered on its own.")
+    assert card.intro.text().endswith("and the organizer can then send you the invite again.")
+    assert not any(button.isVisible() for button in (card.accept_button, card.tentative_button, card.decline_button, card.delegate_button, card.add_button))
+
+
+def test_a_calendar_that_holds_the_meeting_is_greyed_with_its_reason(qtbot: QtBot) -> None:
+    held = ChoicesResult((CalendarChoice("a" * 32, "Team", "acc1", "Office", False, False, True, True), CalendarChoice("b" * 32, "Work", "acc1", "Office", False, False)), "b" * 32, "")
+    dialog = InvitationCalendarDialog(held)
+    qtbot.addWidget(dialog)
+    assert not dialog.radios["a" * 32].isEnabled() and dialog.radios["b" * 32].isEnabled() and dialog.chosen == "b" * 32
+    (mark,) = dialog.findChildren(InfoMark)
+    assert "is in this calendar already" in mark.toolTip()
+
+
+def test_a_shared_calendar_does_not_start_ticked_for_your_busy_times(qtbot: QtBot) -> None:
+    choices = ChoicesResult((CalendarChoice("a" * 32, "Team", "acc1", "Office", False, False, True), CalendarChoice("b" * 32, "Work", "acc1", "Office", False, False)), "b" * 32, "", "acc1")
+    dialog = InvitationBusyDialog(choices)
+    qtbot.addWidget(dialog)
+    assert dialog.chosen == ("b" * 32,)
 
 
 def test_your_own_meeting_has_no_answer_buttons(reader: ReaderWidget, qtbot: QtBot) -> None:

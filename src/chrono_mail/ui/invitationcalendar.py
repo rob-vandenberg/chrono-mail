@@ -6,9 +6,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.infomark import InfoMark
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcalendar.py 4.4.507"
+__version__ = "invitationcalendar.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a calendar that holds the meeting already is greyed with its (i); a shared calendar does not start ticked for busy times (D-310)
 # v4.4.507: a read-only task list says so; InvitationBusyDialog: the calendars your busy times are made from, with tick boxes (D-310 step 4)
 # v4.4.505: Initial: the calendar an accepted invitation goes into: every calendar of every account with a radio button, grouped by account,
 #           a read-only one greyed with its (i); the receiving account's first own calendar chosen, else none; OK greyed until one is (D-310);
@@ -45,11 +46,12 @@ class InvitationCalendarDialog(QDialog):
             line = QHBoxLayout(row)
             line.setContentsMargins(0, 0, 0, 0)
             radio = QRadioButton(choice.name, row)
-            radio.setEnabled(not choice.read_only)
+            radio.setEnabled(not choice.read_only and not choice.holds)
             line.addWidget(radio)
-            if choice.read_only:  # greyed for a reason: its (i) says it (D-294)
+            if not radio.isEnabled():  # greyed for a reason: its (i) says it (D-294)
                 mark = InfoMark(row)
-                mark.explain(choice.name, f"This {'task list' if task else 'calendar'} is read-only: nothing can be added to it.", radio)
+                home, item = ("task list", "task") if task else ("calendar", "meeting")
+                mark.explain(choice.name, f"This {home} is read-only: nothing can be added to it." if choice.read_only else f"This {item} is in this {home} already.", radio)
                 line.addWidget(mark)
             line.addStretch(1)
             layout.addWidget(row)
@@ -103,7 +105,7 @@ class InvitationBusyDialog(QDialog):
                 heading.setFont(bold)
                 layout.addWidget(heading)
             box = QCheckBox(choice.name, rows)
-            box.setChecked(choice.account == choices.receiving and not choice.read_only and not choice.public)
+            box.setChecked(choice.account == choices.receiving and not choice.read_only and not choice.public and not choice.shared)
             box.toggled.connect(self._usable)
             layout.addWidget(box)
             self.boxes[choice.collection] = box

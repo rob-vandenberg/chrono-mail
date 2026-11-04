@@ -26,9 +26,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.508"
+__version__ = "test_ui_invitation_window.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a date added to a series is answered, it has no button of its own (D-310)
 # v4.4.508: one block per item, Add all, Replace and Skip, and the window closing when everything is added (D-310)
 # v4.4.507: Initial tests: a task on the card, busy times with their window, an .ics attachment or file as a card in a window of its own, a
 #           second start handing a file over (D-310 step 4)
@@ -49,7 +50,6 @@ def test_a_task_speaks_of_a_task_and_its_task_list() -> None:
     assert intro_text(TASK) == "You have been invited to this task."
     assert apply_text(replace(TASK, method="CANCEL", stored_in="Tasks (Work)", occurrence_kept=True)) == "Remove from task list"
     assert apply_text(replace(TASK, stored_in="Tasks (Work)", version="newer")) == "Update task list"
-    assert apply_text(replace(TASK, method="ADD", stored_in="Tasks (Work)", occurrence_kept=True)) == "Add to task list"
     yours = replace(TASK, method="REPLY", organizer=replace(TASK.organizer, you=True))  # type: ignore[arg-type]
     assert organize_reason(yours) == "This task is not in your task list any more."
 

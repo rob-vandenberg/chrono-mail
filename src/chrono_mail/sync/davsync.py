@@ -52,9 +52,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.2.449"
+__version__ = "davsync.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a collection remembers whether it is someone else's ("shared", D-310)
 # v4.2.449: push False is the first fill of a new account (D-300): nothing sent (items, names, colours, merges), nothing removed here
 # v4.2.441: a certificate that could not be verified stops the synchronisation of that account, as a refused login does: the window asks (D-299)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
@@ -279,7 +280,7 @@ def _follow(
     if now != kept:
         report.looks[key] = now
     shown_name = name + (PUBLIC_SUFFIX if remote.public else "")
-    server = {**dict(local.server), "followed": "1", "public": "1" if remote.public else ""}
+    server = {**dict(local.server), "followed": "1", "public": "1" if remote.public else "", "shared": "1" if remote.shared else ""}
     if shown_name != local.name or colour != local.colour or server != dict(local.server):
         local = store.update_collection(local.collection_id, name=shown_name, colour=colour, server=server)
     return local
@@ -333,7 +334,7 @@ def sync_dav(
             if local is None:
                 local = store.create_collection(
                     CollectionKind(remote.kind), remote.name + (PUBLIC_SUFFIX if remote.public else ""), remote.colour, remote.read_only,
-                    {"href": remote.href, "component": remote.component, "followed": "1", "public": "1" if remote.public else ""},
+                    {"href": remote.href, "component": remote.component, "followed": "1", "public": "1" if remote.public else "", "shared": "1" if remote.shared else ""},
                 )
                 report.created += 1
             elif local.read_only != remote.read_only:

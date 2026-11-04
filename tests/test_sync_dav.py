@@ -11,9 +11,10 @@ from chrono_mail.sync.davsync import DavReport, sync_dav, unsent_changes
 from tests.fakedav import Collection, FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_dav.py 2.4.333"
+__version__ = "test_sync_dav.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a calendar remembers whether it is someone else's (D-310)
 # v2.4.333: the line of an item that could not be fetched counts it one way ("1 item")
 # v1.1.234: a collection deleted on the server goes here only on the server's confirmation; a failed list or check removes nothing; changed here:
 #           a sync conflict (R-25)
@@ -257,6 +258,17 @@ def test_a_wrong_password_stops_the_synchronisation(tmp_path: Path) -> None:
         setup = Setup(tmp_path, server)
         with pytest.raises(AuthenticationError):
             sync_dav(DavClient(server.url, "ann", "wrong"), setup.store, setup.state, durable=False)
+
+
+def test_a_calendar_remembers_whose_it_is_also_when_that_changes(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        server.owners = {"events": "/dav/principals/bob/"}
+        setup = Setup(tmp_path, server)
+        setup.sync()
+        assert next(info for info in setup.store.collections() if info.name == "Calendar").server_value("shared") == "1"
+        server.owners = {"events": "/dav/principals/ann/"}
+        setup.sync()
+        assert next(info for info in setup.store.collections() if info.name == "Calendar").server_value("shared") == ""
 
 
 def test_the_public_folders_next_to_the_own_ones_are_kept_in_step_and_marked(tmp_path: Path) -> None:

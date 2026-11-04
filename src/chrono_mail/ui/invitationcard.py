@@ -20,9 +20,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.508"
+__version__ = "invitationcard.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: a date added to a series you have shows the four answers; of a series you do not have: the text, and only the button Request (D-310)
 # v4.4.508: a text with several items: one block per item with its own details and buttons, and Add all at the top for items that ask no
 #           answer; the card says what the text holds and what is left out (D-310)
 # v4.4.507: a task says task and task list, with a due moment and the answers COMPLETED and IN-PROCESS; busy times with Send my busy times…;
@@ -44,6 +45,10 @@ _INTRO: dict[str, str] = {
     "DECLINECOUNTER": "The organizer declined your proposed change to this {item}.",
     "REFRESH": "{who} asks for the latest version of this {item}.",
 }
+_NOT_KEPT: str = ("This invite was part of a series that is not in your {home}, so it cannot be added or answered on its own. If you click [Request] below, Chrono Mail "
+                   "will create a special email which contains a request to the organizer to resend the original invite. You can change the accompanying text "
+                   "if you wish, then click [Send] to send the email. The organizer's calendar program should recognize the request, and the organizer can then "
+                   "send you the invite again.")
 _ANSWERED: dict[str, str] = {"ACCEPTED": "accepted", "DECLINED": "declined", "TENTATIVE": "tentatively accepted", "DELEGATED": "delegated"}
 _PROGRESS: dict[str, str] = {"COMPLETED": "{who} has completed this task.", "IN-PROCESS": "{who} is working on this task."}  # an answer about a task's progress
 _YOU: dict[str, str] = {"ACCEPTED": "You accepted.", "DECLINED": "You declined.", "TENTATIVE": "You accepted tentatively.", "DELEGATED": "You delegated it.",
@@ -103,6 +108,11 @@ def _busy_intro(info: InvitationInfo) -> str:
     return f"{who} asks when you are busy." if info.method == "REQUEST" else f"The busy times of {who}."
 
 
+def asks_for_series(info: InvitationInfo) -> bool:
+    """A date added to a series you do not have: it cannot be answered on its own, only the original invite can be asked for."""
+    return info.method == "ADD" and not info.stored_in and not (info.organizer is not None and info.organizer.you)
+
+
 def intro_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return _busy_intro(info)
@@ -110,6 +120,8 @@ def intro_text(info: InvitationInfo) -> str:
         return _holds_text(info)
     if info.plain:
         return "" if info.item >= 0 else "This file holds one item."  # a block of a file: the top of the card said it
+    if asks_for_series(info):
+        return _NOT_KEPT.format(home=home_word(info))
     item = item_word(info)
     writer = next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
     who = (writer.name or writer.address) if writer is not None else "Someone"
@@ -167,7 +179,7 @@ def status_text(info: InvitationInfo) -> str:
     if info.version == "older":
         return f"A newer version is in {info.stored_in}."
     answer = _YOU.get(info.your_answer, "")
-    return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
+    return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" or info.method == "ADD" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
 def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
@@ -204,8 +216,8 @@ def apply_text(info: InvitationInfo) -> str:
         return ""
     if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
         return f"Remove from {home}"
-    if info.method == "ADD":  # occurrence_kept: dates still to add (none: added already, nothing to offer)
-        return (f"Add to {home}" if info.occurrence_kept else "") if info.stored_in else "Ask for the latest version"
+    if asks_for_series(info):
+        return "Request"
     if info.method in ("REQUEST", "PUBLISH") and info.stored_in and info.version == "newer":
         return f"Update {home}"
     return ""
@@ -314,6 +326,8 @@ class InvitationCard(QFrame):
         self.delegate_button = QPushButton("Delegate…", answers)  # made after the answers: Tab goes along the row as it reads
         self.delegate_button.clicked.connect(self.delegate_requested)
         row.addWidget(self.delegate_button)
+        self.request_label = QLabel("Request to resend the original invite:", answers)
+        row.addWidget(self.request_label)
         self.apply_button = QPushButton("Update calendar", answers)
         self.apply_button.clicked.connect(self.apply_requested)
         row.addWidget(self.apply_button)
@@ -504,11 +518,11 @@ class InvitationCard(QFrame):
         self._show_answers(info)
 
     def _show_answers(self, info: InvitationInfo) -> None:
-        """The buttons a message asks for: Accept, Tentative and Decline for an invitation, Add to calendar for a shared item; greyed with an (i)
-        when a newer version is in a calendar already (OR-15)."""
+        """The buttons a message asks for: Accept, Tentative and Decline for an invitation and for a date added to a series you have, Add to calendar
+        for a shared item; greyed with an (i) when a newer version is in a calendar already (OR-15)."""
         yours = info.organizer is not None and info.organizer.you  # your own meeting: nothing to answer
         busy = info.kind == "freebusy"
-        asks = info.method == "REQUEST" and not yours and not busy  # an added occurrence is added first (its own button)
+        asks = (info.method == "REQUEST" or (info.method == "ADD" and bool(info.stored_in))) and not yours and not busy
         shared = info.method == "PUBLISH" and not busy
         wants_busy = info.method == "REQUEST" and not yours and busy
         self.busy_button.setVisible(wants_busy)
@@ -519,6 +533,7 @@ class InvitationCard(QFrame):
         apply = apply_text(info) if not yours else ""
         self.apply_button.setText(apply)
         self.apply_button.setVisible(bool(apply))
+        self.request_label.setVisible(asks_for_series(info))
         choices = organize_choices(info)
         self._organize_actions = [action for _, action in choices]
         for button, (label, _) in zip(self.organize_buttons, [*choices, ("", ""), ("", "")], strict=False):

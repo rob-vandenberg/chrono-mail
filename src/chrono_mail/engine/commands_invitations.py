@@ -12,7 +12,7 @@ from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS, I
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, your_addresses
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, is_yours, your_addresses
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -21,16 +21,18 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
+    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.510"
+__version__ = "commands_invitations.py 4.4.512"
 
 # --- Version history ----------------------------------------------------
+# v4.4.512: an added date is answered like an invitation: Accept and Tentative add it with your answer, Decline adds nothing, Delegate passes it on; invitation.apply only asks for a series you do not have (D-310)
+# v4.4.512: only your own calendars count as holding a meeting; a calendar that holds it already is marked and refused (D-310)
 # v4.4.510: who mails: the account decides, Chrono Mail sends when the server cannot, the copy tells the server whether to mail, also before a delete (D-310)
 # v4.4.509: Take their answer takes only the line of the attendee who wrote it; a calendar part in the character set the mail states (D-310)
 # v4.4.508: a text with several items: every command works on one item (`item`), of whatever kind; invitation.add: all items that ask no
@@ -47,7 +49,7 @@ __version__ = "commands_invitations.py 4.4.510"
 #           in a calendar server first, the answer mailed by the server or as a draft to send), D-310
 
 Answer = Literal["ACCEPTED", "TENTATIVE", "DECLINED"]
-_ANSWERABLE: frozenset[str] = frozenset({"REQUEST", "PUBLISH"})  # what asks for an answer, or offers an item to keep (an ADD is added first)
+_ANSWERABLE: frozenset[str] = frozenset({"REQUEST", "PUBLISH", "ADD"})  # what asks for an answer, or offers an item to keep
 _SUBJECT_WORD: dict[str, str] = {"ACCEPTED": "Accepted", "TENTATIVE": "Tentative", "DECLINED": "Declined"}
 _ANSWER_WORD: dict[str, str] = {"ACCEPTED": "accepted", "TENTATIVE": "tentatively accepted", "DECLINED": "declined"}
 _MOST_BUSY_LINES: int = 100  # busy times written out in the text of the answer; the calendar part holds them all
@@ -62,6 +64,8 @@ class CalendarChoice:
     account_name: str
     read_only: bool
     public: bool  # one of the public folders a server keeps next to the account's own (D-182)
+    shared: bool = False  # someone else's calendar you may use: it never starts ticked and never counts as holding your meeting (D-310)
+    holds: bool = False  # the item is in this calendar already: a second copy cannot go there
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,19 +226,30 @@ class _Stored:
 def _stored(engine: Engine, kind: CollectionKind, uid: str) -> _Stored | None:
     if not uid:
         return None
-    for public_round in (False, True):  # your own calendars first; a public one only when none of yours holds it (where you put it yourself)
-        for account in pim_account_ids(engine):
-            try:
-                with open_pim(engine, account) as store:
-                    for info in store.collections(kind):
-                        if info.read_only or (info.server_value("public") == "1") != public_round:
-                            continue  # a read-only calendar holds someone else's copy: never changed for your answer
-                        item = store.index.find_uid(info.collection_id, uid)
-                        if item is not None:
-                            return _Stored(account, info, item.item_id, store.get(info.collection_id, item.item_id))
-            except ChronoMailError:
-                continue
+    for account in pim_account_ids(engine):
+        try:
+            with open_pim(engine, account) as store:
+                for info in store.collections(kind):
+                    if not is_yours(info):
+                        continue  # someone else's copy: never changed for your answer
+                    item = store.index.find_uid(info.collection_id, uid)
+                    if item is not None:
+                        return _Stored(account, info, item.item_id, store.get(info.collection_id, item.item_id))
+        except ChronoMailError:
+            continue
     return None
+
+
+def _holds(engine: Engine, calendar: tuple[str, CollectionInfo], uid: str) -> bool:
+    """Whether a calendar that does not count as yours holds the item already (the window greys it; OR-4: the command checks it too)."""
+    with open_pim(engine, calendar[0]) as store:
+        return bool(uid) and store.index.find_uid(calendar[1].collection_id, uid) is not None
+
+
+def _series_kept(stored: _Stored | None, home: str) -> None:
+    """A date added to a series can only be answered when your calendar has that series (RFC 5546 section 3.2.4)."""
+    if stored is None or read_calendar_message(stored.text, None) is None:
+        raise UsageError(f"The series of this date is not in your {home}: ask the organizer to send it again")
 
 
 def _label(engine: Engine, account: str, info: CollectionInfo) -> str:
@@ -247,17 +262,19 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
     calendars: list[CalendarChoice] = []
     chosen = ""
     receiving = opened.receiving.account.account_id if opened.receiving is not None else ""
+    uid = opened.message.uid if not parameters.kind and opened.message.kind != "freebusy" else ""
     for account in pim_account_ids(engine):
         try:
             with open_pim(engine, account) as store:
                 for info in store.collections(kind):
-                    public = info.server_value("public") == "1"
-                    calendars.append(CalendarChoice(info.collection_id, info.name, account, account_name(engine, account), info.read_only, public))
-                    if not chosen and account == receiving and not info.read_only and not public:
+                    public, shared = info.server_value("public") == "1", info.server_value("shared") == "1"
+                    holds = uid != "" and store.index.find_uid(info.collection_id, uid) is not None
+                    calendars.append(CalendarChoice(info.collection_id, info.name, account, account_name(engine, account), info.read_only, public, shared, holds))
+                    if not chosen and account == receiving and is_yours(info) and not holds:
                         chosen = info.collection_id
         except ChronoMailError:
             continue
-    stored = _stored(engine, kind, opened.message.uid) if not parameters.kind and opened.message.kind != "freebusy" else None
+    stored = _stored(engine, kind, uid)
     return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving)
 
 
@@ -336,12 +353,15 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         raise UsageError("This calendar message asks for no answer")
     if parameters.answer not in _SUBJECT_WORD:
         raise UsageError("The answer is ACCEPTED, TENTATIVE or DECLINED")
-    if message.method == "REQUEST":
+    if message.method != "PUBLISH":
         _not_yours(engine, opened)
     you = _you(engine, opened) if message.method != "PUBLISH" else _You("", "", "")  # a shared item asks no address
     kind = _kind(message)
     item_word, home = _item(message), _home(kind)
     stored = _stored(engine, kind, message.uid)
+    adding = message.method == "ADD"
+    if adding:
+        _series_kept(stored, home)
     # Everything is worked out and checked before anything is written: a step that fails leaves nothing half done.
     if stored is not None:
         same = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else None
@@ -349,7 +369,10 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         if base is not None and is_newer(message, base.sequence, None) is False:
             raise UsageError(f"Your {home} has a newer version of this {item_word}: this invitation is out of date")  # OR-4: the command checks it
     text: str | None = None
-    if parameters.answer == "DECLINED":
+    if parameters.answer == "DECLINED" and adding and stored is not None:  # nothing is added; a date that is there already is marked
+        text = answered_added(stored.text, opened.text, you.address, "DECLINED", you.name)
+        target, item = ((stored.account, stored.info), stored.item) if text is not None else (None, None)
+    elif parameters.answer == "DECLINED":
         holds = stored is not None and (message.occurrence is None or any(holds_occurrence(stored.text, moment) for moment in occurrences_of(opened.text)))
         # (not only dates removed already: the card looks at every date the message names, and so does Decline)
         target = (stored.account, stored.info) if stored is not None and holds else None  # an occurrence not in the copy: Decline adds nothing
@@ -365,6 +388,10 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             if not is_newer(message, (read_calendar_message(stored.text) or message).sequence, None):
                 raise UsageError(f"This item is in your {home} already")
             text, target, item = published_copy(opened.text), (stored.account, stored.info), stored.item
+        elif stored is not None and adding:  # the new dates into the series, your answer on them; the series keeps its own
+            grown = with_added(stored.text, opened.text)
+            text = answered_added(grown, opened.text, you.address, parameters.answer, you.name) if grown is not None else None
+            target, item = (stored.account, stored.info), stored.item
         elif stored is not None:
             kept = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else read_calendar_message(stored.text, None)
             take = kept is None or bool(is_newer(message, kept.sequence, None))
@@ -374,6 +401,8 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             shared = message.method == "PUBLISH"  # kept as sent: no attendee line of yours is made up
             text = published_copy(opened.text) if shared else answered_copy(opened.text, you.address, parameters.answer, you.name)
             target, item = _collection(engine, kind, parameters.calendar), None
+            if _holds(engine, target, message.uid):
+                raise UsageError(f"This {item_word} is in that {home} already")
         if text is None:
             raise UsageError("The invitation could not be read")
         if target[1].read_only:
@@ -490,7 +519,7 @@ def _collection(engine: Engine, kind: CollectionKind, collection: str) -> tuple[
 
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
-    done: str  # updated, removed, added, asked (a request for the latest version is ready to send)
+    done: str  # updated, removed, asked (a request for the original invite is ready to send)
     stored_in: str
     draft_folder: str | None = None
     draft_message: str | None = None
@@ -499,7 +528,7 @@ class ApplyResult:
 
 def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResult:
     """What the organizer changed, into your calendar: a newer version (your answer kept unless its time changed), a cancellation (the item,
-    or the one occurrence, removed), added occurrences. Server first (item_writer). A message older than your copy changes nothing (OR-4:
+    or the one occurrence, removed). Added dates of a series you do not have: a request to send it again (of a series you have: an answer). Server first (item_writer). A message older than your copy changes nothing (OR-4:
     the command checks it, not only the window)."""
     opened = _opened(engine, parameters)
     message = opened.message
@@ -540,8 +569,6 @@ def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResul
             raise UsageError(f"This occurrence is not in your {home}")
         remove_all = text == ""  # the whole item, or every occurrence it held
         done = "removed"
-    elif message.method == "ADD":
-        text, done = with_added(stored.text, opened.text), "added"
     elif message.method in ("REQUEST", "PUBLISH"):
         if base is not None and is_newer(message, base.sequence, None) is not True:
             raise UsageError(f"Your {home} has this version of the {item_word} already, or a newer one")
@@ -581,7 +608,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     Everything is checked before anything is written."""
     opened = _opened(engine, parameters)
     message = opened.message
-    if message.method != "REQUEST":
+    if message.method not in ("REQUEST", "ADD"):
         raise UsageError("Only an invitation can be passed on")
     _not_yours(engine, opened)
     delegate = parameters.to.strip()
@@ -598,6 +625,9 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
         raise UsageError("The invitation could not be read")
     request, answer = texts
     stored = _stored(engine, _kind(message), message.uid)
+    adding = message.method == "ADD"
+    if adding:
+        _series_kept(stored, _home(_kind(message)))
     if stored is not None:
         same = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else None
         base = same or read_calendar_message(stored.text, None) or read_calendar_message(stored.text)
@@ -608,7 +638,9 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
         same = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else read_calendar_message(stored.text, None)
         take = same is None or bool(is_newer(message, same.sequence, None))  # a newer invitation: its version into the copy (as Accept)
     text = merged_answer(stored.text, opened.text, you.address, "DELEGATED", message.occurrence, take_message=take, name=you.name) if stored is not None else None
-    moments = occurrences_of(opened.text) if message.occurrence is not None else []  # a whole series (also with changed dates): all of it
+    moments = added_dates(opened.text) if adding else occurrences_of(opened.text) if message.occurrence is not None else []  # a whole series (also with changed dates): all of it
+    if adding and stored is not None:  # only the new dates, and as with Decline they are not added: one that is there already is marked
+        text = answered_added(stored.text, opened.text, you.address, "DELEGATED", you.name)
     text = with_delegate(text, you.address, delegate, moments) if text is not None else None  # a server answering itself names them
     mails = _who_mails(engine, (stored.account, stored.info) if stored is not None and text is not None else None, you.account, you.address)
     if stored is not None and text is not None:  # the calendar first: a refusal leaves no drafts behind
