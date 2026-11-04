@@ -7,15 +7,17 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import CollectionKind
 from chrono_mail.ui.calendarmail import MISSING_ORGANIZER, CalendarMailDialog, Choice
+from chrono_mail.ui.eventattendees import Person
 from chrono_mail.ui.eventeditor import EventEditor
 from tests.ui.test_ui_calendar import calendar_id, open_calendar
 from tests.ui.test_ui_invitation_window import REQUEST_FILE, calendar_file, first_choice, kept_items, opened_file
 from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar_mail.py 4.4.532"
+__version__ = "test_ui_calendar_mail.py 4.4.535"
 
 # --- Version history ----------------------------------------------------
+# v4.4.535: The window's new attendees (round 4)
 # v4.4.532: Initial tests: the one dialog of every calendar mail (D-310)
 
 
@@ -89,7 +91,7 @@ def editor_with_attendee(world: World, qtbot: QtBot) -> EventEditor:
     editor = EventEditor(world.backend, page._calendars(), [], collection=calendar_id(world))  # noqa: SLF001
     qtbot.addWidget(editor)
     editor.summary.setText("Budget")
-    editor.attendees.setText("sam@example.org")
+    editor.set_people([Person("sam@example.org", "", "sam@example.org")])
     return editor
 
 

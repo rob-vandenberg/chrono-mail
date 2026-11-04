@@ -1,13 +1,18 @@
 import html
-from datetime import date, datetime, timedelta
+from collections.abc import Callable
+from datetime import date, datetime
 
 from dataclasses import replace
+from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QToolButton, QWidget
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QToolButton, QWidget
 
-from chrono_mail.pim.times import in_local_zone
-from chrono_mail.engine.commands_pim import CollectionSummary
+from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
+from chrono_mail.pim.times import in_local_zone, local_zone
+from chrono_mail.engine.commands_contacts import CONTACT_SUGGEST, Suggestion, SuggestParameters
+from chrono_mail.engine.commands_pim import CollectionSummary, TagInfo
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
@@ -17,6 +22,8 @@ from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.eventattendees import AttendeesDialog, Person
+from chrono_mail.ui.eventrepeat import RepeatDialog
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
 from chrono_mail.core.words import counted
@@ -24,9 +31,10 @@ from chrono_mail.core.words import digits
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.532"
+__version__ = "eventeditor.py 4.4.535"
 
 # --- Version history ----------------------------------------------------
+# v4.4.535: A saved appointment opens read-only with an Edit button; attendees one per line, changed in a dialog of their own; tags picked from a list; the location has several lines; the repeat list follows the date, with Custom; date and times are separate fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.518: Asks whether the attendees hear of a change, new attendees are invited (D-310)
 # v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
@@ -42,15 +50,13 @@ __version__ = "eventeditor.py 4.4.532"
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
 # v0.0.64: Initial editor for an event
 
-REPEATS: tuple[tuple[str, str], ...] = (
-    ("", "Does not repeat"), ("FREQ=DAILY", "Every day"), ("FREQ=WEEKLY", "Every week"), ("FREQ=MONTHLY", "Every month"), ("FREQ=YEARLY", "Every year"),
-)
+CUSTOM: str = "custom"  # the last line of the repeat list: it opens the Custom window
 REMINDERS: tuple[tuple[str, str], ...] = (
     ("", "No reminder"), ("0", "At the start"), ("5", "5 minutes before"), ("15", "15 minutes before"), ("30", "30 minutes before"), ("60", "1 hour before"),
     ("1440", "1 day before"), ("10080", "1 week before"),
 )
 DATE_FORMAT: str = "yyyy-MM-dd"
-TIME_FORMAT: str = "yyyy-MM-dd HH:mm"
+TIME_FORMAT: str = "HH:mm"
 
 
 def to_qdatetime(text: str) -> QDateTime:
@@ -62,6 +68,18 @@ def to_qdatetime(text: str) -> QDateTime:
     return QDateTime(QDate(local.year, local.month, local.day), QTime(local.hour, local.minute))
 
 
+class TickMenu(QMenu):
+    """A list of ticks that stays open, so that several can be ticked in one go."""
+
+    @override
+    def mouseReleaseEvent(self, arg__1: QMouseEvent, /) -> None:
+        action = self.activeAction()
+        if action is not None and action.isCheckable():
+            action.trigger()
+            return
+        super().mouseReleaseEvent(arg__1)
+
+
 class EventEditor(QDialog):
     """Makes an event or changes one (the series, or one occurrence of it). The commands do the saving."""
 
@@ -69,8 +87,8 @@ class EventEditor(QDialog):
     mail_ready = Signal(str, str, str, str)  # a mail to the attendees to send: account, folder, message, the person's own message
 
     def __init__(
-        self, backend: Backend, calendars: list[CollectionSummary], known_tags: list[str], event: EventInfo | None = None, collection: str = "", occurrence: str = "",
-        start: str = "", end: str = "", parent: QWidget | None = None, settings: QSettings | None = None,
+        self, backend: Backend, calendars: list[CollectionSummary], known_tags: list[TagInfo], event: EventInfo | None = None, collection: str = "", occurrence: str = "",
+        start: str = "", end: str = "", parent: QWidget | None = None, settings: QSettings | None = None, reading: bool = False, ask_scope: Callable[[], str] | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -79,6 +97,8 @@ class EventEditor(QDialog):
         self._reminder_before: str = ""  # the reminder choice as the event had it: the reminders are sent only when it changed (RV-18)
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
+        self._reading: bool = reading  # a saved appointment read: nothing can be changed until Edit
+        self._ask_scope: Callable[[], str] | None = ask_scope  # a repeating event read: Edit asks whether this occurrence or all of them
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
         form = forms.fill(self, "event_editor")  # D-276
         self.summary: QLineEdit = part(form, QLineEdit, "summary")
@@ -96,43 +116,69 @@ class EventEditor(QDialog):
         self._original_colour: str = event.colour_id if event is not None else ""
         self._other_colour: str = event.other_colour if event is not None else ""
         self.colour_id: str = self._original_colour or (OWN_COLOUR_ID if not self._other_colour else "")
-        self.location: QLineEdit = part(form, QLineEdit, "location")
+        self.location: QPlainTextEdit = part(form, QPlainTextEdit, "location")  # Enter gives a new line here, it never accepts the window
+        self.location.setTabChangesFocus(True)
+        self.location.setFixedHeight(wpx(54))
         self.all_day: QCheckBox = part(form, QCheckBox, "allDay")
-        self.start: QDateTimeEdit = part(form, QDateTimeEdit, "start")
-        self.end: QDateTimeEdit = part(form, QDateTimeEdit, "end")
-        for edit in (self.start, self.end):
-            edit.setCalendarPopup(True)
-            edit.setDisplayFormat(TIME_FORMAT)
+        self.several_days: QCheckBox = part(form, QCheckBox, "severalDays")
+        self.start_date: QDateEdit = part(form, QDateEdit, "startDate")
+        self.end_date: QDateEdit = part(form, QDateEdit, "endDate")  # shown only for an event of several days
+        self.start_time: QTimeEdit = part(form, QTimeEdit, "startTime")
+        self.end_time: QTimeEdit = part(form, QTimeEdit, "endTime")
+        self.to_label: QLabel = part(form, QLabel, "toLabel")
+        for day_field in (self.start_date, self.end_date):
+            day_field.setCalendarPopup(True)
+            day_field.setDisplayFormat(DATE_FORMAT)
+        for time_field in (self.start_time, self.end_time):
+            time_field.setDisplayFormat(TIME_FORMAT)
         now = QDateTime.currentDateTime()
-        self.start.setDateTime(QDateTime(now.date(), QTime(now.time().hour() + 1 if now.time().hour() < 23 else 23, 0)))
-        self.end.setDateTime(self.start.dateTime().addSecs(3600))
+        self.set_start(QDateTime(now.date(), QTime(now.time().hour() + 1 if now.time().hour() < 23 else 23, 0)))
+        self.set_end(self.start_moment().addSecs(3600))
+        self._start_seen: QDateTime = self.start_moment()  # a move of the start moves the end by as much
         self.repeat: QComboBox = part(form, QComboBox, "repeat")
-        for value, label in REPEATS:
-            self.repeat.addItem(label, value)
+        self._rule_before: str = ""  # the rule as the event has it: said in other words it stays as it is
+        self._all_day_before: bool = False
+        self._custom_rule: str = ""  # a rule that is none of the choices has a line of its own
+        self._repeat_day: date = self._day()
+        self._repeat_index: int = 0
+        self._show_repeats(0)
+        self.repeat.activated.connect(self._repeat_chosen)
         self.reminder: QComboBox = part(form, QComboBox, "reminder")
         for value, label in REMINDERS:
             self.reminder.addItem(label, value)
         self.busy: QComboBox = part(form, QComboBox, "busy")
         self.busy.addItem("Busy", True)
         self.busy.addItem("Free", False)
-        self.attendees: QLineEdit = part(form, QLineEdit, "attendees")
-        self.tags: QLineEdit = part(form, QLineEdit, "tags")
-        completer = QCompleter(known_tags, self.tags)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.tags.setCompleter(completer)
+        self.attendees: QListWidget = part(form, QListWidget, "attendees")  # one per line, the name when it is known
+        self.attendees.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.attendees.setFixedHeight(wpx(72))
+        self.attendees_button: QPushButton = part(form, QPushButton, "attendeesButton")
+        self.attendees_button.clicked.connect(self._change_attendees)
+        self.people: list[Person] = []
+        self._names_asked: set[str] = set()
+        self.tags: QToolButton = part(form, QToolButton, "tags")  # picked from a list, like the colour
+        self.tags.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.tag_menu = TickMenu(self.tags)
+        self.tags.setMenu(self.tag_menu)
+        self._known_tags: list[TagInfo] = [tag for tag in known_tags if "events" in tag.kinds]
+        self.chosen_tags: list[str] = []
         self.description: QPlainTextEdit = part(form, QPlainTextEdit, "description")
         self.description.setMinimumHeight(wpx(90))
         self.result_label: QLabel = part(form, QLabel, "result")
         buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.edit_button: QPushButton = buttons.addButton("Edit", QDialogButtonBox.ButtonRole.ActionRole)
+        self.edit_button.clicked.connect(self.start_editing)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         forms.smallest(self, 540)  # its texts are never cut off, also at the largest size
         self.calendar.currentIndexChanged.connect(self._calendar_changed)
         self._show_colours()
-        self.all_day.toggled.connect(self._all_day_changed)
-        self.start.dateTimeChanged.connect(self._start_changed)
-        self._length: int = 3600
+        self.all_day.toggled.connect(self._show_when)
+        self.several_days.toggled.connect(self._several_days_changed)
+        self.start_date.dateChanged.connect(self._start_moved)
+        self.start_time.timeChanged.connect(self._start_moved)
         self._told_before: tuple[object, ...] = ()
         if event is not None:
             self._fill(event, start, end)
@@ -140,31 +186,33 @@ class EventEditor(QDialog):
         elif start:
             all_day = len(start) == 10
             self.all_day.setChecked(all_day)
-            self.start.setDateTime(to_qdatetime(start))
-            stop = to_qdatetime(end) if end else self.start.dateTime().addSecs(3600)
-            self.end.setDateTime(stop.addDays(-1) if all_day and end else stop)  # all day: the editor shows the last day, the end is the day after it
-        self._length = max(0, self.start.dateTime().secsTo(self.end.dateTime()))
-        if occurrence:
-            self.repeat.setEnabled(False)  # one occurrence has no rule of its own
+            self.set_start(to_qdatetime(start))
+            stop = to_qdatetime(end) if end else self.start_moment().addSecs(3600)
+            self.set_end(stop.addDays(-1) if all_day and end else stop)  # all day: the editor shows the last day, the end is the day after it
+            self._times_for_all_day()
+        self.several_days.setChecked(self.end_date.date() != self.start_date.date())
+        self._show_when()
+        self.tag_menu.aboutToShow.connect(self._fill_tag_menu)
+        self._show_tags()
+        self._show_reading()
 
     # --- filling ------------------------------------------------------------------------------
 
     def _fill(self, event: EventInfo, start: str, end: str) -> None:
         self.summary.setText(event.summary)
-        self.location.setText(event.location)
+        self.location.setPlainText(event.location)
         self.description.setPlainText(event.description)
         first, last = start or event.start, end or event.end
         all_day = event.all_day if not start else len(start) == 10
         self.all_day.setChecked(all_day)
-        self.start.setDateTime(to_qdatetime(first))
+        self.set_start(to_qdatetime(first))
         stop = to_qdatetime(last)
-        self.end.setDateTime(stop.addDays(-1) if all_day else stop)  # an all-day event ends the day after its last day: the editor shows the last day
-        rule = event.rrule
-        index = self.repeat.findData(rule)
-        if index < 0 and rule:
-            self.repeat.addItem(f"Custom: {rule}", rule)
-            index = self.repeat.count() - 1
-        self.repeat.setCurrentIndex(max(0, index))
+        self.set_end(stop.addDays(-1) if all_day else stop)  # an all-day event ends the day after its last day: the editor shows the last day
+        self._times_for_all_day()
+        self.several_days.setChecked(self.end_date.date() != self.start_date.date())
+        self._rule_before = event.rrule
+        self._all_day_before = all_day
+        self._show_rule(event.rrule)
         reminders = tuple(event.reminders)
         minutes = (str(reminders[0].minutes_before) if reminders[0].minutes_before is not None else "at") if reminders else ""
         index = self.reminder.findData(minutes)
@@ -175,8 +223,105 @@ class EventEditor(QDialog):
         self.reminder.setCurrentIndex(max(0, index))
         self._reminder_before = str(self.reminder.currentData())
         self.busy.setCurrentIndex(0 if event.busy else 1)
-        self.attendees.setText(", ".join(person.address for person in event.attendees))
-        self.tags.setText(", ".join(event.tags))
+        self.set_people([Person(person.address, person.name, person.address) for person in event.attendees])
+        self.chosen_tags = list(event.tags)
+
+    # --- reading, and Edit ------------------------------------------------------------------------
+
+    def _show_reading(self) -> None:
+        """Read-only until Edit: the texts can still be selected, the rest is greyed; the buttons are Edit and Close, then Save and Cancel."""
+        reading = self._reading
+        for text in (self.location, self.description):
+            text.setReadOnly(reading)
+        self.summary.setReadOnly(reading)
+        for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.reminder, self.busy, self.attendees_button, self.tags):
+            field.setEnabled(not reading)
+        self.repeat.setEnabled(not reading and not self._occurrence)  # one occurrence has no rule of its own
+        self._show_colours()
+        calendar = self._current_calendar()
+        self.edit_button.setVisible(reading)
+        self.edit_button.setEnabled(calendar is None or not calendar.read_only)
+        self.edit_button.setToolTip("This calendar can only be read." if not self.edit_button.isEnabled() else "")
+        self.save_button.setVisible(not reading)
+        self.cancel_button.setText("Close" if reading else "Cancel")
+        if reading:
+            self.edit_button.setDefault(True)
+        else:
+            self.save_button.setDefault(True)
+
+    def start_editing(self) -> None:
+        """Edit: this same window becomes the editor. A repeating event first asks what the change is for."""
+        event = self._original
+        if self._ask_scope is not None and event is not None:
+            scope = self._ask_scope()
+            if not scope:
+                return
+            if scope == "series":
+                self._occurrence = ""
+                self._fill(event, "", "")
+                self.setWindowTitle(f"Event: {event.summary}")
+                self._show_tags()
+                self._show_when()
+            self._ask_scope = None
+        self._reading = False
+        self._show_reading()
+        self._told_before = self._told_fields(self.parameters())
+        self.summary.setFocus()
+
+    # --- attendees --------------------------------------------------------------------------------
+
+    def set_people(self, people: list[Person]) -> None:
+        """The list one per line; for an attendee without a name the contacts are asked, the event itself stays as it is."""
+        self.people = list(people)
+        self._show_people()
+        for person in self.people:
+            if not person.name and person.address.lower() not in self._names_asked:
+                self._names_asked.add(person.address.lower())
+                self._backend.ask(CONTACT_SUGGEST, SuggestParameters(person.address), lambda found, address=person.address: self._name_arrived(address, found), lambda _error: None, owner=self)
+
+    def _show_people(self) -> None:
+        self.attendees.clear()
+        self.attendees.addItems([person.shown for person in self.people])
+
+    def _name_arrived(self, address: str, found: tuple[Suggestion, ...]) -> None:
+        name = next((item.name for item in found if item.name and item.address.lower() == address.lower()), "")
+        if name:
+            self.people = [replace(person, name=name) if person.address.lower() == address.lower() and not person.name else person for person in self.people]
+            self._show_people()
+
+    def _change_attendees(self) -> None:
+        dialog = AttendeesDialog(self._backend, self.people, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_people(dialog.people)
+
+    # --- tags -------------------------------------------------------------------------------------
+
+    def _show_tags(self) -> None:
+        """The button names the tags of the event; its list, filled as it opens, holds every tag for events and those another program gave it."""
+        self.tags.setText(", ".join(self.chosen_tags) or "No tags")
+
+    def _fill_tag_menu(self) -> None:
+        self.tag_menu.clear()
+        colours = {tag.name: tag.colour for tag in self._known_tags}
+        for name in [*colours, *(tag for tag in self.chosen_tags if tag not in colours)]:
+            action = self.tag_menu.addAction(circle_icon(colours[name]), name) if name in colours else self.tag_menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(name in self.chosen_tags)
+            action.toggled.connect(lambda on=False, tag=name: self.choose_tag(tag, on))
+        self.tag_menu.addSeparator()
+        self.tag_menu.addAction("New tag…", self._new_tag)
+
+    def choose_tag(self, name: str, on: bool) -> None:
+        if on and name not in self.chosen_tags:
+            self.chosen_tags.append(name)
+        elif not on and name in self.chosen_tags:
+            self.chosen_tags.remove(name)
+        self.tags.setText(", ".join(self.chosen_tags) or "No tags")
+
+    def _new_tag(self) -> None:
+        name, ok = QInputDialog.getText(self, "New tag", "Name of the new tag:")
+        if ok and " ".join(name.split()):
+            self.choose_tag(" ".join(name.split()), True)
 
     # --- the colour (D-191) -------------------------------------------------------------------------
 
@@ -211,7 +356,7 @@ class EventEditor(QDialog):
         edit = self.colour_menu.addAction("Edit colours…", self._edit_colours)
         read_only = calendar is not None and calendar.read_only
         edit.setEnabled(not read_only)
-        self.colour.setEnabled(not read_only and bool(palette))  # greyed, never hidden
+        self.colour.setEnabled(not read_only and not self._reading and bool(palette))  # greyed, never hidden
 
     def _choose_colour(self, colour_id: str) -> None:
         self.colour_id = colour_id
@@ -230,26 +375,109 @@ class EventEditor(QDialog):
             self._calendars = [fresh if info.collection == fresh.collection else info for info in self._calendars]
             self._show_colours()
 
-    def _all_day_changed(self, on: bool) -> None:
-        self.start.setDisplayFormat(DATE_FORMAT if on else TIME_FORMAT)
-        self.end.setDisplayFormat(DATE_FORMAT if on else TIME_FORMAT)
+    # --- date and time ---------------------------------------------------------------------------
 
-    def _start_changed(self, moment: QDateTime) -> None:
-        """When the start moves the end moves with it, so that the length stays."""
-        self.end.setDateTime(moment.addSecs(self._length))
+    def start_moment(self) -> QDateTime:
+        return QDateTime(self.start_date.date(), self.start_time.time())
+
+    def end_moment(self) -> QDateTime:
+        return QDateTime(self.end_date.date(), self.end_time.time())
+
+    def set_start(self, moment: QDateTime) -> None:
+        self.start_date.setDate(moment.date())
+        self.start_time.setTime(moment.time())
+
+    def set_end(self, moment: QDateTime) -> None:
+        self.end_date.setDate(moment.date())
+        self.end_time.setTime(moment.time())
+
+    def _day(self) -> date:
+        day = self.start_date.date()
+        return date(day.year(), day.month(), day.day())
+
+    def _times_for_all_day(self) -> None:
+        """An all-day event has no times: taking away the tick gives an hour on that day, not midnight to midnight."""
+        if self.all_day.isChecked():
+            now = QDateTime.currentDateTime()
+            hour = min(now.time().hour() + 1, 22) if self.start_date.date() == now.date() else 9
+            self.start_time.setTime(QTime(hour, 0))
+            self.end_time.setTime(QTime(hour + 1, 0))
+
+    def _show_when(self) -> None:
+        """One date, with a start and an end time; all day: no times; several days: a second date."""
+        timed = not self.all_day.isChecked()
+        several = self.several_days.isChecked()
+        self.start_time.setVisible(timed)
+        self.end_time.setVisible(timed)
+        self.end_date.setVisible(several)
+        self.to_label.setVisible(timed or several)
+
+    def _several_days_changed(self, on: bool) -> None:
+        if on and self.end_date.date() <= self.start_date.date():
+            self.end_date.setDate(self.start_date.date().addDays(1))
+        elif not on:
+            self.end_date.setDate(self.start_date.date())
+            if self.end_time.time() < self.start_time.time():
+                self.end_time.setTime(self.start_time.time())
+        self._show_when()
+
+    def _start_moved(self) -> None:
+        """When the start moves the end moves by the same amount; past midnight the event has become one of several days, and back."""
+        moment = self.start_moment()
+        self.set_end(self.end_moment().addSecs(self._start_seen.secsTo(moment)))
+        self._start_seen = moment
+        self.several_days.setChecked(self.end_date.date() != self.start_date.date())
+        if self._day() != self._repeat_day:
+            self._repeat_day = self._day()
+            self._show_repeats(self.repeat.currentIndex())
+
+    # --- repeat ------------------------------------------------------------------------------------
+
+    def _show_repeats(self, index: int) -> None:
+        """The list as it follows the date: a line that was chosen stays chosen, and says the new day."""
+        self.repeat.clear()
+        for choice in repeat_choices(self._day()):
+            self.repeat.addItem(choice.label, choice.rule)
+        if self._custom_rule:
+            self.repeat.addItem(describe(self._custom_rule, self._day(), local_zone()), self._custom_rule)
+        self.repeat.addItem("Custom…", CUSTOM)
+        self.repeat.setCurrentIndex(index)
+        self._repeat_index = index
+
+    def _show_rule(self, rule: str) -> None:
+        index = choice_of(rule, self._day())
+        self._custom_rule = rule if index < 0 else ""
+        self._show_repeats(len(repeat_choices(self._day())) if index < 0 else index)
+
+    def _repeat_chosen(self, index: int) -> None:
+        if self.repeat.itemData(index) != CUSTOM:
+            self._repeat_index = index
+            return
+        before = str(self.repeat.itemData(self._repeat_index))
+        self.repeat.setCurrentIndex(self._repeat_index)  # closing the Custom window leaves the list as it was
+        dialog = RepeatDialog(before, self._day(), self.all_day.isChecked(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._show_rule(dialog.rule())
+
+    def _rule(self) -> str:
+        """The rule as the event has it when it means the same (another program's way of writing it is no change); else the chosen one, its last day in the form of the event."""
+        rule = str(self.repeat.currentData())
+        if same_rule(rule, self._rule_before, self._day()) and self.all_day.isChecked() == self._all_day_before:
+            return self._rule_before
+        return fitted(rule, self.all_day.isChecked(), local_zone())
 
     # --- the command --------------------------------------------------------------------------
 
     def parameters(self) -> EventEdit:
         """What is in the editor, as event.add and event.edit take it: the fields, and the lists emptied here (clear)."""
         if self.all_day.isChecked():
-            start = self.start.date().toString(DATE_FORMAT)
-            end = self.end.date().addDays(1).toString(DATE_FORMAT)
+            start = self.start_date.date().toString(DATE_FORMAT)
+            end = self.end_date.date().addDays(1).toString(DATE_FORMAT)
         else:
-            start = self.start.dateTime().toString("yyyy-MM-dd'T'HH:mm")
-            end = self.end.dateTime().toString("yyyy-MM-dd'T'HH:mm")
-        attendees = tuple(part.strip() for part in self.attendees.text().split(",") if part.strip())
-        tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
+            start = self.start_moment().toString("yyyy-MM-dd'T'HH:mm")
+            end = self.end_moment().toString("yyyy-MM-dd'T'HH:mm")
+        attendees = tuple(person.given for person in self.people)
+        tags = tuple(self.chosen_tags)
         reminder = (str(self.reminder.currentData()),) if self.reminder.currentData() != "" else ()
         original = self._original
         reminder_changed = original is None or str(self.reminder.currentData()) != self._reminder_before
@@ -263,8 +491,8 @@ class EventEditor(QDialog):
         chosen = "" if self.colour_id == OWN_COLOUR_ID else self.colour_id
         picked = bool(self.colour_id) and (original is None and bool(chosen) or original is not None and chosen != self._original_colour)
         return EventEdit(
-            summary=self.summary.text().strip(), start=start, end=end, location=self.location.text().strip(), description=self.description.toPlainText().strip(),
-            busy=bool(self.busy.currentData()), rrule=None if self._occurrence else str(self.repeat.currentData()), attendee=attendees, tag=tags, reminder=reminder,
+            summary=self.summary.text().strip(), start=start, end=end, location=self.location.toPlainText().strip(), description=self.description.toPlainText().strip(),
+            busy=bool(self.busy.currentData()), rrule=None if self._occurrence else self._rule(), attendee=attendees, tag=tags, reminder=reminder,
             colour=chosen if picked else None,  # only when picked here: an "Other colour" left as it is stays as another program wrote it
             item=self._item or "", occurrence=self._occurrence or "", clear=tuple(clear),
         )
@@ -302,7 +530,7 @@ class EventEditor(QDialog):
         if not values.summary:
             self.result_label.setText(f"<span style='color:{red()}'>The event needs a title.</span>")
             return
-        if not self.all_day.isChecked() and self.end.dateTime() < self.start.dateTime() or self.all_day.isChecked() and self.end.date() < self.start.date():
+        if not self.all_day.isChecked() and self.end_moment() < self.start_moment() or self.all_day.isChecked() and self.end_date.date() < self.start_date.date():
             self.result_label.setText(f"<span style='color:{red()}'>The event cannot end before it starts.</span>")
             return
         if not self._news(values):

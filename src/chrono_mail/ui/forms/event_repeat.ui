@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>EventRepeat</class>
+ <widget class="QWidget" name="EventRepeat">
+  <property name="windowTitle">
+   <string>Custom repeat</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QHBoxLayout" name="everyRow">
+     <item>
+      <widget class="QLabel" name="everyLabel">
+       <property name="text">
+        <string>Repeat every</string>
+       </property>
+       <property name="buddy">
+        <cstring>every</cstring>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="every" />
+     </item>
+     <item>
+      <widget class="QComboBox" name="unit" />
+     </item>
+     <item>
+      <spacer name="everyRest">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="daysLabel">
+     <property name="text">
+      <string>On these days</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="days">
+     <item>
+      <widget class="QCheckBox" name="dayMO">
+       <property name="text">
+        <string>Mon</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="dayTU">
+       <property name="text">
+        <string>Tue</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="dayWE">
+       <property name="text">
+        <string>Wed</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="dayTH">
+       <property name="text">
+        <string>Thu</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="dayFR">
+       <property name="text">
+        <string>Fri</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="daySA">
+       <property name="text">
+        <string>Sat</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="daySU">
+       <property name="text">
+        <string>Sun</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="endsLabel">
+     <property name="text">
+      <string>Ends</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QRadioButton" name="endsNever">
+     <property name="text">
+      <string>Never</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="endsOnRow">
+     <item>
+      <widget class="QRadioButton" name="endsOn">
+       <property name="text">
+        <string>On</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDateEdit" name="endDate" />
+     </item>
+     <item>
+      <spacer name="endsOnRest">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="endsAfterRow">
+     <item>
+      <widget class="QRadioButton" name="endsAfter">
+       <property name="text">
+        <string>After</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="count" />
+     </item>
+     <item>
+      <widget class="QLabel" name="countLabel">
+       <property name="text">
+        <string>occurrences</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="endsAfterRest">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

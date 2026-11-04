@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.534 (answer buttons: gradients and order)*
+*Last updated: 2026-11-04, version 4.4.535 (appointment window: read-only with Edit, attendees, tags, location, repeat, date and time; reminders still to come)*
 
 ## Where we are
 
@@ -9,7 +9,7 @@
 - **Open in milestone 1:** 1.14 (the Windows setup.exe builds on the Windows computer; still to test there: the password store in the installed program, and a Windows run of the program itself).
 - **UI restyle, first round (D-083, D-084):** steps 1 to 3 of 5 done; step 4 (the Settings pages and the other dialogs) and step 5 (Calendar, Tasks, Contacts) are open.
 - **The last versions:** `git log` and `DEVLOG.md`; the full list up to 4.2.462 is in `STATUS-ARCHIVE.md` (moved 2026-11-01).
-- Design decisions: D-001 to D-309 (D-277 never used), one short file each in `decisions/` with topic files; `DECISIONS.md` is the entry point with the core decisions (D-193, the basic rule, first) and the topics (D-162; rewritten on 2026-11-03 from one file of 111 KB, of which every chat now reads about 18 KB at the start); the full and older wordings of each decision are in `decision-details/` (this computer only).
+- Design decisions: D-001 to D-312 (D-277 never used), one short file each in `decisions/` with topic files; `DECISIONS.md` is the entry point with the core decisions (D-193, the basic rule, first) and the topics (D-162; rewritten on 2026-11-03 from one file of 111 KB, of which every chat now reads about 18 KB at the start); the full and older wordings of each decision are in `decision-details/` (this computer only).
 - Tests: 2,497 offline tests (1,711 engine incl. 2 Windows-only skips, 786 window; 2026-10-21, R-45: all pass in their own process and in any order, `tests/run_isolated.py`, `tests/runorder.py`, AGENTS.md 4.5.5); before: 2219 offline tests (from 1.1.176 to 2.0.295 not in git; in git again since 2.0.296, D-233), 65 live tests, plus the other opt-in tests (credential store, performance). The count per version is in `STATUS-ARCHIVE.md`.
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 

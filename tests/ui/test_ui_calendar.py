@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.532"
+__version__ = "test_ui_calendar.py 4.4.535"
 
 # --- Version history ----------------------------------------------------
+# v4.4.535: The window's new fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a hidden event's menu (D-310); open_calendar waits for the anchor's own event, never for what the view of today still shows
 # v4.4.521: Show deleted and declined dates (D-310)
@@ -138,11 +139,11 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
     page = open_calendar(world, qtbot)
 
     def make(editor: EventEditor) -> None:
-        assert editor.summary.text() == "" and editor.start.dateTime().toString("yyyy-MM-dd HH:mm") == "2026-10-15 15:00" and editor.end.dateTime().toString("HH:mm") == "16:00"
+        assert editor.summary.text() == "" and editor.start_moment().toString("yyyy-MM-dd HH:mm") == "2026-10-15 15:00" and editor.end_moment().toString("HH:mm") == "16:00"
         editor.summary.setText("Planning")
-        editor.location.setText("Room 4")
+        editor.location.setPlainText("Room 4")
         editor.reminder.setCurrentIndex(editor.reminder.findData("15"))
-        editor.tags.setText("Work")
+        editor.choose_tag("Work", True)
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(make))
     page._slot_activated(date(2026, 10, 15), 15 * 60)  # noqa: SLF001
@@ -152,7 +153,7 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
     assert (shown.location, shown.tags, [r.minutes_before for r in shown.reminders]) == ("Room 4", ("Work",), [15]) and shown.start.startswith("2026-10-15T15:00")
 
     def all_day(editor: EventEditor) -> None:
-        assert editor.all_day.isChecked() and editor.start.date().toString("yyyy-MM-dd") == "2026-10-17"
+        assert editor.all_day.isChecked() and editor.start_date.date().toString("yyyy-MM-dd") == "2026-10-17"
         editor.summary.setText("Free day")
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(all_day))
@@ -162,11 +163,11 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
     assert free.all_day and (free.start, free.end) == ("2026-10-17", "2026-10-18")
 
     def change(editor: EventEditor) -> None:
-        assert editor.summary.text() == "Planning" and editor.location.text() == "Room 4" and editor.reminder.currentData() == "15" and editor.tags.text() == "Work"
+        assert editor.summary.text() == "Planning" and editor.location.toPlainText() == "Room 4" and editor.reminder.currentData() == "15" and editor.tags.text() == "Work"
         editor.summary.setText("Planning (moved)")
-        editor.start.setDateTime(editor.start.dateTime().addSecs(3600))
+        editor.set_start(editor.start_moment().addSecs(3600))
         editor.reminder.setCurrentIndex(0)
-        editor.tags.setText("")
+        editor.choose_tag("Work", False)
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(change))
     page._entry_clicked(made)  # noqa: SLF001
@@ -199,7 +200,7 @@ def test_one_occurrence_of_a_repeating_event_is_changed_or_deleted_or_the_whole_
     def move(editor: EventEditor) -> None:
         assert not editor.repeat.isEnabled() and "Occurrence" in editor.windowTitle()  # one occurrence has no rule of its own
         editor.summary.setText("Standup (late)")
-        editor.start.setDateTime(editor.start.dateTime().addSecs(3 * 3600))
+        editor.set_start(editor.start_moment().addSecs(3 * 3600))
 
     monkeypatch.setattr(EventEditor, "exec", fake_editor(move))
     page.edit_selected()
@@ -246,7 +247,7 @@ def test_reminders_the_window_does_not_show_survive_a_save(world: World, qtbot: 
     added = world.call("event.add", calendar=calendar_id(world), summary="Flight", start="2026-10-15T09:00", end="2026-10-15T11:00", time_zone="UTC", reminder=("1440", "60"))
     wait(qtbot, lambda: "Flight" in summaries(page))
     page._entry_clicked(next(e for e in page.entries if e.summary == "Flight"))  # noqa: SLF001
-    monkeypatch.setattr(EventEditor, "exec", fake_editor(lambda editor: editor.location.setText("Gate 4")))
+    monkeypatch.setattr(EventEditor, "exec", fake_editor(lambda editor: editor.location.setPlainText("Gate 4")))
     page.edit_selected()
     wait(qtbot, lambda: world.call("event.show", item=added.item).location == "Gate 4")
     assert [reminder.minutes_before for reminder in world.call("event.show", item=added.item).reminders] == [1440, 60]

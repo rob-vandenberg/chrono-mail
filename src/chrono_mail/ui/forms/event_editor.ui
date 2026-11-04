@@ -55,42 +55,74 @@
       </widget>
      </item>
      <item row="3" column="1">
-      <widget class="QLineEdit" name="location" />
+      <widget class="QPlainTextEdit" name="location" />
      </item>
      <item row="4" column="1">
-      <widget class="QCheckBox" name="allDay">
-       <property name="text">
-        <string>All day</string>
-       </property>
-      </widget>
+      <layout class="QHBoxLayout" name="dayTicks">
+       <item>
+        <widget class="QCheckBox" name="allDay">
+         <property name="text">
+          <string>All day</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="severalDays">
+         <property name="text">
+          <string>Several days</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="dayTicksRest">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
      </item>
      <item row="5" column="0">
-      <widget class="QLabel" name="startLabel">
+      <widget class="QLabel" name="whenLabel">
        <property name="text">
-        <string>Starts</string>
+        <string>When</string>
        </property>
        <property name="buddy">
-        <cstring>start</cstring>
+        <cstring>startDate</cstring>
        </property>
       </widget>
      </item>
      <item row="5" column="1">
-      <widget class="QDateTimeEdit" name="start" />
+      <layout class="QHBoxLayout" name="when">
+       <item>
+        <widget class="QDateEdit" name="startDate" />
+       </item>
+       <item>
+        <widget class="QTimeEdit" name="startTime" />
+       </item>
+       <item>
+        <widget class="QLabel" name="toLabel">
+         <property name="text">
+          <string>to</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QDateEdit" name="endDate" />
+       </item>
+       <item>
+        <widget class="QTimeEdit" name="endTime" />
+       </item>
+       <item>
+        <spacer name="whenRest">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
      </item>
      <item row="6" column="0">
-      <widget class="QLabel" name="endLabel">
-       <property name="text">
-        <string>Ends</string>
-       </property>
-       <property name="buddy">
-        <cstring>end</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="6" column="1">
-      <widget class="QDateTimeEdit" name="end" />
-     </item>
-     <item row="7" column="0">
       <widget class="QLabel" name="repeatLabel">
        <property name="text">
         <string>Repeat</string>
@@ -100,10 +132,10 @@
        </property>
       </widget>
      </item>
-     <item row="7" column="1">
+     <item row="6" column="1">
       <widget class="QComboBox" name="repeat" />
      </item>
-     <item row="8" column="0">
+     <item row="7" column="0">
       <widget class="QLabel" name="reminderLabel">
        <property name="text">
         <string>Reminder</string>
@@ -113,10 +145,10 @@
        </property>
       </widget>
      </item>
-     <item row="8" column="1">
+     <item row="7" column="1">
       <widget class="QComboBox" name="reminder" />
      </item>
-     <item row="9" column="0">
+     <item row="8" column="0">
       <widget class="QLabel" name="busyLabel">
        <property name="text">
         <string>Show as</string>
@@ -126,10 +158,10 @@
        </property>
       </widget>
      </item>
-     <item row="9" column="1">
+     <item row="8" column="1">
       <widget class="QComboBox" name="busy" />
      </item>
-     <item row="10" column="0">
+     <item row="9" column="0">
       <widget class="QLabel" name="attendeesLabel">
        <property name="text">
         <string>Attendees</string>
@@ -139,14 +171,32 @@
        </property>
       </widget>
      </item>
-     <item row="10" column="1">
-      <widget class="QLineEdit" name="attendees">
-       <property name="placeholderText">
-        <string>Addresses, separated by commas</string>
-       </property>
-      </widget>
+     <item row="9" column="1">
+      <layout class="QVBoxLayout" name="attendeesPart">
+       <item>
+        <widget class="QListWidget" name="attendees" />
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="attendeesButtons">
+         <item>
+          <widget class="QPushButton" name="attendeesButton">
+           <property name="text">
+            <string>Add or remove attendees…</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="attendeesRest">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+      </layout>
      </item>
-     <item row="11" column="0">
+     <item row="10" column="0">
       <widget class="QLabel" name="tagsLabel">
        <property name="text">
         <string>Tags</string>
@@ -156,12 +206,8 @@
        </property>
       </widget>
      </item>
-     <item row="11" column="1">
-      <widget class="QLineEdit" name="tags">
-       <property name="placeholderText">
-        <string>Tags, separated by commas</string>
-       </property>
-      </widget>
+     <item row="10" column="1">
+      <widget class="QToolButton" name="tags" />
      </item>
     </layout>
    </item>

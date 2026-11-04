@@ -40,3 +40,4 @@ See also: [[sync-conflicts]]
 - [[D-257]] An edit changes only what changed
 - [[D-301]] Imported calendar accounts
 - [[D-310]] Calendar messages in mail (iTIP)
+- [[D-312]] The appointment window

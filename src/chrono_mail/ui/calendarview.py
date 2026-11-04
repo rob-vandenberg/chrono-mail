@@ -1,10 +1,12 @@
 import dataclasses
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import override
 
 from PySide6.QtCore import Signal, SignalInstance, QDate, QEvent, QLocale, QPoint, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFontMetrics, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCalendarWidget,
     QHBoxLayout,
     QLabel,
@@ -48,9 +50,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.532"
+__version__ = "calendarview.py 4.4.535"
 
 # --- Version history ----------------------------------------------------
+# v4.4.535: A double click opens an appointment read-only; Edit in the list and the menu still go straight to the editor; New starts All day (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.528: Show declined; hidden events have a menu: answer again, delete, or Restore (D-310)
@@ -191,7 +194,7 @@ class CalendarPage(PimPage):
         self.hide_past: bool = str(settings.value("calendar_hide_past", "false")).lower() == "true"
         self.show_hidden: bool = str(settings.value("calendar_show_hidden", "false")).lower() == "true"
         self._generation: int = 0
-        self._tags_known: list[str] = []
+        self._tags_known: list[TagInfo] = []
         self._scrolled: bool = False
         # sidebar: the calendars, and the small month
         side = QWidget()
@@ -412,7 +415,7 @@ class CalendarPage(PimPage):
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
         self.colours.update(tags)
-        self._tags_known = [tag.name for tag in tags]
+        self._tags_known = tags
 
     def _scroll_to_morning(self) -> None:
         self.grid.scroll_to_hour(FIRST_HOUR)
@@ -478,8 +481,8 @@ class CalendarPage(PimPage):
         visible = self.panel.visible_ids()
         return visible[0] if visible else ((self._calendars()[0].collection) if self._calendars() else "")
 
-    def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "") -> None:
-        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings)
+    def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "", reading: bool = False, ask_scope: Callable[[], str] | None = None) -> None:
+        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings, reading, ask_scope)
         editor.saved.connect(self._saved)
         editor.mail_ready.connect(self.mail_ready)
         editor.exec()
@@ -488,9 +491,7 @@ class CalendarPage(PimPage):
     def new_item(self) -> None:
         if not self._calendars():
             return
-        now = datetime.now(self.zone)
-        start = datetime.combine(self.anchor, datetime.min.time()).replace(hour=min(23, now.hour + 1 if self.anchor == now.date() else 9))
-        self._editor(None, self._current_calendar(), start=start.strftime("%Y-%m-%dT%H:%M"), end=(start + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
+        self._editor(None, self._current_calendar(), start=self.anchor.isoformat(), end=(self.anchor + timedelta(days=1)).isoformat())  # All day ticked on the date in view
 
     def _slot_activated(self, day: object, minute: int) -> None:
         """A double click on a free place: a new event starting there (all day when it was the all-day area or the month)."""
@@ -505,11 +506,11 @@ class CalendarPage(PimPage):
     def _entry_activated(self, entry: object) -> None:
         if isinstance(entry, Entry) and not entry.row.hidden:
             self._entry_clicked(entry)
-            self.edit_selected()
+            self.read_selected()
 
     def _ask_scope(self, verb: str) -> str:
         """For a repeating event: 'occurrence' (only this one), 'series' (all of them) or '' (cancel)."""
-        box = QMessageBox(self.content)
+        box = QMessageBox(QApplication.activeModalWidget() or self.content)  # asked from the open event too
         box.setTextFormat(Qt.TextFormat.PlainText)  # never markup (RV-167)
         box.setWindowTitle(verb)
         box.setText(f"This event repeats. {verb} only this occurrence, or all of them?")
@@ -519,6 +520,21 @@ class CalendarPage(PimPage):
         box.exec()
         clicked = box.clickedButton()
         return "occurrence" if clicked is only else ("series" if clicked is everything else "")
+
+    def read_selected(self) -> None:
+        """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for."""
+        entry = self.selected
+        if entry is None:
+            return
+        row = entry.row
+
+        def opened(result: EventInfo) -> None:
+            if row.repeats:
+                self._editor(result, result.collection, row.occurrence, *_moments(entry), reading=True, ask_scope=lambda: self._ask_scope("Change"))
+            else:
+                self._editor(result, result.collection, reading=True)
+
+        self._backend.ask(EVENT_SHOW, EventItem(row.item), opened, self._failed, owner=self)
 
     def edit_selected(self) -> None:
         entry = self.selected

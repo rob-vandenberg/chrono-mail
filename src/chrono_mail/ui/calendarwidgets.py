@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.2.438"
+__version__ = "calendarwidgets.py 4.4.535"
 
 # --- Version history ----------------------------------------------------
+# v4.4.535: A location of several lines is drawn on one line (round 4)
 # v4.2.438: Month draws a filled timed event as an all-day one, its dot in the text's colour; paint_block draws the dot (UR-02, D-297)
 # v3.5.346: Every view takes the keyboard focus from its first click (it did only after a turn of the wheel), so Delete deletes the event, not the calendar (RV-22)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -37,6 +38,11 @@ DEFAULT_HOUR_HEIGHT: int = 48
 MINIMUM_HOUR_HEIGHT: int = 24
 MAXIMUM_HOUR_HEIGHT: int = 140
 SNAP_MINUTES: int = 30
+
+
+def one_line(text: str) -> str:
+    """A location of several lines, as the calendar draws it."""
+    return ", ".join(line.strip() for line in text.splitlines() if line.strip())
 
 
 def fill_colour(entry: Entry) -> QColor:
@@ -313,7 +319,7 @@ class GridCanvas(EntryHits):
                 if height > 30:
                     lines.append(layout.time_text(entry))
                 if height > 46 and entry.row.location:
-                    lines.append(entry.row.location)
+                    lines.append(one_line(entry.row.location))
                 self.note_mark(paint_block(painter, rect, entry, self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start, font, lines,
                                            faded=not entry.row.busy, mark=self.mark_of(item_of(entry))), entry)
                 self.hits.append((rect, entry))
@@ -595,7 +601,7 @@ class AgendaView(QListWidget):
             header.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.addItem(header)
             for entry in entries:
-                place = entry.row.location
+                place = one_line(entry.row.location)
                 item = QListWidgetItem(f"   {layout.time_text(entry):<14}{entry.summary}" + (f"   ·  {place}" if place else "") + f"   ({entry.row.calendar})")
                 item.setData(Qt.ItemDataRole.UserRole, entry)
                 item.setForeground(fill_colour(entry))

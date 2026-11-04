@@ -3921,3 +3921,8 @@ Open: nothing of round 3.
 Built: Accept, Tentative, Delegate, Decline in that order, each a top-to-bottom gradient (colours in core/colours.py, OR-9; answer_button_hover for the pointer); disabled stays grey, focus outlined.
 Tests: tests/ui/test_ui_invitation_answers.py (the new one fails on 4.4.533; the Tab-order test follows the new order). Review: one Sonnet round.
 Open: nothing.
+
+## 2026-11-04, 4.4.535: the appointment window, items 1 to 6 of round 4 (the owner, D-312)
+Built: a double click opens a saved appointment read-only with Edit and Close (Edit in the toolbar and menu still goes straight to the editor; a repeating event asks at Edit); attendees one per line with the name when known, a dialog of their own; tags picked from a list with New tag…; a location of several lines; the repeat list follows the date, Custom gives the standard rule (pim/repeat.py); one date with start and end time, Several days shows a second date, the end follows the start; New starts All day.
+Tests: tests/ui/test_ui_appointment_window.py, tests/test_repeat.py; the old window tests follow the new fields. Review: Sonnet rounds.
+Open: items 7 and 8 (reminders).
