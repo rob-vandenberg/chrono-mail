@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.517"
+__version__ = "invitationcard.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: a message about your own meeting has two states (organize_done); the sentence names who wrote the mail; a proposal shows the time now beside its own (D-310)
 # v4.4.517: An answer known from the mail counts as handled and says so (D-310)
 # v4.4.516: handled: Change my answer instead of the answer buttons; a meeting you never answered says so (D-310)
 # v4.4.515: every item of a text gets its block, built as the person scrolls near it (blocks_wanted, add_blocks); update_blocks changes only some blocks (D-310)
@@ -45,7 +46,7 @@ _INTRO: dict[str, str] = {
     "PUBLISH": "This {item} was sent to you.",
     "ADD": "An occurrence was added to this {item}.",
     "CANCEL": "This {item} was cancelled by its organizer.",
-    "REPLY": "{who} {answered} your invitation.",
+    "REPLY": "{who} {answered} {whose} invitation.",
     "COUNTER": "{who} proposes a change to this {item}.",
     "DECLINECOUNTER": "The organizer declined your proposed change to this {item}.",
     "REFRESH": "{who} asks for the latest version of this {item}.",
@@ -118,6 +119,15 @@ def asks_for_series(info: InvitationInfo) -> bool:
     return info.method == "ADD" and not info.stored_in and not (info.organizer is not None and info.organizer.you)
 
 
+def _writer(info: InvitationInfo) -> InvitationPerson | None:
+    """Who wrote the message, as the commands choose: their line, or only their address when they have none; a file does not say: the first who is not you."""
+    wrote = info.writer.strip().lower()
+    found = next((person for person in info.attendees if wrote and person.address.strip().lower() == wrote), None)
+    if found is None and wrote:
+        return InvitationPerson(info.writer, "", "NEEDS-ACTION", False)
+    return found or next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
+
+
 def intro_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return _busy_intro(info)
@@ -128,12 +138,13 @@ def intro_text(info: InvitationInfo) -> str:
     if asks_for_series(info):
         return _NOT_KEPT.format(home=home_word(info))
     item = item_word(info)
-    writer = next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
+    writer = _writer(info)
     who = (writer.name or writer.address) if writer is not None else "Someone"
     if info.method == "REPLY" and writer is not None and writer.answer in _PROGRESS:
         return _PROGRESS[writer.answer].format(who=who)
     answered = _ANSWERED.get(writer.answer, "answered") if writer is not None else "answered"
-    return _INTRO.get(info.method, "This {item} was sent to you.").format(item=item, who=who, answered=answered)
+    whose = "your" if info.organizer is not None and info.organizer.you else "the"  # a copy of someone's answer to a meeting that is not yours
+    return _INTRO.get(info.method, "This {item} was sent to you.").format(item=item, who=who, answered=answered, whose=whose)
 
 
 def _counted(number: int, one: str, more: str) -> str:
@@ -171,6 +182,9 @@ def busy_text(info: InvitationInfo) -> str:
 
 def status_text(info: InvitationInfo) -> str:
     """What your calendar holds of it: nothing (empty), the copy and your answer, or a newer version. An answer that left no copy: only that answer."""
+    done = organize_done(info)
+    if done:
+        return f"{done} In {info.stored_in}." if info.stored_in and not info.answered_on_mail else done
     if info.answered_on_mail:
         return _YOU[info.your_answer]
     if not info.stored_in:
@@ -205,9 +219,37 @@ def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
     return []
 
 
+def organize_done(info: InvitationInfo) -> str:
+    """A message about your own meeting has two states too: "" while it waits for you, else what became of it. An answer is handled when your copy says
+    the same, an accepted proposal when your meeting has its times; a declined proposal and a request answered exist only as the mark on the mail."""
+    if not organize_choices(info):
+        return ""
+    if info.answered_on_mail:
+        return "You declined this proposal." if info.method == "COUNTER" else "You answered this request."
+    if not info.stored_in or not info.organized_by_you:
+        return ""
+    if info.method == "COUNTER":
+        follows = not info.proposal_usable and info.kept_start is not None and (info.kept_start, info.kept_end) == (info.start, info.end)
+        return f"Your {item_word(info)} follows this proposal." if follows else ""
+    writer = _writer(info)
+    if info.method != "REPLY" or writer is None or writer not in info.attendees or not info.occurrence_kept:
+        return ""
+    return f"Their answer is in your {item_word(info)}." if dict(info.kept_answers).get(writer.address.strip().lower()) == writer.answer else ""
+
+
+def proposal_when(info: InvitationInfo, when: str) -> str:
+    """The time a proposal asks for, beside the time the meeting has now, so the person can compare before deciding."""
+    if info.method != "COUNTER" or info.kind != "event" or not when or info.kept_start is None or (info.kept_start, info.kept_end) == (info.start, info.end):
+        return when
+    return f"Proposed: {when}\nNow: {when_text(info.kept_start, info.kept_end, not isinstance(info.kept_start, datetime))}"
+
+
 def organize_reason(info: InvitationInfo) -> str:
     """Why the buttons of a message about your own meeting are greyed (OR-15); "": they work."""
     item, home = item_word(info), home_word(info)
+    done = organize_done(info)
+    if done:
+        return done
     if not info.stored_in:
         return f"This {item} is not in your {home} any more."
     if not info.organized_by_you:
@@ -572,7 +614,7 @@ class InvitationCard(QFrame):
         busy = info.kind == "freebusy"
         self.title.setText("Busy times" if busy else info.title or "(no title)")
         when = when_text(info.start, info.end, info.all_day) + (" (repeats)" if info.repeats else "")
-        self.when.setText(f"Due {when}" if when and info.kind == "task" else when)
+        self.when.setText(f"Due {when}" if when and info.kind == "task" else proposal_when(info, when))
         self.when.setVisible(bool(self.when.text()))
         self.busy_times.setText(busy_text(info) if busy else "")
         self.busy_times.setVisible(bool(self.busy_times.text()))

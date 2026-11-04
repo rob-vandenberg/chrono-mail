@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.517"
+__version__ = "commands_mail.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: the card knows who wrote the mail (D-310)
 # v4.4.517: message.show reads the answer mark of the mail (D-310)
 # v4.4.504: message.show carries the invitation card of a calendar message (invitation) and marks its part (card), D-310
 # v4.2.449: mail.first-fill, the first fill of a new account (D-300): only receives; POP3 deletes nothing on the server, IMAP sends
@@ -909,7 +910,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         parsed = parse_message(raw)
         referenced, below = _inline_images(parsed)
         invitation = invitation_of(engine, parsed.attachments)
-        invitation = with_mark(invitation, mailbox.current_flags(reference)) if invitation is not None else None
+        invitation = with_mark(invitation, mailbox.current_flags(reference), (address.address for address in parsed.from_addresses)) if invitation is not None else None
         html_body = parsed.html_body
         if invitation is not None:
             html_shows, plain_shows = shows_text(parsed.html_body, parsed.text_body)

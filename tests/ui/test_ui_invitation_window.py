@@ -11,11 +11,12 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
 from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
+from chrono_mail.engine.invitations import InvitationPerson
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.pim.itip import BusyPeriod
 from chrono_mail.ui import app
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog
-from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, organize_reason, status_text
+from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, organize_done, proposal_when, status_text, organize_reason, status_text
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
@@ -26,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.516"
+__version__ = "test_ui_invitation_window.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: the two states of a message about your own meeting, its writer, a proposal with the time now (D-310)
 # v4.4.516: handled and not handled: Change my answer, your own answer on your line, a meeting you never answered (D-310)
 # v4.4.515: every item of a big file gets its block as the person scrolls, and a click changes only its block, the place in the list stays (D-310)
 # v4.4.514: a window stays open until the person closes it (D-310)
@@ -500,3 +502,42 @@ def test_the_program_is_offered_for_calendar_files_on_both_systems() -> None:
     setup_script = (PACKAGING / "chrono-mail.iss").read_text()
     assert "ChangesAssociations=yes" in setup_script and 'Subkey: "Software\\Classes\\.ics\\OpenWithProgids"' in setup_script
     assert '"""{app}\\chrono-mail.exe"" ""%1"""' in setup_script and 'Subkey: "Software\\Classes\\.ics"; ' not in setup_script  # Open with, never the default
+
+
+SAM = InvitationPerson("sam@example.net", "Sam", "ACCEPTED", False)
+PAT = InvitationPerson("pat@example.net", "Pat", "DECLINED", False)
+OWN = replace(CARD, organizer=replace(CARD.organizer, you=True), stored_in="Personal (Work)", occurrence_kept=True, version="same", attendees=(PAT, SAM), writer="sam@example.net")  # type: ignore[arg-type]
+
+
+def test_the_sentence_names_who_wrote_the_answer() -> None:
+    assert intro_text(replace(OWN, method="REPLY")) == "Sam accepted your invitation."
+    assert intro_text(replace(OWN, method="REPLY", organizer=CARD.organizer)) == "Sam accepted the invitation."
+
+
+def test_an_answer_is_handled_when_your_copy_says_the_same() -> None:
+    waiting = replace(OWN, method="REPLY", kept_answers=(("sam@example.net", "NEEDS-ACTION"), ("pat@example.net", "DECLINED")))
+    assert organize_done(waiting) == "" and organize_reason(waiting) == ""
+    taken = replace(waiting, kept_answers=(("sam@example.net", "ACCEPTED"),))
+    assert organize_reason(taken) == "Their answer is in your meeting."
+    assert status_text(taken) == "Their answer is in your meeting. In Personal (Work)."
+
+
+def test_an_accepted_proposal_and_a_declined_one_are_handled() -> None:
+    start, end = datetime(2026, 11, 1, 10, 0, tzinfo=UTC), datetime(2026, 11, 1, 11, 0, tzinfo=UTC)
+    open_one = replace(OWN, method="COUNTER", start=start, end=end, kept_start=start.replace(hour=9), kept_end=start)
+    assert organize_done(open_one) == ""
+    assert organize_done(replace(open_one, kept_start=start, kept_end=end, proposal_usable=False)) == "Your meeting follows this proposal."
+    assert organize_done(replace(open_one, proposal_usable=False)) == ""  # times that cannot be used are no accepted proposal
+    assert organize_done(replace(open_one, answered_on_mail=True)) == "You declined this proposal."
+
+
+def test_a_request_answered_is_handled_and_says_so_also_with_the_meeting_gone() -> None:
+    answered = replace(OWN, method="REFRESH", answered_on_mail=True, stored_in="")
+    assert status_text(answered) == "You answered this request." and organize_reason(answered) == "You answered this request."
+
+
+def test_a_proposal_shows_the_time_now_beside_the_time_proposed() -> None:
+    start, end = datetime(2026, 11, 1, 10, 0, tzinfo=UTC), datetime(2026, 11, 1, 11, 0, tzinfo=UTC)
+    proposal = replace(OWN, method="COUNTER", start=start, end=end, kept_start=start.replace(hour=9), kept_end=start)
+    shown = proposal_when(proposal, "the new time")
+    assert shown.startswith("Proposed: the new time\nNow: ") and proposal_when(replace(proposal, kept_start=start, kept_end=end), "the new time") == "the new time"

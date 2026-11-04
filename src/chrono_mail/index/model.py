@@ -7,9 +7,10 @@ from typing import Protocol
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.517"
+__version__ = "model.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: INVITE_SENT
 # v4.4.517: The bits of the answer marks
 # v4.2.430: IndexEntry.to_shown and IndexedMessage.to_shown: the person From / To shows, from the message's own addresses
 # v4.2.429: SortField.TO_SHOWN: From / To where it shows the recipients sorts by exactly what it shows (D-295)
@@ -39,6 +40,7 @@ FLAG_BITS: dict[MessageFlag, int] = {
     MessageFlag.DRAFT: 16,
     MessageFlag.INVITE_DECLINED: 32,
     MessageFlag.INVITE_DELEGATED: 64,
+    MessageFlag.INVITE_SENT: 128,
 }
 UNREADABLE_SUBJECT: str = "(damaged message)"
 UNKNOWN_SEND_TIME: int = 0  # the send time of a message that could not be read: it is due at once, so it is looked at (and reported)

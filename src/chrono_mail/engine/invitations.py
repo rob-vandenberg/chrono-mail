@@ -1,13 +1,13 @@
 """What a calendar message in a mail asks or tells, for the card shown above its text (iTIP, RFC 5546; D-310)."""
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from html.parser import HTMLParser
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal, override
 
-from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind, MessageFlag
+from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, MessageFlag
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
@@ -16,9 +16,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.517"
+__version__ = "invitations.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: the two states of an answer to your meeting: writer, kept_answers, kept_start and kept_end; a proposal or request marked as answered (D-310)
 # v4.4.517: with_mark: an answer that left no copy is read from the mark on the mail (D-310)
 # v4.4.516: your own line shows the answer in your copy (D-310)
 # v4.4.515: no limit of 50 blocks: blocks_of gives the cards of a text step by step, so every item gets its block and a huge file stays fast (D-310)
@@ -78,6 +79,10 @@ class InvitationInfo:
     journals: int = 0  # journal entries in the text: left out
     damaged: int = 0  # items that cannot be read: left out
     answered_on_mail: bool = False  # your answer is known from the mark on the mail: no copy of it says so (with_mark)
+    writer: str = ""  # an answer, proposal or request to you: the address of who wrote it, as the commands choose it; "": not known (a file)
+    kept_answers: tuple[tuple[str, str], ...] = ()  # an answer to your meeting: each attendee in your copy (lower case) with their answer there
+    kept_start: date | datetime | None = None  # a proposal: the times your meeting has now
+    kept_end: date | datetime | None = None
 
 
 class _VisibleText(HTMLParser):
@@ -170,6 +175,23 @@ class _Kept:
     occurrence_kept: bool = False
     organized_by_you: bool = True
     proposal_usable: bool = True
+    answers: tuple[tuple[str, str], ...] = ()
+    start: date | datetime | None = None
+    end: date | datetime | None = None
+
+
+def _times_now(item: CalendarMessage | None, occurrence: date | datetime | None) -> tuple[date | datetime | None, date | datetime | None]:
+    """The times a meeting has now: of the date itself when it is a date of the series that has no changes of its own, at the series' length."""
+    event = item.event if item is not None else None
+    if event is None:
+        return None, None
+    if occurrence is None or event.end is None:
+        return event.start, event.end
+    try:
+        span = event.end - event.start if isinstance(event.end, datetime) and isinstance(event.start, datetime) else timedelta(days=event.end.toordinal() - event.start.toordinal())
+        return occurrence, occurrence + span
+    except (OverflowError, TypeError):  # a time at the edge of the years, or times of two kinds
+        return None, None
 
 
 def is_yours(info: CollectionInfo) -> bool:
@@ -228,7 +250,9 @@ def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], 
             kept_here = message.occurrence is None or any(held(text, moment) for moment in moments)
         yours = (main or first).organizer is not None and (main or first).organizer.address.strip().lower() in addresses  # type: ignore[union-attr]
         usable = message.method != "COUNTER" or proposal_usable(text, message_text)
-        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable)
+        answers = tuple((person.address.strip().lower(), person.status) for person in base.attendees) if message.method == "REPLY" else ()
+        start, end = _times_now(kept or main, message.occurrence if kept is None else None) if message.method == "COUNTER" else (None, None)
+        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, start, end)
     return _Kept()
 
 
@@ -240,9 +264,41 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     return card_of(engine, found[0], calendar_text(attachments[found[0]]))
 
 
-def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag]) -> InvitationInfo:
-    """The card with the answer the mail itself remembers. A Decline leaves no copy, so its mark is what tells every computer; a copy that holds
-    the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant."""
+def answering(lines: Sequence[str], senders: Iterable[str]) -> str | None:
+    """The attendee whose answer this is: the mail's sender when it has a line (also another account of yours), else the only line there is."""
+    wanted = {address.strip().lower() for address in senders}
+    found = next((address for address in lines if address.strip().lower() in wanted), None)
+    return lines[0] if found is None and len(lines) == 1 else found
+
+
+def writing(lines: Sequence[str], senders: Iterable[str], own: Collection[str]) -> str | None:
+    """The attendee who wrote the message (an answer, a proposal, a request): the mail's sender when it is on the list (a proposal may carry
+    every attendee), else the one attendee it names (a server may have sent the mail), else who sent the mail, else its first attendee line; never you."""
+    people = [address for address in lines if address and address.strip().lower() not in own]
+    others = [address for address in senders if address.strip().lower() not in own]
+    wanted = {address.strip().lower() for address in others}
+    found = next((address for address in people if address.strip().lower() in wanted), None)
+    if found is None:
+        found = people[0] if len(people) == 1 else next(iter(others), None) or next(iter(people), None)
+    return found
+
+
+def _writer_of(card: InvitationInfo, senders: Iterable[str]) -> str:
+    """Who wrote an answer, proposal or request to you, by the choice the commands make, so the sentence and the button are about one person."""
+    lines = [person.address for person in card.attendees if person.address]
+    own = {person.address.strip().lower() for person in (*card.attendees, card.organizer) if person is not None and person.you}
+    wrote = tuple(senders)
+    return (answering(lines, wrote) if card.method == "REPLY" else None) or writing(lines, wrote, own) or ""
+
+
+def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = ()) -> InvitationInfo:
+    """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves no copy, so its mark is what tells every
+    computer; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
+    A proposal you declined or a request you answered also exists only as that mark: the mail you wrote is all there is."""
+    if card.method in ("REPLY", "COUNTER", "REFRESH"):
+        card = replace(card, writer=_writer_of(card, senders))
+    if card.method in ("COUNTER", "REFRESH"):
+        return replace(card, answered_on_mail=bool(flags & ANSWER_MARKS) and card.items <= 1)
     answer = "DECLINED" if MessageFlag.INVITE_DECLINED in flags else "DELEGATED" if MessageFlag.INVITE_DELEGATED in flags else ""
     holds = bool(card.stored_in) and (not card.occurrence_kept if card.method == "ADD" else card.occurrence_kept)  # (ADD: occurrence_kept is dates still to add)
     if not answer or holds or card.items > 1 or card.method not in ("REQUEST", "ADD"):
@@ -291,5 +347,5 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
-        busy=message.busy, plain=plain,
+        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end,
     )

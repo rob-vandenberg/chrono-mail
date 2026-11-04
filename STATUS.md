@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.518 (A meeting you make invites its attendees, a change or cancellation tells them when you say so, and the box covers only your answers)*
+*Last updated: 2026-11-04, version 4.4.519 (An answer, proposal or request about your own meeting shows when it is handled, names who wrote it, and a proposal shows the time now beside the new one)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.519 done (D-310, item 3 of the changelist after the review).** To check by the owner: open an attendee's answer to your own meeting and click Take their answer: the card says "Their answer is in your meeting." and the button greys with an (i). Open a proposal: it shows Proposed and Now. After Decline proposal or Send the latest version the buttons grey, also on a second computer.
 
 **4.4.518 done (D-310, items 1 and 2 of the changelist after the review).** To check by the owner: make a meeting with an attendee and Save: the invitation opens in the composer, ready to send; on a calendar whose server mails, nothing opens. Change the time, or delete it: Chrono Mail asks whether to mail the attendees. Accept proposal asks the same. Untick the box of the account that got an invite: Accept sends no answer, also into a calendar of another account. Still to do: changelist items 3, 8 to 19, 21 to 25.
 

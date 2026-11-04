@@ -11,9 +11,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.514"
+__version__ = "test_engine_invitation_organizer.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: a message about your own meeting has two states, knows who wrote it, and a proposal knows the times now (D-310)
 # v4.4.514: a delegator's answer adds the delegate as not answered yet (D-310)
 # v4.4.509: Take their answer takes only the line of the attendee who wrote it (D-310)
 # v4.4.506: Initial tests: you are the organizer: an attendee's answer into your meeting, a proposal accepted or declined, the latest version
@@ -595,3 +596,55 @@ def test_an_answer_to_the_series_goes_onto_the_dates_that_followed_it() -> None:
     other = changed_date("20261112T100000Z", "20261112T100000Z", "20261112T103000Z").replace("PARTSTAT=ACCEPTED", "PARTSTAT=TENTATIVE")
     text = with_attendee_answer(with_date(kept_series, other), meeting("REPLY", sam="DECLINED"), "sam@example.net")
     assert text is not None and text.count("PARTSTAT=DECLINED") == 2 and text.count("PARTSTAT=TENTATIVE") == 1
+
+
+def card(setup: Setup, message: str):  # noqa: ANN201 - the command's own answer
+    return call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=message).invitation
+
+
+def test_a_card_knows_who_wrote_the_answer_also_with_another_line_first(setup: Setup) -> None:
+    stored(setup, meeting())
+    two = meeting("REPLY", sam="DELEGATED").replace("ATTENDEE;CN=Sam", "ATTENDEE;CN=Pat;PARTSTAT=ACCEPTED:mailto:pat@example.net\r\nATTENDEE;CN=Sam", 1)
+    assert card(setup, deliver(setup, from_sam(two))).writer == "sam@example.net"
+
+
+def test_your_copy_tells_whether_their_answer_is_in(setup: Setup) -> None:
+    stored(setup, meeting())
+    message = deliver(setup, from_sam(meeting("REPLY", sam="ACCEPTED")))
+    assert dict(card(setup, message).kept_answers)["sam@example.net"] == "NEEDS-ACTION"
+    organize(setup, message, "take")
+    assert dict(card(setup, message).kept_answers)["sam@example.net"] == "ACCEPTED"
+
+
+def test_a_declined_proposal_stays_answered_on_the_mail_and_goes_only_once(setup: Setup) -> None:
+    stored(setup, meeting())
+    message = deliver(setup, from_sam(meeting("COUNTER", start="20261030T140000Z", end="20261030T143000Z")))
+    assert not card(setup, message).answered_on_mail
+    organize(setup, message, "decline_proposal")
+    assert card(setup, message).answered_on_mail
+    with pytest.raises(UsageError, match="answered this message already"):
+        organize(setup, message, "decline_proposal")
+    assert len(drafts(setup)) == 1
+
+
+def test_a_request_answered_stays_answered_on_the_mail_and_goes_only_once(setup: Setup) -> None:
+    stored(setup, meeting(sequence=3))
+    message = deliver(setup, from_sam(meeting("REFRESH")))
+    organize(setup, message, "send_latest")
+    assert card(setup, message).answered_on_mail
+    with pytest.raises(UsageError, match="answered this message already"):
+        organize(setup, message, "send_latest")
+    assert len(drafts(setup)) == 1
+
+
+def test_a_proposal_knows_the_times_your_meeting_has_now(setup: Setup) -> None:
+    stored(setup, meeting())
+    shown = card(setup, deliver(setup, from_sam(meeting("COUNTER", start="20261030T140000Z", end="20261030T143000Z"))))
+    assert shown.kept_start == datetime(2026, 10, 29, 10, 0, tzinfo=UTC) and shown.kept_end == datetime(2026, 10, 29, 10, 30, tzinfo=UTC)
+
+
+def test_a_proposal_for_one_date_compares_with_that_date_not_the_first_of_the_series(setup: Setup) -> None:
+    stored(setup, series())
+    proposal_text = for_date(meeting("COUNTER", start="20261105T140000Z", end="20261105T143000Z"), "20261105T100000Z")
+    shown = card(setup, deliver(setup, from_sam(proposal_text)))
+    assert shown.kept_start == datetime(2026, 11, 5, 10, 0, tzinfo=UTC) and shown.kept_end == datetime(2026, 11, 5, 10, 30, tzinfo=UTC)

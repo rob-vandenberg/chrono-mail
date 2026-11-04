@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.4.517"
+__version__ = "changes.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: INVITE_SENT
 # v4.4.517: The names of the answer marks
 # v4.2.453: rules_changed with its notes: rules followed a renamed or deleted folder (D-302)
 # v4.2.438: timed_background: a calendar fact says whether Month fills its timed events (UR-02, D-297)
@@ -34,6 +35,7 @@ _FLAG_NAMES: dict[MessageFlag, str] = {
     MessageFlag.DRAFT: "draft",
     MessageFlag.INVITE_DECLINED: "invite_declined",
     MessageFlag.INVITE_DELEGATED: "invite_delegated",
+    MessageFlag.INVITE_SENT: "invite_sent",
 }
 
 

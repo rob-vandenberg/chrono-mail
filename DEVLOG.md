@@ -3841,3 +3841,8 @@ Open: items 1 to 3, 8 to 19, 21 to 25.
 Built: engine/meetingmail.py (who_mails moved there with its answers parameter, quiet, meeting_mail); commands_calendar event_add, event_edit, event_delete tell, EventInfo.yours and draft; itip request_of makes one date of a series an item of its own, so a mail about it never speaks for the series; eventeditor _tell; calendarview _delete_chosen, mail_ready; readingpane the question at Accept proposal.
 Tests: tests/test_engine_meetings.py, tests/ui/test_ui_calendar.py; each new test fails on 4.4.517.
 Open: item 3, items 8 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.519: answers about your own meeting have two states (the owner, D-310, item 3)
+Built: invitationcard organize_done, proposal_when, _writer; InvitationInfo writer, kept_answers, kept_start, kept_end; answering and writing moved to engine/invitations.py, so card and command choose the same person; MessageFlag.INVITE_SENT; a declined proposal carries INVITE_DECLINED; invitation.organize refuses a second one.
+Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.518.
+Open: items 8 to 19, 21 to 25.

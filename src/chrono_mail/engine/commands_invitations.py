@@ -11,7 +11,7 @@ from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, Coll
 from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -28,9 +28,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.518"
+__version__ = "commands_invitations.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: the choice of who wrote moved to invitations.py, for the card too; a declined proposal and a sent latest version are marked on the mail and not made twice (D-310)
 # v4.4.518: Who mails moved to meetingmail.py; the box of the account that got the invite decides, and it covers only answers; Accept proposal follows what the person said (D-310)
 # v4.4.517: A Decline or Delegate leaves its mark on the mail, Change my answer and a new answer take it off (D-310)
 # v4.4.516: invitation.reopen: Change my answer (D-310)
@@ -290,7 +291,7 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
 def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None) -> None:
     """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline leaves no copy to tell it. An answer or Change my answer takes
     an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again."""
-    if opened.marks is None or opened.message.method not in ("REQUEST", "ADD"):
+    if opened.marks is None or opened.message.method not in ("REQUEST", "ADD", "COUNTER", "REFRESH"):
         return
     wanted = (opened.marks - ANSWER_MARKS) | ({mark} if mark is not None else frozenset[MessageFlag]())
     if wanted != opened.marks:
@@ -651,27 +652,16 @@ class OrganizeResult:
 
 
 def _sender(opened: _Opened, yours: Iterable[str]) -> str:
-    """The attendee who wrote the message (an answer, a proposal, a request): the mail's sender when it is on the list (a proposal may carry
-    every attendee), else the one attendee it names (a server may have sent the mail), else who sent the mail, else its first attendee line; never you."""
-    own = set(yours)
-    people = [person.address for person in opened.message.attendees if person.address and person.address.strip().lower() not in own]
-    senders = [address for address in opened.senders if address.strip().lower() not in own]
-    lower = {address.strip().lower() for address in senders}
-    found = next((address for address in people if address.strip().lower() in lower), None)
-    if found is None:
-        found = people[0] if len(people) == 1 else next(iter(senders), None) or next(iter(people), None)
+    """The attendee who wrote the message, chosen as the card does; never you."""
+    found = writing([person.address for person in opened.message.attendees], opened.senders, set(yours))
     if found is None:
         raise UsageError("This calendar message names no attendee")
     return found
 
 
 def _answering(opened: _Opened) -> str:
-    """The attendee whose answer this is: the mail's sender when it has a line (also another account of yours), else the only line there is."""
-    lines = [person.address for person in opened.message.attendees if person.address]
-    senders = {address.strip().lower() for address in opened.senders}
-    found = next((address for address in lines if address.strip().lower() in senders), None)
-    if found is None and len(lines) == 1:
-        return lines[0]
+    """The attendee whose answer this is, chosen as the card does."""
+    found = answering([person.address for person in opened.message.attendees if person.address], opened.senders)
     if found is None:
         raise UsageError("This answer does not show whose it is")
     return found
@@ -690,6 +680,8 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     own = yours.get(organizer.address.strip().lower()) if organizer is not None else None
     if own is None:
         raise UsageError(f"You are not the organizer of this {item_word}")
+    if message.method in ("COUNTER", "REFRESH") and opened.marks is not None and opened.marks & ANSWER_MARKS:
+        raise UsageError("You have answered this message already")  # OR-4: the card greys its buttons, the command checks it
     stored = _stored(engine, _kind(message), message.uid)
     if stored is None:
         if parameters.action != "send_latest":
@@ -758,6 +750,8 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
         account=own.account.account_id, to=to, subject=f"{word}: {title}", body=body, kind="reply",
         in_reply_to=opened.message_id, references=(opened.message_id,) if opened.message_id else (), calendar=calendar,
     ))
+    if parameters.action != "accept_proposal":  # (an accepted proposal shows in the meeting itself)
+        _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.action == "decline_proposal" else MessageFlag.INVITE_SENT)
     return OrganizeResult(done, stored_in, server, own.account.account_id, saved.folder, saved.message_id)
 
 
@@ -820,7 +814,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     card = card_of(engine, parameters.part, opened.whole)
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
-    return with_mark(card, opened.marks) if opened.marks is not None else card
+    return with_mark(card, opened.marks, opened.senders) if opened.marks is not None else card
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

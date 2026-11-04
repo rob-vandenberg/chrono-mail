@@ -12,9 +12,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_card.py 4.4.504"
+__version__ = "test_ui_invitation_card.py 4.4.519"
 
 # --- Version history ----------------------------------------------------
+# v4.4.519: "your invitation" only for your own meeting (D-310)
 # v4.4.504: Initial tests: the invitation card above the text, alone when the text shows nothing, never markup, its part not a file (D-310)
 
 PART = AttachmentInfo(None, "text/calendar", 1984, False, "attachment-1.ics", card=True)
@@ -56,7 +57,7 @@ def test_a_click_on_the_organizer_reports_the_link(reader: ReaderWidget, qtbot: 
 
 def test_the_card_says_what_the_message_is_and_what_your_calendar_holds() -> None:
     assert intro_text(replace(CARD, method="CANCEL")) == "This meeting was cancelled by its organizer."
-    assert intro_text(replace(CARD, method="REPLY", attendees=(InvitationPerson("sam@example.net", "Sam", "ACCEPTED", False),))) == "Sam accepted your invitation."
+    assert intro_text(replace(CARD, method="REPLY", organizer=InvitationPerson("me@example.org", "Me", "ACCEPTED", True), attendees=(InvitationPerson("sam@example.net", "Sam", "ACCEPTED", False),))) == "Sam accepted your invitation."
     assert intro_text(replace(CARD, kind="task")) == "You have been invited to this task."
     assert status_text(replace(CARD, stored_in="Calendar (Work)", version="same", your_answer="ACCEPTED")) == "You accepted. In Calendar (Work)."
     assert status_text(replace(CARD, stored_in="Calendar (Work)", version="older")) == "A newer version is in Calendar (Work)."
