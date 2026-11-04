@@ -10,14 +10,16 @@ from dataclasses import replace
 from chrono_mail.config import Action, AccountSettings, AppConfig, Rule, RuleSet, load_rules, new_rule_id, save_rules
 from chrono_mail.config.rules import MAXIMUM_RULES
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError
+from chrono_mail.engine.changes import RENAMING_RULES, Change
 from chrono_mail.engine.commands_accounts import shown_name
 from chrono_mail.engine.session import Engine
 from chrono_mail.store import folder_paths
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_folders.py 4.2.453"
+__version__ = "rule_folders.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: renaming a folder tells when it starts updating the rules that name it, and when that is over (working)
 # v4.2.453: Initial version: rules follow a folder that is renamed or moved, and are switched off when it is deleted; a rule that
 #           another place shares the folder with is split, the copy named "<name> (Copy n)" (the owner, D-302)
 
@@ -82,12 +84,13 @@ def _place_name(config: AppConfig, settings: AccountSettings) -> str:
 
 def _follow(
     engine: Engine, place: str, path: Path, folders: set[Path], change: Callable[[Rule], Rule | None], said: Callable[[Rule, Rule], str],
-    split_said: Callable[[Rule, Rule, str], str], kept_said: Callable[[Rule], str],
+    split_said: Callable[[Rule, Rule, str], str], kept_said: Callable[[Rule], str], begin: Callable[[], None] = lambda: None,
 ) -> tuple[str, ...]:
     """Change every rule that reaches this place and names this folder; returns one line per rule for the status line. change gives
     the rule as it is to be, or None when nothing changes; a rule it cannot make (a new folder path too long for a rule) stays as it is,
     and so does one that would have to be split past the most rules there may be: kept_said says so. Never raises for one rule: the
-    folder change itself has happened, and a mail check goes on (OR-3). The rules file is read, changed and saved under engine.rules_lock."""
+    folder change itself has happened, and a mail check goes on (OR-3). The rules file is read, changed and saved under engine.rules_lock.
+    begin is called once a rule names the folder, before the rules are changed."""
     with engine.rules_lock:
         try:
             rules = load_rules(engine.directories.rules_file)
@@ -95,6 +98,7 @@ def _follow(
             return ()  # a damaged rules file is reported when the rules are next used; the folder change itself has happened
         if not any(_uses(rule, path, folders) for rule in rules.rules):
             return ()
+        begin()
         try:
             config = engine.config()
         except ChronoMailError:
@@ -164,12 +168,23 @@ def follow_rename(engine: Engine, place: str, old: Path, new: Path, folders: set
     def target(rule: Rule, changed: Rule) -> str:
         return next(after.value for before, after in zip(rule.actions, changed.actions) if before != after)
 
-    return _follow(
-        engine, place, old, folders, change,
-        lambda rule, changed: f"Rule “{rule.name}” now moves mail to {target(rule, changed)}",
-        lambda rule, copy, where: f"Rule “{copy.name}” is made for {where}: it moves mail to {target(rule, copy)}",
-        lambda rule: f"Rule “{rule.name}” still moves mail to {'/'.join(old)}",
-    )
+    begun: list[bool] = []
+
+    def begin() -> None:
+        begun.append(True)
+        engine.report(Change("working", place, "/".join(old), notes=(RENAMING_RULES,)))
+
+    try:
+        return _follow(
+            engine, place, old, folders, change,
+            lambda rule, changed: f"Rule “{rule.name}” now moves mail to {target(rule, changed)}",
+            lambda rule, copy, where: f"Rule “{copy.name}” is made for {where}: it moves mail to {target(rule, copy)}",
+            lambda rule: f"Rule “{rule.name}” still moves mail to {'/'.join(old)}",
+            begin,
+        )
+    finally:
+        if begun:
+            engine.report(Change("working", place, "/".join(old)))  # no notes: the step is over
 
 
 def follow_delete(engine: Engine, place: str, path: Path, folders: set[Path]) -> tuple[str, ...]:

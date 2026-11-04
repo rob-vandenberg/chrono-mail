@@ -5,7 +5,7 @@ import pytest
 
 from chrono_mail.config import Action, Rule, RuleSet, load_rules, new_rule_id, save_rules
 from chrono_mail.config.rules import MAXIMUM_RULES
-from chrono_mail.engine.changes import Change
+from chrono_mail.engine.changes import RENAMING_FOLDER, RENAMING_RULES, Change
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.rule_folders import _copy_name
 from chrono_mail.engine.session import Engine
@@ -20,9 +20,10 @@ from tests.test_engine_mail_conflicts import folder_with_a_change_here
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rule_folders.py 4.2.453"
+__version__ = "test_engine_rule_folders.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: Renaming a folder tells "Renaming folder…" first and "Renaming folder, updating mail rules…" only when a rule names the folder
 # v4.2.453: Initial version: the rules follow a folder renamed or moved and are switched off when it is deleted; a rule another place
 #           shares the folder with is split into "<name> (Copy n)" (the owner, D-302)
 
@@ -78,6 +79,23 @@ def test_a_renamed_folder_takes_its_rules_along_with_the_folders_inside_it(tmp_p
         facts = [change for change in told if change.kind == "rules_changed"]
         assert len(facts) == 1 and facts[0].notes == result.rules and facts[0].mailbox == account
         assert [change.kind for change in told].index("folder_renamed") < [change.kind for change in told].index("rules_changed")
+
+
+def test_renaming_a_folder_tells_its_steps_in_order_and_the_rules_step_only_when_a_rule_names_it(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        account = add_account(engine, pop, smtp, email="a@example.com")
+        for folder in ("Projects", "Other"):
+            call(engine, "folder.create", account=account, folder=folder)
+        add_rule(engine, "Projects rule", "Projects")
+        told = listen(engine)
+        call(engine, "folder.rename", account=account, folder="Projects", new_name="Work")
+        steps = [(change.kind, change.notes) for change in told if change.kind in ("working", "folder_renamed", "rules_changed")]
+        assert [kind for kind, _ in steps] == ["working", "working", "working", "folder_renamed", "rules_changed"]
+        assert steps[0][1] == (RENAMING_FOLDER,) and steps[1][1] == (RENAMING_RULES,) and steps[2][1] == ()
+        told.clear()
+        call(engine, "folder.rename", account=account, folder="Other", new_name="Else")
+        assert [change.notes for change in told if change.kind == "working"] == [(RENAMING_FOLDER,)]  # no rule names it: no rules step
 
 
 def test_a_moved_folder_takes_its_rules_to_its_new_place(tmp_path: Path) -> None:

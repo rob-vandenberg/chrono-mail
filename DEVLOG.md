@@ -3938,3 +3938,13 @@ Built: an alarm with ACTION:NONE is no reminder: not in the windows, not in the 
 Measured (encrypted local calendar, every event with a placeholder): 20,000 events, 2,000 of them to come: 6.7 s per look before, 1.0 s after; 5,000 events all to come: 1.7 s. Parsing is about 0.24 ms per event.
 Tests: tests/test_engine_reminders.py, tests/test_pim_merge.py, tests/test_pim_conflictwords.py, tests/ui/test_ui_calendar.py. Review: one Sonnet round, nothing real.
 Open: a reminder more than 31 days after its event, and a moved occurrence of a series whose repeat ended over 31 days ago, are not looked at.
+
+## 2026-11-04 4.4.538 Show on startup: the triangle
+
+Cause: the drop-down took the mouse release on the triangle of a folder with folders inside as a pick, so the list closed after the folder had opened. Built: src/chrono_mail/ui/startupchooser.py handles press and release on the triangle itself (open or close, no pick). It is the only drop-down with a folder tree.
+Tests: tests/ui/test_ui_startup_view.py::test_a_click_on_the_arrow_of_a_folder_unfolds_it_and_the_list_stays_open (fails on 4.4.537). Pyrefly Linux and win32, layer check pass.
+
+## 2026-11-04 4.4.538 Renaming a folder: the status line shows its steps
+
+Built: folder.rename tells a `working` fact "Renaming folder…" when it starts; src/chrono_mail/engine/rule_folders.py tells "Renaming folder, updating mail rules…" only when a rule names the folder, and an empty `working` fact when that step is over (src/chrono_mail/ui/mainwindow.py shows it, and clears it only if it still shows). The end message and the server rename are unchanged.
+Tests: tests/test_engine_rule_folders.py::test_renaming_a_folder_tells_its_steps_in_order_and_the_rules_step_only_when_a_rule_names_it, tests/ui/test_ui_rule_folders.py::test_the_status_line_shows_the_steps_of_a_folder_rename (both fail on 4.4.537). Pyrefly Linux and win32 and the layer check pass. Review: one Sonnet round, nothing real. The code went out in the push of the startup triangle (same 4.4.538); only these documents followed.

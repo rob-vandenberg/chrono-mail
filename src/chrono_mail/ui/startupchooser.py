@@ -1,13 +1,14 @@
 from typing import override
 
-from PySide6.QtCore import QModelIndex, QPoint, Qt
-from PySide6.QtGui import QPalette, QStandardItem, QStandardItemModel
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt
+from PySide6.QtGui import QMouseEvent, QPalette, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QComboBox, QTreeView, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "startupchooser.py 1.1.195"
+__version__ = "startupchooser.py 1.1.196"
 
 # --- Version history ----------------------------------------------------
+# v1.1.196: A click on the arrow before a folder opens or closes it and the list stays open (the drop-down took the release as a pick)
 # v1.1.195: A choice can be greyed: what the folder list does not show (Settings > Sidebar) is listed, greyed, and cannot be chosen
 # v1.1.193: A heading folds on a press without asking where the pointer is (the tree handles its arrow itself and sends no press)
 # v1.1.184: The drop-down's own popup holds the tree (it closes on a click outside, on the field and on Escape, keeping the
@@ -51,6 +52,7 @@ class StartupChooser(QComboBox):
         # The list as a list under the field (not over it), so that it keeps to VISIBLE_ROWS; a border shows it lies on top.
         self.setStyleSheet("QComboBox { combobox-popup: 0; } QComboBox QAbstractItemView { border: 1px solid palette(dark); }")
         self.tree.pressed.connect(self._pressed)
+        self.tree.viewport().installEventFilter(self)  # after setView, so it sees a click before the drop-down does
 
     def choose_value(self, value: str) -> bool:
         """Make the row with this value the choice; False (and nothing changes) when no row that can be chosen has it."""
@@ -77,6 +79,20 @@ class StartupChooser(QComboBox):
         """The row of the choice in the tree (the field may show a row deeper than the top level)."""
         found = self._find(QModelIndex(), str(self.currentData()))
         return found if found is not None else self.tree_model.index(0, 0)
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """A press or release on the arrow before a row that has rows under it is the tree's alone: the press opens or closes the
+        row, and neither reaches the drop-down, which would take the release as a pick and close the list."""
+        if watched is self.tree.viewport() and isinstance(event, QMouseEvent) and event.type() in (
+            QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
+        ):
+            index = self.tree.indexAt(event.position().toPoint())
+            if index.isValid() and self.tree_model.hasChildren(index) and event.position().toPoint().x() < self.tree.visualRect(index).left():
+                if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                    self.tree.setExpanded(index, not self.tree.isExpanded(index))
+                return True
+        return super().eventFilter(watched, event)
 
     def _pressed(self, index: QModelIndex) -> None:
         """A press on a heading folds or unfolds it. A press on its arrow never gets here: the tree folds it itself."""

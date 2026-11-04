@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
+*Last updated: 2026-11-04, version 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -14,6 +14,10 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.538 also: renaming a folder.** To check by the owner: rename a folder: the status line says "Renaming folder…", and "Renaming folder, updating mail rules…" while a rule that names it is updated, then "Folder renamed" as before.
+
+**4.4.538 done.** To check by the owner: Settings > General > Show on startup, open the list: a click on the triangle before a folder opens or closes it and the list stays open; a click on a folder's name picks it and closes the list.
 
 **4.4.537 done.** To check by the owner: open Neighbourhood meeting in the test profile: no reminder row, only Add notification; add a reminder and save: it shows as type, number and unit. Untick Edit account > Calendars and contacts > Send confirmation emails via and save: no refusal.
 

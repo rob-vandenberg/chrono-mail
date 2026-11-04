@@ -34,9 +34,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.453"
+__version__ = "session.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: working is told also during a quiet big job (a step of a long job)
 # v4.2.453: rules_lock: every read-change-save of the rules file; rules_changed is told also during a quiet big job (D-302)
 # v4.2.441: certificates the person accepted until Chrono Mail closes (run_pins, trust_for_run; never saved), taken by every connection;
 #           tls_context tells the pinned context the server's security and kind, so a renewal that passes the usual checks connects (D-299)
@@ -383,7 +384,7 @@ class Engine:
     def report(self, change: Change) -> None:
         """A change of mail happened: tell it, unless a big job of this thread runs quietly (then its mailbox is noted)."""
         quiet = self._quiet_state()
-        if quiet.depth == 0 or change.kind in ("conflicts_changed", "waiting_changed", "rules_changed"):  # a list to be asked again (D-194); what the rules did (D-302)
+        if quiet.depth == 0 or change.kind in ("conflicts_changed", "waiting_changed", "rules_changed", "working"):  # a list to be asked again (D-194); what the rules did (D-302); a step of a long job
             self._tell(change)
             return
         summary = "collection_changed" if change.kind.startswith(("item_", "collection_")) else "mailbox_changed"

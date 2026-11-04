@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.core.colours import NEW_TAG
-from chrono_mail.engine.changes import Change
+from chrono_mail.engine.changes import RENAMING_RULES, Change
 from chrono_mail.engine.commands_updates import interrupt_downloads
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
@@ -68,9 +68,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.536"
+__version__ = "mainwindow.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: the status line says "Renaming folder…" and "Renaming folder, updating mail rules…" while a folder is renamed (working)
 # v4.4.536: The reminders are watched while the window runs (D-313)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -873,6 +874,10 @@ class MainWindow(QMainWindow):
         """Rules followed a folder that was renamed or deleted (also by the server, during a check): the status line says what they did (D-302)."""
         if change.kind == "rules_changed" and change.notes:
             self.report.show(". ".join(change.notes))
+        elif change.kind == "working" and change.notes:
+            self.report.show(change.notes[0], running=True)  # stays until the next line: the end message of the job
+        elif change.kind == "working" and self.report.label.text() == RENAMING_RULES:
+            self.report.show("")  # the step is over and no line came after it
 
     # --- state ------------------------------------------------------------------------------------------
 

@@ -2,7 +2,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.engine.changes import Change
+from chrono_mail.engine.changes import RENAMING_FOLDER, RENAMING_RULES, Change
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.engine.commands_rules import RuleInfo
 from chrono_mail.ui.ruleedit import RuleEditDialog
@@ -10,9 +10,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, answer_input, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rule_folders.py 4.2.453"
+__version__ = "test_ui_rule_folders.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: The status line shows the steps of a folder rename while they run and clears the rules step when nothing follows it
 # v4.2.453: Initial version: Rename folder and Delete folder… say what the rules did, a rule change found by a check is told in the status
 #           line, and Settings > Rules on screen shows the rules as they are now; the rule editor keeps a rule of several accounts and follows
 #           a rename made while it is open (D-302)
@@ -36,6 +37,20 @@ def test_rename_folder_says_where_the_rules_move_mail_now(world: World, qtbot: Q
     answer_input(monkeypatch, [("Work", True)])
     world.window.folders.rename_folder()
     wait(qtbot, lambda: world.window.status_label.text() == "Folder renamed. Rule “Projects rule” now moves mail to Work")
+
+
+def test_the_status_line_shows_the_steps_of_a_folder_rename(world: World, qtbot: QtBot) -> None:
+    world.window.start()
+    settle(qtbot, world, 3)
+    world.backend.changed.emit(Change("working", world.account_id, "Projects", notes=(RENAMING_FOLDER,)))
+    assert world.window.status_label.text() == "Renaming folder…"
+    world.backend.changed.emit(Change("working", world.account_id, "Projects", notes=(RENAMING_RULES,)))
+    assert world.window.status_label.text() == "Renaming folder, updating mail rules…"
+    world.backend.changed.emit(Change("working", world.account_id, "Projects"))
+    assert world.window.status_label.text() == ""
+    world.backend.changed.emit(Change("working", world.account_id, "Projects", notes=(RENAMING_FOLDER,)))
+    world.backend.changed.emit(Change("working", world.account_id, "Projects"))
+    assert world.window.status_label.text() == "Renaming folder…"  # only the rules step is cleared
 
 
 def test_delete_folder_says_which_rules_are_switched_off(world: World, qtbot: QtBot) -> None:

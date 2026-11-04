@@ -5,7 +5,7 @@ from typing import Literal
 
 from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, RebuildAborted, StorageError
 from chrono_mail.config import AccountSettings
-from chrono_mail.engine.changes import RebuildStep
+from chrono_mail.engine.changes import RENAMING_FOLDER, Change, RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters, account_label
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -18,9 +18,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.471"
+__version__ = "commands_folders.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: folder.rename tells that the folder is being renamed (working), for the status line
 # v4.2.471: the sort indexes of format 19 (each message's id and read mark, D-306) are remade the same way
 # v4.2.469: index.fill-sent also makes the unread sort indexes an upgraded index lacks, one at a time, stepping aside between them (D-305)
 # v4.2.453: folder.rename and folder.delete answer what the rules that move mail to the folder did (rules, D-302)
@@ -94,6 +95,7 @@ class FolderRenameParameters:
 
 def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderResult:
     with open_mailbox(engine, parameters.account) as mailbox:
+        engine.report(Change("working", mailbox.store.account_id, parameters.folder, notes=(RENAMING_FOLDER,)))
         old, new = mailbox.folder(parameters.folder), parse_folder(parameters.new_name)
         mailbox.rename_folder(old, new)
         return FolderResult("/".join(new), tuple(mailbox.rule_notes))

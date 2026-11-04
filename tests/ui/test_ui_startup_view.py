@@ -226,3 +226,34 @@ def test_the_tray_counts_the_unread_mail_of_local_folders_once(world: World, qtb
     assert again.tray._unread == 3  # noqa: SLF001 - it said 12: the Inbox of Local Folders once for itself and once per account keeping its mail there
     again.close()
 
+
+
+def test_a_click_on_the_arrow_of_a_folder_unfolds_it_and_the_list_stays_open(qtbot: QtBot) -> None:
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    from chrono_mail.ui.startupchooser import StartupChooser
+
+    chooser = StartupChooser([
+        ("Last selected folder", "last", True, 0, True),
+        ("Account", "account", False, 0, True),
+        ("Inbox", "inbox", True, 1, True),
+        ("Projects", "projects", True, 1, True),
+        ("Work", "work", True, 2, True),
+    ])
+    qtbot.addWidget(chooser)
+    chooser.show()
+    chooser.showPopup()
+    tree, model = chooser.tree, chooser.tree_model
+    popup = tree.window()
+    tree.expand(model.index(1, 0))
+    projects = model.index(1, 0, model.index(1, 0))
+    assert projects.data() == "Projects" and not tree.isExpanded(projects)
+    arrow = QPoint(tree.visualRect(projects).left() - 6, tree.visualRect(projects).center().y())
+    QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, arrow)
+    assert tree.isExpanded(projects) and popup.isVisible() and chooser.currentText() == "Last selected folder"
+    QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, arrow)
+    assert not tree.isExpanded(projects) and popup.isVisible()  # a second click closes the folder again
+    QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, tree.visualRect(projects).center())
+    wait(qtbot, lambda: not popup.isVisible())
+    assert chooser.currentText() == "Projects"  # a click on the name picks it and closes the list

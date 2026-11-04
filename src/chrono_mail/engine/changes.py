@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.4.519"
+__version__ = "changes.py 4.4.538"
 
 # --- Version history ----------------------------------------------------
+# v4.4.538: working: a step of a long job (renaming a folder, updating the rules that name it) that the status line shows
 # v4.4.519: INVITE_SENT
 # v4.4.517: The names of the answer marks
 # v4.2.453: rules_changed with its notes: rules followed a renamed or deleted folder (D-302)
@@ -105,8 +106,12 @@ ChangeKind = Literal[
     "collection_changed",  # a big job (a sync with the server, an import, a tag renamed) changed the collections of this account: views of them fetch again
     "conflicts_changed",  # the sync conflicts of this account changed (found, brought up to date or settled, D-194): their list asks again
     "waiting_changed",  # what of this account waits for its server changed (D-194)
+    "working",  # a step of a long job is under way (notes[0] says which); with no notes the step is over
     "rules_changed",  # rules followed a folder of this mailbox that was renamed or deleted (D-302): notes says what each did
 ]
+
+RENAMING_FOLDER: str = "Renaming folder…"  # working: a folder is being renamed
+RENAMING_RULES: str = "Renaming folder, updating mail rules…"  # working: the rules that name the renamed folder are being updated
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +149,6 @@ class Change:
     palette: tuple[PaletteColour, ...] = ()  # calendars (collection_made, collection_edited): the palette after the change, its own colour first (D-191)
     read_only: bool = False  # collections (collection_made, collection_edited): read only on its server after the change
     timed_background: bool = False  # calendars (collection_made, collection_edited): Month shows its timed events in their colour (D-297)
-    notes: tuple[str, ...] = ()  # rules_changed: one line per rule changed, for the status line (D-302)
+    notes: tuple[str, ...] = ()  # rules_changed: one line per rule changed, for the status line (D-302); working: the step under way, none when it is over
     sequence: int = 0  # the number of this fact among the facts of its mailbox, counted from 1 since the program started (D-152)
     numbers: tuple[FolderNumbers, ...] = ()  # mail facts (NUMBERED_KINDS): the numbers of folder (and to_folder) right after the change (R-10)
