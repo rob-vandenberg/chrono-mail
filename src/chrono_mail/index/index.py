@@ -41,9 +41,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.471"
+__version__ = "index.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.2.471: format 19: the sort indexes hold each message's id and read mark, remade afterwards one at a time in an upgraded index
 #           (sort_indexes_to_make, make_sort_index) (D-306)
 # v4.2.470: a Flagged view gathers its flagged mail through the folder's own index, a tag smaller than its folder leads within it,
@@ -653,6 +654,10 @@ class Index(IndexDatabase):
             + f" ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
         )
         rows = self._connection.execute(sql, (_folder_key(folder), max(0, limit), max(0, offset))).fetchall()
+        return [_row(row) for row in rows]
+
+    def with_message_id(self, message_id: str) -> list[IndexedMessage]:
+        rows = self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.message_id = ?", (message_id,)).fetchall()
         return [_row(row) for row in rows]
 
     def thread_members(self, thread_key: str) -> list[IndexedMessage]:

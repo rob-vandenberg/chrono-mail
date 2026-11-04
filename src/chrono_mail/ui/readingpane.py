@@ -39,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.527"
+__version__ = "readingpane.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: a warning before Accept or Tentative when you already have something at that time; a calendar attachment opens as a card by what it is (D-310)
 # v4.4.526: results and errors of a card show in the window that was clicked (_tell); Delegate and offline say what really happens (D-310)
 # v4.4.525: the question Replace or Skip is gone: Add all skips what is kept (D-310)
@@ -425,7 +426,7 @@ class ReadingPane(QObject):
         what, home = ("task", "task list") if info.kind == "task" else ("appointment", "calendar")
         text = f"Changing the status of the invitation will remove the {what} from your {home} until you make a new choice."
         box = plain_box(QMessageBox.Icon.Question, self._parent, "Change my answer", text, QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
-        if not info.answered_on_mail and QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:  # no copy: nothing leaves your calendar, so nothing to ask
+        if not info.answered_on_mail and info.your_answer != "DECLINED" and QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:  # no copy: nothing leaves your calendar, so nothing to ask
             return
         parameters = SourceParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
         self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._tell(reader, "Could not change your answer", error), owner=self)
@@ -474,7 +475,7 @@ class ReadingPane(QObject):
 
     @staticmethod
     def _parameters(place: CalendarSource) -> ChoicesParameters:
-        return ChoicesParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
+        return ChoicesParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item)
 
     def open_calendar_file(self, path: str, failed: Callable[[], None] | None = None) -> None:
         """A calendar file on this computer as a card; `failed` is called when it cannot be shown."""
@@ -599,7 +600,7 @@ class ReadingPane(QObject):
         """Delegate…: the address of who goes in your place, then the invitation for them and your answer to the organizer in the composer."""
         if place is None:
             return
-        info = self._card_of(reader, place)
+        info = self._card_of(reader, place) if not place.event else None
         dialog = InvitationDelegateDialog(self._parent, task=info is not None and info.kind == "task")
         if dialog.exec() != InvitationDelegateDialog.DialogCode.Accepted:
             return
@@ -612,7 +613,7 @@ class ReadingPane(QObject):
                 self._composing.open_draft(result.account, result.folder, result.answer_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
-        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, to=dialog.address), delegated,
+        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address), delegated,
                           lambda error: self._tell(reader, "Could not pass the invitation on", error), owner=self)
 
     def _apply_in_pane(self) -> None:
@@ -698,14 +699,23 @@ class ReadingPane(QObject):
         if answer == "DECLINED":
             self._send_answer(reader, place, answer, "")
             return
+        self._choose_and_answer(reader, place, answer, info)
 
+    def answer_event(self, event: str, occurrence: str, answer: str) -> None:
+        """Accept or Tentative on a hidden event in the calendar: as on a card, and it shows in the calendar when it is done (D-310)."""
+        self._choose_and_answer(self.reader, CalendarSource(event=event, occurrence=occurrence), answer, None)
+
+    def delegate_event(self, event: str, occurrence: str) -> None:
+        self.delegate_invitation(self.reader, CalendarSource(event=event, occurrence=occurrence))
+
+    def _choose_and_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, info: InvitationInfo | None) -> None:
         def listed(choices: ChoicesResult) -> None:
             if choices.clashes and not self._add_anyway(choices.clashes, "Tentative" if answer == "TENTATIVE" else "Accept"):
                 return
-            if choices.stored or info.method == "ADD":  # your calendar holds it now (asked afresh: it may have gone since the card was shown; an added date never goes elsewhere)
+            if choices.stored or (info is not None and info.method == "ADD"):  # your calendar holds it now (asked afresh: it may have gone since the card was shown; an added date never goes elsewhere)
                 self._send_answer(reader, place, answer, "", info)
                 return
-            dialog = InvitationCalendarDialog(choices, task=info.kind == "task", parent=self._parent)
+            dialog = InvitationCalendarDialog(choices, task=info is not None and info.kind == "task", parent=self._parent)
             if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
                 self._send_answer(reader, place, answer, dialog.chosen, info)
 
@@ -720,9 +730,9 @@ class ReadingPane(QObject):
 
     def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str, card: InvitationInfo | None = None) -> None:
         chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
-        parameters = AnswerParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, answer=chosen, calendar=calendar)
+        parameters = AnswerParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, answer=chosen, calendar=calendar)
 
-        info = card or (self._card_of(reader, place) if isValid(reader) else None)  # card: as it was asked, the window may be closed by now
+        info = card or (self._card_of(reader, place) if isValid(reader) and not place.event else None)  # card: as it was asked, the window may be closed by now
         shared = info is not None and info.method == "PUBLISH"
         home = home_word(info) if info is not None else "calendar"
 

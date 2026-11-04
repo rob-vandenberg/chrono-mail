@@ -5,8 +5,9 @@ from email.utils import parseaddr
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
+from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import MeetingDraft, copy_for, delete_copy, meeting_mail, organizer_from, organizing_account, quiet, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
@@ -14,13 +15,15 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Occurrence, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
+from chrono_mail.pim.itip import you_declined
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.521"
+__version__ = "commands_calendar.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.521: a declined date of a series is left out as a skipped date; hidden: deleted and declined dates of a series, shown greyed when asked for (D-310)
 # v4.4.518: A meeting you make names you as organizer and invites its attendees, a change or cancellation tells them when you say so (D-310)
 # v4.4.513: a series that picks its days by position (BYSETPOS) takes its skipped and changed dates along to another hour (D-310)
@@ -74,6 +77,8 @@ class OccurrenceInfo:
     tags: tuple[str, ...]
     colour_id: str = ""  # the colour of its calendar's palette it has (empty: the calendar's own); `colour` is what that is now
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
+    answerable: bool = False  # hidden, with an organizer other than you: it can be answered again; else it can only be restored
+    whole: bool = False  # hidden as a whole (a declined meeting): it can be deleted; one date of a series cannot
     hidden: bool = False  # a date of a series that was deleted or declined: shown greyed only when asked for, it can only be looked at
 
 
@@ -194,7 +199,7 @@ class ListParameters:
     calendars: tuple[str, ...] = field(default=(), metadata=option("Only these calendars (repeat; default: all)"))
     text: str = field(default="", metadata=option("Only events with these words"))
     limit: int = field(default=0, metadata=option("How many at most (0: every one)"))
-    hidden: bool = field(default=False, metadata=option("Also the dates of a series that were deleted or declined"))
+    hidden: bool = field(default=False, metadata=option("Also what is hidden: meetings you declined and dates of a series that were deleted or declined"))
     item: str = field(default="", metadata=option("Only this event (the calendar replaces only the blocks of an event that changed)"))
 
 
@@ -210,7 +215,7 @@ def _key(moment: Moment, zone: tzinfo) -> datetime:
 
 
 def _declined(event: Event, yours: Collection[str]) -> bool:
-    """A date you declined: the series stays whole and the date counts as skipped (D-310). A deleted single event simply no longer exists."""
+    """A meeting or a date you declined: it stays, hidden, and counts for nothing (D-310). A deleted single event simply no longer exists."""
     return any(person.status == "DECLINED" and person.address.strip().lower() in yours for person in event.attendees)
 
 
@@ -250,6 +255,9 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 chosen = (parameters.calendar,) if parameters.calendar in names else ()
             else:
                 chosen = tuple(collection for collection in names if not parameters.calendars or collection in parameters.calendars)
+            ticked = frozenset(chosen)
+            if parameters.hidden and account == LOCAL_ACCOUNT_ID and parameters.calendar is None:
+                chosen = tuple(names)  # declined copies land here without asking, so what is hidden shows here whichever calendar is ticked
             if not chosen:
                 continue
             query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
@@ -271,15 +279,18 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 for occurrence in [*times, *skipped]:
                     e = occurrence.event
                     key = _key(occurrence.start, zone)
-                    hidden = occurrence in skipped or (occurrence.changed and _declined(e, yours))
-                    if hidden and not parameters.hidden:
+                    hidden = occurrence in skipped or _declined(e, yours)
+                    if (hidden and not parameters.hidden) or (not hidden and item.collection not in ticked):
                         continue
+                    whole = hidden and (not item.repeats or you_declined(text, yours))
+                    organizer = e.organizer.address.strip().lower() if e.organizer is not None else ""
+                    answerable = hidden and (organizer not in yours if organizer else whole)  # an invitation with no organizer, declined: it can only be answered again
                     other = css_colour(e.css_colour) if not e.colour_id else ""
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats else "", e.status,
-                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, hidden,
+                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, answerable, whole, hidden,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
     if parameters.limit and len(found) > parameters.limit:
@@ -568,7 +579,7 @@ class EditParameters(EventFields):
     tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees of this change"))
 
 
-def _in_event_zone(moment: Moment, start: Moment) -> Moment:
+def in_event_zone(moment: Moment, start: Moment) -> Moment:
     """An occurrence given as text, in the zone of the event it belongs to (so that it is written with that zone's name, not with a bare offset)."""
     if isinstance(start, datetime) and start.tzinfo is not None:
         if isinstance(moment, datetime):
@@ -610,7 +621,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
             moment: Moment | None = None
             if parameters.occurrence:
                 try:
-                    moment = _in_event_zone(parse_moment(parameters.occurrence), series.master.start)
+                    moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
                 except ValueError as error:
                     raise UsageError(f"occurrence: {error}") from None
                 base = _occurrence_event(series, moment)
@@ -670,6 +681,17 @@ class DeleteResult:
     draft: MeetingDraft = MeetingDraft()  # the cancellation to the attendees, ready to send
 
 
+@dataclass(frozen=True, slots=True)
+class RestoreParameters:
+    item: str = field(metadata=option("The event id (see event.list)"))
+    occurrence: str = field(metadata=option("The date of the series that comes back"))
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreResult:
+    item: str
+
+
 def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) -> DeleteResult:
     """The whole event goes; a damaged one too, which nothing can be said about. Your meeting: the attendees hear of it as the person said."""
     try:
@@ -681,6 +703,7 @@ def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) 
     if you is None:
         with item_writer(engine, found.account, found.store) as writer:
             writer.delete(found.collection, parameters.item)
+        take_mark_off(engine, original)
         return DeleteResult(parameters.item, True)
     mails = who_mails(engine, (found.account, found.collection), found.account, you.account.email_address.strip().lower(), parameters.item, answers=False)
     mails = mails if parameters.tell else quiet(mails)
@@ -691,6 +714,26 @@ def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) 
         title = parsed[0].master.summary
         draft = meeting_mail(engine, you, original, title, "CANCEL", "Cancelled", f"{title or 'The meeting'} is cancelled.\n")
     return DeleteResult(parameters.item, True, draft)
+
+
+def event_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResult:
+    """A date of your own series that was deleted comes back (D-310)."""
+    with located(engine, parameters.item, CollectionKind.EVENTS) as found:
+        if found.collection.read_only:
+            raise UsageError("This calendar is read-only")
+        original = found.store.get(found.item.collection, parameters.item)
+        series = _series(original)
+        try:
+            moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
+        except ValueError as error:
+            raise UsageError(f"occurrence: {error}") from None
+        master = replace(series.master, exdates=tuple(each for each in series.master.exdates if each != moment))
+        with item_writer(engine, found.account, found.store) as writer:
+            writer.put(found.collection, events_to_text(replace(series, master=master), original), parameters.item)
+    return RestoreResult(parameters.item)
+
+
+EVENT_RESTORE: TypedCommand[RestoreParameters, RestoreResult] = TypedCommand("event.restore", RestoreParameters, RestoreResult)
 
 
 def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
@@ -704,7 +747,7 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
             original = found.store.get(found.item.collection, parameters.item)
             series = _series(original)
             try:
-                moment = _in_event_zone(parse_moment(parameters.occurrence), series.master.start)
+                moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
             except ValueError as error:
                 raise UsageError(f"occurrence: {error}") from None
             if not series.master.repeats:
@@ -831,6 +874,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
     registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
     registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit, doing="Saving an event")
+    registry.register(EVENT_RESTORE.id, "Bring back a deleted date of your own series", RestoreParameters, event_restore, doing="Restoring a date")
     registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True, doing="Deleting an event")
     registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move, doing="Moving an event")
     registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import), doing="Importing events")

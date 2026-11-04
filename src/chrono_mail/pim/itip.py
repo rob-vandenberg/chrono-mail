@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.527"
+__version__ = "itip.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: more_attendees: attendees past those read are counted; keeps_busy: what blocks its time, for the warning too (D-310)
 # v4.4.523: description and comment of a calendar message (D-310)
 # v4.4.518: request_of: a date of a series that has no changed version of its own is made an item, so a mail about it never speaks for the series
@@ -198,6 +199,7 @@ def is_newer(message: CalendarMessage, sequence: int, stamp: datetime | None) ->
 
 # --- answering (D-310) -------------------------------------------------------------------------------------------------------------------
 
+_KEPT_MAIL = "X-CHRONO-MAIL-INVITE"  # on a declined copy: the mail it came in (the copy stays on this computer)
 ANSWERS: frozenset[str] = frozenset({"ACCEPTED", "TENTATIVE", "DECLINED", "DELEGATED"})
 
 
@@ -236,6 +238,58 @@ def answered_copy(text: str, address: str, answer: str, name: str = "") -> str |
     calendar.pop("METHOD", None)
     for component in _items_of(calendar):
         _set_answer(component, address.strip().lower(), answer, name)
+    return calendar.to_ical().decode("utf-8")
+
+
+def declined_copy(text: str, address: str, name: str, account: str, message_id: str | None) -> str | None:
+    """The copy kept of an invitation you declined (D-310), with the mail it came in, whose mark tells other computers: when the copy goes, so does the mark."""
+    copy_text = answered_copy(text, address, "DECLINED", name)
+    calendar = _parse(copy_text) if copy_text is not None and message_id else None
+    if calendar is None:
+        return copy_text
+    calendar.add(_KEPT_MAIL, f"{account} {message_id}")
+    return calendar.to_ical().decode("utf-8")
+
+
+def kept_mail(text: str) -> tuple[str, str] | None:
+    """The account and Message-ID of the mail a declined copy came in; None: it has none."""
+    calendar = _parse(text)
+    account, _, message_id = str(calendar.get(_KEPT_MAIL, "") if calendar is not None else "").partition(" ")
+    return (account, message_id) if message_id else None
+
+
+def you_declined(text: str, addresses: Collection[str]) -> bool:
+    """Whether you declined the whole item (not one date of it)."""
+    calendar = _parse(text)
+    main = next((each for each in _items_of(calendar) if each.get("RECURRENCE-ID") is None), None) if calendar is not None else None
+    return main is not None and any(_your_answer(main, address) == "DECLINED" for address in addresses)
+
+
+def asked_again(stored: str, occurrence: Moment | None) -> str | None:
+    """A kept item as the invitation it was, to answer it from the calendar: the whole item, or (occurrence) that one date, also one taken out of the series."""
+    calendar = _parse(stored)
+    main = next((each for each in _items_of(calendar) if each.get("RECURRENCE-ID") is None), None) if calendar is not None else None
+    if calendar is None:
+        return None
+    calendar.pop(_KEPT_MAIL, None)
+    calendar.pop("METHOD", None)
+    calendar.add("METHOD", "REQUEST")
+    if occurrence is not None:
+        date_item = next((each for each in _items_of(calendar) if _same_moment(_moment(each, "RECURRENCE-ID"), occurrence)), None)
+        if date_item is None and main is None:
+            return None
+        if date_item is None and main is not None:
+            date_item = copy.deepcopy(main)
+            for name in ("RRULE", "RDATE", "EXDATE"):
+                date_item.pop(name, None)
+            start, end = _moment(main, "DTSTART"), _moment(main, "DTEND")
+            date_item.pop("DTSTART", None)
+            date_item.add("DTSTART", occurrence)
+            if start is not None and end is not None and "DTEND" in date_item:
+                date_item.pop("DTEND", None)
+                date_item.add("DTEND", moved_like_the_start(end, start, occurrence))
+            date_item.add("RECURRENCE-ID", occurrence)
+        calendar.subcomponents = [*(each for each in calendar.subcomponents if each.name == "VTIMEZONE"), date_item]
     return calendar.to_ical().decode("utf-8")
 
 

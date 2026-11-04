@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.518"
+__version__ = "mainwindow.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.518: The calendar page opens mails to attendees in the composer (D-310)
 # v4.4.507: open_calendar_file: a calendar file given at the start or by a second start, once the window has started (D-310 step 4)
 # v4.3.498: the Sync conflicts window is closed when the program closes, so its size is remembered then too (the owner)
@@ -472,6 +473,8 @@ class MainWindow(QMainWindow):
         calendar_page = self.pages[CALENDAR]
         if isinstance(calendar_page, CalendarPage):
             calendar_page.mail_ready.connect(self.composing.open_draft)
+            calendar_page.answer_wanted.connect(self.reading.answer_event)
+            calendar_page.delegate_wanted.connect(self.reading.delegate_event)
         for page in self.pages.values():
             self.side_stack.addWidget(page.side)
             self.content_stack.addWidget(page.content)

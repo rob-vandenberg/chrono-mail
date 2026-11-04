@@ -1,10 +1,11 @@
 from collections.abc import Callable
+import dataclasses
 from datetime import date, timedelta
 
 import pytest
 from PySide6.QtCore import QDate, QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QFrame, QScrollArea, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QMenu, QScrollArea, QWidget
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
@@ -21,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.521"
+__version__ = "test_ui_calendar.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: a hidden event's menu (D-310); open_calendar waits for the anchor's own event, never for what the view of today still shows
 # v4.4.521: Show deleted and declined dates (D-310)
 # v4.4.518: Your meeting asks before it is deleted (D-310)
 # v4.3.502: Event colours shows its calendar as read-only text, no longer as a greyed drop-down
@@ -68,7 +70,7 @@ def open_calendar(world: World, qtbot: QtBot, view: str = layout.WEEK) -> Calend
     wait(qtbot, lambda: page.panel.visible_ids() != [])
     page.anchor = ANCHOR
     page.set_view(view)
-    wait(qtbot, lambda: page.entries != [])
+    wait(qtbot, lambda: any(entry.summary == "Lunch" for entry in page.entries))  # the anchor's own event: the view of today can hold other seeded events, and they are on the page until the answer for the anchor comes
     return page
 
 
@@ -552,6 +554,36 @@ def test_a_deleted_date_of_a_series_shows_greyed_on_request_and_can_only_be_look
     assert hidden.colour == theme().task_grey and world.window.settings.value("calendar_show_hidden") == "true"
     page._entry_clicked(hidden)  # noqa: SLF001
     assert page.selected is None
+    menu = QMenu()
+    page._hidden_actions(menu, hidden)  # noqa: SLF001
+    assert [action.text() for action in menu.actions()] == ["Restore"]  # your own series: no organizer
+    menu.actions()[0].trigger()
+    wait(qtbot, lambda: world.call("event.list", from_date="2026-10-12", to_date="2026-10-17", hidden=True).events != () and not any(row.hidden for row in world.call("event.list", from_date="2026-10-12", to_date="2026-10-17", hidden=True).events))
     page.hidden_button.setChecked(False)
     wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
+
+
+def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qtbot: QtBot) -> None:
+    """D-310: with an organizer: Accept, Tentative, Delegate, Delete. Each goes on as on a card; one date of a series has nothing to delete."""
+    page = open_calendar(world, qtbot)
+    entry = next(entry for entry in page.entries if entry.summary == "Lunch")
+    row = entry.row
+    whole = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, whole=True))
+    asked: list[tuple[str, str, str]] = []
+
+    def wanted(item: str, moment: str, answer: str) -> None:
+        asked.append((item, moment, answer))
+
+    page.answer_wanted.connect(wanted)
+    menu = QMenu()
+    page._hidden_actions(menu, whole)  # noqa: SLF001
+    assert [action.text() for action in menu.actions()] == ["Accept", "Tentative", "Delegate…", "Delete"] and menu.actions()[3].isEnabled()
+    menu.actions()[1].trigger()
+    assert asked == [(row.item, "", "TENTATIVE")]
+    one_date = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, occurrence="2026-10-14T12:30:00+00:00"))
+    menu = QMenu()
+    page._hidden_actions(menu, one_date)  # noqa: SLF001
+    assert not menu.actions()[3].isEnabled()
+    menu.actions()[0].trigger()
+    assert asked[-1] == (row.item, "2026-10-14T12:30:00+00:00", "ACCEPTED")
 

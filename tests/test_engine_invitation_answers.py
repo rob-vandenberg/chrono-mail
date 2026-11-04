@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.521"
+__version__ = "test_engine_invitation_answers.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: a Decline keeps its copy on this computer (D-310)
 # v4.4.521: a declined date is hidden, the series stays whole; shown greyed when asked for (D-310)
 # v4.4.520: your answer waits in Drafts until it is sent; the Replied mark (D-310)
 # v4.4.518: who_mails moved to meetingmail.py
@@ -116,6 +117,9 @@ def test_a_decline_is_remembered_on_the_mail_and_change_my_answer_takes_it_off(s
     message = deliver(setup, invitation_mail(calendar_text()))
     assert not card(setup, message).answered_on_mail
     answer(setup, message, "DECLINED")
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:  # as on another computer: the mark is all there is
+        (calendar,) = store.collections(CollectionKind.EVENTS)
+        store.delete(calendar.collection_id, next(iter(store.index.item_ids(calendar.collection_id))))
     declined = card(setup, message)
     assert declined.answered_on_mail and declined.your_answer == "DECLINED" and declined.stored_in == ""
     assert [person.answer for person in declined.attendees if person.you] == ["DECLINED"]
@@ -133,6 +137,9 @@ def test_a_delegation_that_leaves_no_copy_is_remembered_on_the_mail(setup: Setup
 def test_a_copy_in_your_calendar_knows_better_than_the_mark(setup: Setup) -> None:
     message = deliver(setup, invitation_mail(calendar_text()))
     answer(setup, message, "DECLINED")
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        (calendar,) = store.collections(CollectionKind.EVENTS)
+        store.delete(calendar.collection_id, next(iter(store.index.item_ids(calendar.collection_id))))
     stored(setup, calendar_text(method="", answer="ACCEPTED"))  # accepted later, from another mail or computer
     kept_copy = card(setup, message)
     assert not kept_copy.answered_on_mail and kept_copy.your_answer == "ACCEPTED"
@@ -155,11 +162,11 @@ def test_a_mark_speaks_only_for_the_mails_own_invitation(setup: Setup) -> None:
         assert not mailbox.current_flags(reference) & ANSWER_MARKS  # one mail cannot say which of its items was declined
 
 
-def test_decline_removes_a_kept_copy_and_makes_the_answer(setup: Setup) -> None:
+def test_decline_keeps_a_copy_of_this_computer_declined_and_makes_the_answer(setup: Setup) -> None:
     stored(setup, calendar_text(method="", answer="ACCEPTED"))
     message = deliver(setup, invitation_mail(calendar_text()))
     result = answer(setup, message, "DECLINED")
-    assert kept(setup) == [] and result.stored_in == "" and result.draft_message is not None
+    assert len(kept(setup)) == 1 and "PARTSTAT=DECLINED" in kept(setup)[0] and result.stored_in == "" and result.draft_message is not None
     assert parse_message(drafts(setup)[0]).subject == "Declined: Choice of colours"
 
 

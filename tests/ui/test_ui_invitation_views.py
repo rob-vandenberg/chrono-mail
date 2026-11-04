@@ -15,9 +15,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_views.py 4.4.517"
+__version__ = "test_ui_invitation_views.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.517: The stand-in of the reading pane has _renew_blocks, which the pane calls since 4.4.515
 # v4.4.514: every dialog of an invite belongs to the main window (D-310)
 # v4.4.511: Initial tests: every open window of a mail follows an answer, and Choose a calendar opens with the card window gone (D-310)
@@ -92,5 +93,5 @@ def test_every_dialog_of_an_invite_belongs_to_the_main_window_whatever_window_wa
         return dialog.DialogCode.Rejected
 
     monkeypatch.setattr(InvitationDelegateDialog, "exec", refused)
-    ReadingPane.delegate_invitation(cast(ReadingPane, SimpleNamespace(_parent=main)), card, CalendarSource(*WHERE))
+    ReadingPane.delegate_invitation(cast(ReadingPane, SimpleNamespace(_parent=main, _card_of=ReadingPane._card_of)), card, CalendarSource(*WHERE))
     assert parents == [main]

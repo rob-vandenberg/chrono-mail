@@ -7,19 +7,20 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, override
 
-from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, FolderRole, MessageFlag
-from chrono_mail.engine.mailbox import Mailbox
+from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, ChronoMailError, CollectionInfo, CollectionKind, FolderRole, MessageFlag
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment, parse_message
 from chrono_mail.pim.ical import Attendee
 from chrono_mail.pimstore import PimStore
-from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
+from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.527"
+__version__ = "invitations.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: card_copies: one invitation is shown once; is_calendar_part: a calendar text by what it is; more_attendees (D-310)
 # v4.4.526: in_mail: the card of a mail itself (D-310)
 # v4.4.525: own_mail: a mail in Sent or Drafts is your own; left, kept_items and items_left: what Add all still has to add (D-310)
@@ -241,7 +242,7 @@ def your_calendars(engine: Engine, kind: CollectionKind) -> Iterator[list[tuple[
                 found.extend((account_id, store, info) for info in store.collections(kind) if is_yours(info))
             except (ChronoMailError, OSError, sqlite3.Error):
                 continue
-        yield sorted(found, key=lambda place: place[2].server_value("public") == "1")
+        yield sorted(found, key=lambda place: (place[0] == LOCAL_ACCOUNT_ID, place[2].server_value("public") == "1"))  # a declined copy of this computer knows less than a server's
 
 
 def _added_answer(text: str, message_text: str, addresses: frozenset[str]) -> str:
@@ -354,9 +355,25 @@ def own_mail(mailbox: Mailbox, folder: tuple[str, ...]) -> str:
     return "sent" if roles.get(FolderRole.SENT) == folder else "draft" if roles.get(FolderRole.DRAFTS) == folder else ""
 
 
+def take_mark_off(engine: Engine, text: str) -> None:
+    """A declined copy went: the mail it came in loses its mark, wherever it is by now, so the invitation shows as new (D-310). The copy is gone whatever happens here."""
+    mail = kept_mail(text)
+    if mail is None:
+        return
+    try:
+        with open_mailbox(engine, mail[0]) as mailbox:
+            for row in mailbox.index.with_message_id(mail[1]):
+                reference = mailbox.reference(row.folder, row.store_id)
+                flags = mailbox.current_flags(reference)
+                if flags & ANSWER_MARKS:
+                    mailbox.set_flags(reference, flags - ANSWER_MARKS)
+    except (ChronoMailError, OSError, sqlite3.Error):
+        return
+
+
 def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = (), waiting: bool = False) -> InvitationInfo:
-    """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves no copy, so its mark is what tells every
-    computer; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
+    """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves its copy on this computer only, so its mark is what tells the
+    others; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
     A proposal you declined or a request you answered also exists only as that mark: the mail you wrote is all there is."""
     card = replace(card, answer_waiting=waiting)
     if card.method in ("REPLY", "COUNTER", "REFRESH"):

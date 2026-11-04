@@ -24,7 +24,8 @@ from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.ui.plainboxes import plain_box
-from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, DeleteResult, EventInfo, EventList
+from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList
+from chrono_mail.engine.commands_calendar import RestoreParameters as EventRestore
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
@@ -46,9 +47,11 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.521"
+__version__ = "calendarview.py 4.4.528"
 
 # --- Version history ----------------------------------------------------
+# v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
+# v4.4.528: Show declined; hidden events have a menu: answer again, delete, or Restore (D-310)
 # v4.4.521: Show deleted and declined dates: dates of a series that are hidden show greyed and can only be looked at (D-310)
 # v4.4.518: Deleting your meeting asks whether the attendees are told; the mail opens through mail_ready (D-310)
 # v4.3.502: the event editor gets the settings, for the width of Event colours (the owner)
@@ -161,6 +164,8 @@ class TimeGridPanel(QWidget):
 
 
 class CalendarPage(PimPage):
+    answer_wanted = Signal(str, str, str)  # a hidden event: its item, its date ("": all of it), the answer
+    delegate_wanted = Signal(str, str)
     mail_ready = Signal(str, str, str)  # a mail to the attendees, ready to send: account, folder, message
     """Calendars (with ticks) and a small month on the left; the days, the weeks, the month or the agenda on the right."""
 
@@ -214,7 +219,7 @@ class CalendarPage(PimPage):
         self.past_button = QPushButton("Hide past events", nav)
         self.past_button.setCheckable(True)
         self.past_button.setChecked(self.hide_past)
-        self.hidden_button = QPushButton("Show deleted and declined dates", nav)
+        self.hidden_button = QPushButton("Show declined", nav)
         self.hidden_button.setCheckable(True)
         self.hidden_button.setChecked(self.show_hidden)
         nav_layout.addWidget(self.previous_button)
@@ -556,7 +561,7 @@ class CalendarPage(PimPage):
             if answer == QMessageBox.StandardButton.Cancel:
                 return
             values = dataclasses.replace(values, tell=answer == QMessageBox.StandardButton.Yes)
-        elif not entry.row.repeats and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
+        elif (not entry.row.repeats or entry.row.hidden) and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
             return
         self.selected = None
 
@@ -598,8 +603,29 @@ class CalendarPage(PimPage):
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted, hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
 
+    def _hidden_actions(self, menu: QMenu, entry: Entry) -> None:
+        """What can be done with a hidden event (D-310). With an organizer it is a meeting you declined, or a date of one: answer it again, or delete it for good.
+        Otherwise it is a date of your own series: it can only come back. One date of a series has nothing left to delete."""
+        row = entry.row
+        occurrence = "" if row.whole else row.occurrence
+        if not row.answerable:
+            menu.addAction("Restore", lambda: self._backend.ask(EVENT_RESTORE, EventRestore(row.item, row.occurrence), lambda _: self._saved(""), self._failed, owner=self))
+            return
+        menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED"))
+        menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE"))
+        menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence))
+        delete = menu.addAction("Delete", lambda: self._delete_chosen(entry, EventDelete(row.item), None))
+        delete.setEnabled(row.whole)
+        if not row.whole:
+            delete.setToolTip("Only this date is declined: the series stays")
+            menu.setToolTipsVisible(True)
+
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)
+        if isinstance(entry, Entry) and entry.row.hidden:
+            self._hidden_actions(menu, entry)
+            menu.exec(position)
+            return
         if isinstance(entry, Entry) and not entry.row.hidden:
             menu.addAction("Edit", self.edit_selected)
             menu.addAction("Delete", self.delete_selected)
