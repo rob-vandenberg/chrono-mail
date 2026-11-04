@@ -3901,3 +3901,8 @@ Open: items 4, 5, 6, 8, 9, 10, 11, 13.
 Built: with_writers in engine/invitations.py, used by with_mark, invitation.card and invitation.blocks.
 Tests: tests/test_engine_invitation_organizer.py; the new test fails without the change. Review: one round found that a file, with no sender, named its first attendee: fixed.
 Open: items 4, 5, 6, 8, 9, 10, 13.
+
+## 2026-11-04, 4.4.531: a calendar file from your own Sent or Drafts (the owner, D-310, round 3 item 9)
+Built: _Opened.own by own_mail, invitation.card gives it to the card of an attachment.
+Tests: tests/test_engine_invitation_files.py; the new test fails without the change. Review: one round.
+Open: items 4, 5, 6, 8, 10, 13.

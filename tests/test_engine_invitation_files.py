@@ -18,9 +18,10 @@ from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_lis
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.529"
+__version__ = "test_engine_invitation_files.py 4.4.531"
 
 # --- Version history ----------------------------------------------------
+# v4.4.531: A calendar file opened from your own Sent or Drafts is your own: no buttons (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.527: what you have at that time, one invitation shown once (D-310)
 # v4.4.525: Add all skips what is kept in any calendar; how many are left; a mail in Sent or Drafts (D-310)
@@ -207,6 +208,15 @@ def test_the_blocks_say_how_many_items_are_left_to_add(setup: Setup, tmp_path: P
     assert on_file(setup, "invitation.card", path).left == 2
     on_file(setup, "invitation.answer", path, item=0, answer="ACCEPTED", calendar=calendar_id(setup))
     assert on_file(setup, "invitation.blocks", path, first=0, count=1).left == 1
+
+
+def test_a_calendar_file_opened_from_your_own_sent_or_drafts_is_your_own(setup: Setup) -> None:
+    inbox = deliver(setup, mail_with_file(calendar_text()))
+    assert call(setup.engine, "invitation.card", account=setup.account_id, folder="Inbox", message=inbox, part=0).own_mail == ""
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        folder = mailbox.role_folder(FolderRole.SENT)
+        saved = mailbox.deliver(folder, mail_with_file(calendar_text()), frozenset())
+    assert call(setup.engine, "invitation.card", account=setup.account_id, folder="/".join(folder), message=saved.store_id, part=0).own_mail == "sent"
 
 
 def test_a_mail_in_sent_or_drafts_is_your_own_and_one_in_the_inbox_is_not(setup: Setup) -> None:

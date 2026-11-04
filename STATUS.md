@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.530 (round 3: every block of a mail with several items names who wrote it)*
+*Last updated: 2026-11-04, version 4.4.531 (round 3: a calendar file from your own Sent or Drafts has no buttons)*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.530 done (D-310, round 3 item 11).** To check by the owner: a mail with several proposals or answers: each block names the mail's sender. Left of round 3: items 4, 5, 6, 8, 9, 10, 13.
+**4.4.531 done (D-310, round 3 item 9).** To check by the owner: open an .ics attachment of a mail in Sent or Drafts: it has no buttons. Left of round 3: items 4, 5, 6, 8, 10, 13.
+
+**4.4.530 done (D-310, round 3 item 11).** To check by the owner: a mail with several proposals or answers: each block names the mail's sender.
 
 **4.4.529 done (D-310, round 3 items 7, 12).** To check by the owner: Accept a weekly invitation that meets your appointments: the question names how many and the first three with their dates. Open an .ics file over 1 MB: it says so.
 

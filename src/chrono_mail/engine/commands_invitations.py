@@ -12,7 +12,7 @@ from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, ChronoMailError, Co
 from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS, in_event_zone
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -31,9 +31,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.530"
+__version__ = "commands_invitations.py 4.4.531"
 
 # --- Version history ----------------------------------------------------
+# v4.4.531: A calendar file opened from your own Sent or Drafts is your own: no buttons (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -149,6 +150,7 @@ class _Opened:
     marks: frozenset[MessageFlag] | None = None  # the marks of the mail this is the one invitation of; None: no mark can speak for it (a file, another attachment, several items)
     source: tuple[str, str] | None = None  # the folder and id of the mail: an answer to it marks it as replied once it is sent; a file has none
     waiting: bool = False  # an answer to this mail waits in Drafts
+    own: str = ""  # the mail lies in your Sent ("sent") or Drafts ("draft"): what it carries is your own and asks nothing
 
 
 def _file_text(path: str) -> bytes:
@@ -184,6 +186,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     senders: tuple[str, ...] = ()
     source: tuple[str, str] | None = None
     waiting = False
+    own = ""
     receiving: str | None = None
     own_part = False
     flags = frozenset[MessageFlag]()
@@ -210,6 +213,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
             source, waiting = (parameters.folder, parameters.message), answer_waiting(mailbox, parsed.message_id)
+            own = own_mail(mailbox, mailbox.folder(parameters.folder))
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
     text = data.decode("utf-8", "replace")
     items = text_items(text)
@@ -228,7 +232,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     plain = message.method == ""
     settings = engine.config().find(receiving) if receiving else None
     marks = flags if own_part and len(items.texts) == 1 else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, waiting)
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, waiting, own)
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -924,6 +928,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     card = card_of(engine, parameters.part, opened.whole)
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
+    card = replace(card, own_mail=opened.own)
     return with_mark(card, opened.marks, opened.senders, opened.waiting) if opened.marks is not None else with_writers(card, opened.senders)
 
 
