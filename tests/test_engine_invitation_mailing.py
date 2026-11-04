@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.config import AppConfig, load_config, save_config
+from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.pim.itip import reply_text, without_organizer
+from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davitems import ItemGateway, ServerRefused
 from tests.fakedav import FakeDav
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
@@ -15,9 +17,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.510"
+__version__ = "test_engine_invitation_mailing.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: a Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict (D-310)
 # v4.4.510: Initial tests: who mails the answer to an invitation (D-310): the server, Chrono Mail or nobody, never two and never none unless chosen
 
 
@@ -45,6 +48,11 @@ def calendar_id(setup: Setup) -> str:  # noqa: F811
 
 def on_server(fake: FakeDav) -> list[str]:
     return [text for _, text in fake.collections["events"].items.values()]
+
+
+def calendar_items(setup: Setup) -> list[str]:  # noqa: F811
+    with open_pim(setup.engine, setup.account_id) as store:
+        return [store.get(calendar_id(setup), item) for item in store.index.item_ids(calendar_id(setup))]
 
 
 def writes(fake: FakeDav) -> list[str]:
@@ -133,6 +141,137 @@ def test_a_refused_delete_leaves_the_meeting_as_it_was(setup: Setup, server: Fak
     with pytest.raises(UsageError):
         answer(setup, message, "DECLINED")
     assert "ORGANIZER" in on_server(server)[0] and "ATTENDEE" in on_server(server)[0]
+
+
+def put_texts(fake: FakeDav, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every text the server is given from now on, in order."""
+    seen: list[str] = []
+    original = DavClient.put
+
+    def watched(client: DavClient, href: str, text: str, *rest: object, **options: object) -> str:
+        seen.append(text)
+        return original(client, href, text, *rest, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(DavClient, "put", watched)
+    return seen
+
+
+def declined_offline(setup: Setup, fake: FakeDav, message: str) -> object:  # noqa: F811
+    fake.writes_failing = True
+    result = answer(setup, message, "DECLINED")
+    assert calendar_items(setup) == [] and on_server(fake) != []  # gone here at once, still on the server
+    fake.writes_failing = False
+    fake.requests.clear()
+    return result
+
+
+def test_offline_with_server_chosen_the_server_mails_the_decline_when_the_connection_is_back(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = invited(setup)
+    settings(setup, invitation_answers="none")
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    assert "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
+    settings(setup, invitation_answers="server")
+    assert declined_offline(setup, server, message).server_answers and drafts(setup) == []  # type: ignore[attr-defined]
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and drafts(setup) == []
+    assert "SCHEDULE-AGENT" not in sent[0]  # the mark is off first: else the server stays silent and nobody tells the organizer
+
+
+def test_offline_with_chrono_mail_chosen_the_server_stays_silent_and_one_mail_goes(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    assert "SCHEDULE-AGENT" not in on_server(server)[0]
+    settings(setup, invitation_answers="chrono")
+    declined_offline(setup, server, message)
+    assert len(drafts(setup)) == 1
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and "SCHEDULE-AGENT=CLIENT" in sent[0]
+
+
+def test_offline_the_organizer_is_taken_off_first_on_a_server_that_mails_whatever_it_is_told(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    settings(setup, dav_always_answers=True, dav_addresses=("someone-else@example.com",))
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    declined_offline(setup, server, message)
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and "ORGANIZER" not in sent[0]
+
+
+def test_a_decline_that_waits_counts_as_one_change(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    settings(setup, invitation_answers="chrono")
+    told: list[str] = []
+    setup.engine.notice = told.append  # type: ignore[method-assign]
+    server.writes_failing = True
+    answer(setup, message, "DECLINED")
+    assert len(told) == 1 and "1 change waiting" in told[0]
+
+
+def test_a_delete_still_failing_after_the_copy_went_sends_only_the_delete_next_time(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    settings(setup, invitation_answers="chrono")
+    declined_offline(setup, server, message)
+    original = DavClient.delete
+
+    def busy(client: DavClient, href: str, etag: str) -> None:
+        server.writes_failing = True  # the copy went, the delete does not
+        try:
+            original(client, href, etag)
+        finally:
+            server.writes_failing = False
+
+    monkeypatch.setattr(DavClient, "delete", busy)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    monkeypatch.setattr(DavClient, "delete", original)
+    assert len(on_server(server)) == 1 and "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
+    server.requests.clear()
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert writes(server) == ["DELETE"] and on_server(server) == []
+
+
+def test_a_meeting_changed_on_the_server_while_the_decline_waited_is_a_conflict(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    settings(setup, invitation_answers="chrono")
+    declined_offline(setup, server, message)
+    ((href, (_, text)),) = server.collections["events"].items.items()
+    server.collections["events"].items[href] = ("changed-there", text.replace("SUMMARY:", "SUMMARY:Moved "))
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert "DELETE" not in writes(server) and len(on_server(server)) == 1
+    assert [conflict.reason for conflict in call(setup.engine, "conflict.list").conflicts] == ["changed_on_server"]
+
+
+def test_a_decline_refused_twice_keeps_the_meeting_and_a_conflict_until_it_is_settled(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    original = calendar_items(setup)
+    settings(setup, invitation_answers="chrono")
+    original_delete = DavClient.delete
+
+    def refused(client: DavClient, href: str, etag: str) -> None:
+        server.writes_refused = True  # the copy went, from here on nothing goes
+        original_delete(client, href, etag)
+
+    monkeypatch.setattr(DavClient, "delete", refused)
+    with pytest.raises(UsageError, match="kept here as it was.*Settings > Sync conflicts"):
+        answer(setup, message, "DECLINED")
+    assert calendar_items(setup) == original and "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
+    assert drafts(setup) == []  # nothing was declined, so nothing is mailed
+    (conflict,) = call(setup.engine, "conflict.list").conflicts
+    assert conflict.reason == "refused"
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert calendar_items(setup) == original  # waits for the person
+    result = call(setup.engine, "conflict.settle", conflicts=(conflict.conflict,), side="local")
+    assert result.open == (conflict.conflict,) and calendar_items(setup) == original
+    assert len(call(setup.engine, "conflict.list").conflicts) == 1  # a refused settling leaves the conflict
+    server.writes_refused = False
+    assert call(setup.engine, "conflict.settle", conflicts=(conflict.conflict,), side="server").settled == (conflict.conflict,)
+    assert call(setup.engine, "conflict.list").conflicts == () and len(calendar_items(setup)) == 1
 
 
 def test_a_decline_before_the_meeting_reached_the_server_is_mailed_by_chrono_mail(setup: Setup, server: FakeDav) -> None:  # noqa: F811

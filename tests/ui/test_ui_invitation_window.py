@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
@@ -26,9 +26,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.514"
+__version__ = "test_ui_invitation_window.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: every item of a big file gets its block as the person scrolls, and a click changes only its block, the place in the list stays (D-310)
 # v4.4.514: a window stays open until the person closes it (D-310)
 # v4.4.512: a date added to a series is answered, it has no button of its own (D-310)
 # v4.4.508: one block per item, Add all, Replace and Skip, and the window closing when everything is added (D-310)
@@ -189,6 +190,84 @@ def test_several_items_show_a_block_each_with_add_all_at_the_top(world: World, q
     assert [block.add_button.text() for block in card.blocks] == ["Add to calendar", "Add to task list"]
     assert all(block.add_button.isVisible() and not block.intro.isVisible() for block in card.blocks)
     assert not card.title.isVisible() and not card.add_button.isVisible()
+    window.close()
+
+
+def many_items(count: int) -> str:
+    events = "".join(f"BEGIN:VEVENT\r\nUID:many-{number}@example.com\r\nDTSTAMP:20261028T090000Z\r\nDTSTART:20261110T100000Z\r\nSUMMARY:Item {number}\r\nEND:VEVENT\r\n" for number in range(count))
+    return f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\n{events}END:VCALENDAR\r\n"
+
+
+def scrolled_to_the_end(window: InvitationWindow, qtbot: QtBot, wanted: int) -> None:
+    area = window.findChild(QScrollArea)
+    assert area is not None
+    for _ in range(wanted):  # each step of the bar may bring the next blocks
+        bar = area.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        built = len(window.card.blocks)
+        if built >= wanted:
+            return
+        qtbot.waitUntil(lambda: len(window.card.blocks) > built, timeout=5000)
+
+
+def test_a_big_file_opens_with_the_first_blocks_and_every_item_comes_as_you_scroll(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = opened_file(world, qtbot, calendar_file(tmp_path, many_items(75)))
+    window.show()
+    assert window.card.intro.text() == "This file holds 75 events."
+    assert len(window.card.blocks) < 75
+    scrolled_to_the_end(window, qtbot, 75)
+    assert [block.title.text() for block in window.card.blocks] == [f"Item {number}" for number in range(75)]
+    assert window.invitation is not None and len(window.invitation.parts) == 75
+    window.close()
+
+
+def test_blocks_that_could_not_be_read_come_when_the_file_is_back_and_you_scroll_on(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    path = Path(calendar_file(tmp_path, many_items(45)))
+    window = opened_file(world, qtbot, str(path))
+    text = path.read_bytes()
+    path.unlink()
+    window.show()
+    area = window.findChild(QScrollArea)
+    assert area is not None
+    qtbot.waitUntil(lambda: not window.card._asking and area.verticalScrollBar().maximum() > 0, timeout=5000)  # noqa: SLF001 - the answer that failed
+    path.write_bytes(text)
+    scrolled_to_the_end(window, qtbot, 45)
+    assert len(window.card.blocks) == 45
+    window.close()
+
+
+def test_blocks_asked_for_another_card_never_land_on_the_card_shown_now(qtbot: QtBot) -> None:
+    window = InvitationWindow(replace(CARD, items=30, parts=tuple(replace(CARD, item=place, title=f"Item {place}") for place in range(20))), "Two", lambda _: None)
+    qtbot.addWidget(window)
+    asked = window.card.showing
+    window.show_card(replace(CARD, title="Another"))
+    assert window.card.showing != asked  # what the answer is compared with (ReadingPane._more_blocks)
+    window.close()
+
+
+def test_a_file_that_fits_the_window_asks_for_more_blocks_by_itself(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = opened_file(world, qtbot, calendar_file(tmp_path, many_items(55)))
+    window.resize(640, 16000)
+    window.show()
+    qtbot.waitUntil(lambda: len(window.card.blocks) == 55, timeout=5000)
+    window.close()
+
+
+def test_a_click_on_a_block_changes_that_block_and_you_stay_where_you_were(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = opened_file(world, qtbot, calendar_file(tmp_path, many_items(45)))
+    window.show()
+    scrolled_to_the_end(window, qtbot, 30)
+    built = list(window.card.blocks)
+    qtbot.waitUntil(lambda: built[25].add_button.isVisible(), timeout=5000)  # the layout shows new blocks a moment later
+    area = window.findChild(QScrollArea)
+    assert area is not None
+    area.verticalScrollBar().setValue(area.verticalScrollBar().maximum() // 2)
+    place = area.verticalScrollBar().value()
+    first_choice(monkeypatch)
+    built[25].add_button.click()
+    qtbot.waitUntil(lambda: built[25].info is not None and bool(built[25].info.stored_in), timeout=5000)
+    assert window.card.blocks[:len(built)] == built and built[24].add_button.isVisible() and not built[25].add_button.isVisible()  # the same blocks, only that one changed
+    assert area.verticalScrollBar().value() == place and kept_items(world, CollectionKind.EVENTS) == 1
     window.close()
 
 

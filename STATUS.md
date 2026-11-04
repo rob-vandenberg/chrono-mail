@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.514 (An export is read back complete and identical; every item keeps its time zones; a window closes only when you close it; a public calendar counts as yours)*
+*Last updated: 2026-11-04, version 4.4.515 (A Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict, every item of a calendar file gets its block as you scroll, a click keeps your place in the list)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.515 done (D-310, decisions 4, 6, 7, item 20 of the changelist after the review).** To check by the owner: Decline a meeting with the server unreachable: with Server chosen the server mails once the connection is back and Chrono Mail sends nothing; with Chrono Mail chosen one mail goes and the server stays silent. Open an .ics file with hundreds of items: it opens at once, the blocks come as you scroll, a click on one block changes only that block. Next: changelist items 1 to 3, 4 to 19, 21 to 25.
 
 **4.4.514 done (D-310, the changelist after the review).** To check by the owner: open a file made by event.export: every item shows, Add all brings them back unchanged; after Accept, Add or Add all the window stays open; a meeting in a public calendar shows as kept, one in a calendar shared by someone else does not; from a message window Delegate opens on top; Edit account > Calendars and contacts: everything free unless certain. The backup does not use event.export: it copies the stores. Still to do: decisions 4, 6, 7 and items 1 to 25 of the changelist (private hand-over).
 

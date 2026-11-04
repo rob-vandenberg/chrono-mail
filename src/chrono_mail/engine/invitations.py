@@ -16,9 +16,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.514"
+__version__ = "invitations.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: no limit of 50 blocks: blocks_of gives the cards of a text step by step, so every item gets its block and a huge file stays fast (D-310)
 # v4.4.514: a public calendar counts as holding your meeting again, a private one first; only one shared by someone else does not; your_calendars opens each store once per card (D-310)
 # v4.4.512: only your own calendars count as holding a meeting: is_yours, a public or shared one no longer does; an ADD shows your answer to its dates (D-310)
 # v4.4.509: calendar_text: a calendar part is read with the character set the mail states (D-310)
@@ -33,7 +34,7 @@ __version__ = "invitations.py 4.4.514"
 
 CALENDAR_TYPES: frozenset[str] = frozenset({"text/calendar", "application/ics"})
 Version = Literal["new", "same", "newer", "older"]  # the message against the copy in your calendar ("new": there is none)
-MOST_BLOCKS: int = 50  # items of one text that get a block of their own; Add all still adds them all
+BLOCKS_AT_ONCE: int = 20  # blocks of a text read at a time: every item gets its block, the next ones when the person scrolls near them
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,7 @@ class InvitationInfo:
     plain: bool = False  # a calendar file that asks nothing (no METHOD): it is offered as PUBLISH
     items: int = 1  # how many items it holds
     item: int = -1  # the place of this item in a text with several items (the commands' `item`); -1: the text has one, or this is its whole card
-    parts: tuple["InvitationInfo", ...] = ()  # a text with several items: the card of each, at most MOST_BLOCKS
+    parts: tuple["InvitationInfo", ...] = ()  # a text with several items: the card of each, as far as asked for (blocks_of)
     events: int = 0  # the whole card of a text: how many events and tasks it holds
     tasks: int = 0
     journals: int = 0  # journal entries in the text: left out
@@ -231,21 +232,30 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     return card_of(engine, found[0], calendar_text(attachments[found[0]]))
 
 
-def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
-    """The card of a calendar text, or None when it holds nothing to show. Several items: the card of each in `parts`, the first one's details
-    in the card itself, and what the text holds."""
+def blocks_of(engine: Engine, position: int, text: str, first: int, count: int) -> tuple[InvitationInfo, ...]:
+    """The cards of `count` items of a text, from the place `first` on; fewer at its end."""
     addresses = your_addresses(engine)
     found = text_items(text)
     cards: list[InvitationInfo] = []
     with your_calendars(engine, CollectionKind.EVENTS) as calendars, your_calendars(engine, CollectionKind.TASKS) as task_lists:
-        for place, item in enumerate(found.texts[:MOST_BLOCKS]):
-            message = read_calendar_message(item)
+        for place in range(first, len(found.texts)):
+            if len(cards) >= count:
+                break
+            message = read_calendar_message(found.texts[place])
             if message is not None:
-                card = _card_of_item(engine, task_lists if message.kind == "task" else calendars, position, message, item, addresses)
+                card = _card_of_item(engine, task_lists if message.kind == "task" else calendars, position, message, found.texts[place], addresses)
                 cards.append(replace(card, item=place if len(found.texts) > 1 else -1))
+    return tuple(cards)
+
+
+def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
+    """The card of a calendar text, or None when it holds nothing to show. Several items: the first ones' cards in `parts`, the first one's
+    details in the card itself, and what the text holds; blocks_of gives the rest."""
+    found = text_items(text)
+    cards = blocks_of(engine, position, text, 0, BLOCKS_AT_ONCE)
     if not cards:
         return None
-    return replace(cards[0], item=-1, parts=tuple(cards) if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
+    return replace(cards[0], item=-1, parts=cards if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
                    tasks=found.kinds.count("task"), journals=found.journals, damaged=found.damaged)
 
 

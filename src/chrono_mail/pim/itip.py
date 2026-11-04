@@ -4,6 +4,7 @@ import hashlib
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from functools import lru_cache
 from itertools import groupby
 from typing import Any, Literal  # icalendar hands out untyped property objects
 
@@ -17,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.514"
+__version__ = "itip.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: text_items remembers the last text it read; ready_to_delete: a copy as the server should hold it before its delete, also when that delete waits for the connection (D-310)
 # v4.4.514: text_items reads every calendar of a text, an item takes along every time zone used anywhere inside it, as its own calendar defines it; a delegator's answer adds whoever they name as not answered yet (D-310)
 # v4.4.512: an ADD can be answered: answered_added, added_dates, and the answer and the delegate's invitation name the date as an occurrence (D-310)
 # v4.4.510: a delegate's answer carries DELEGATED-FROM; told_silent, with_silence, without_organizer (D-310)
@@ -358,6 +360,16 @@ def without_organizer(text: str) -> str | None:
         for key in ("ORGANIZER", "ATTENDEE"):
             item.pop(key, None)
     return calendar.to_ical().decode("utf-8")
+
+
+BEFORE_SILENT: str = "silent"  # what a copy's delete needs first: the server told to stay silent,
+BEFORE_LOUD: str = "loud"  # told to mail,
+BEFORE_BARE: str = "bare"  # or the organizer taken off
+
+
+def ready_to_delete(text: str, before: str) -> str | None:
+    """The copy as the server should hold it when it is deleted: a server mails about a delete from what it holds. None: not readable."""
+    return without_organizer(text) if before == BEFORE_BARE else with_silence(text, before == BEFORE_SILENT)
 
 
 # --- following the organizer (D-310) -----------------------------------------------------------------------------------------------------
@@ -1248,6 +1260,7 @@ def _calendar_of(calendar: icalendar.Calendar, components: list[icalendar.Compon
     return made.to_ical().decode("utf-8")
 
 
+@lru_cache(maxsize=1)  # the blocks of a big file come in steps, and every button works on one item of it: read once, not each time
 def text_items(text: str | bytes) -> TextItems:
     """The items of a calendar text, read once: every event, task and busy time, of whatever kind is written first or later, in every calendar of
     the text. Never raises."""

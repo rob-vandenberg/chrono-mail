@@ -16,9 +16,10 @@ from chrono_mail.sync.davitems import CONFLICT, WAITING, ItemGateway, Outcome, S
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 2.4.334"
+__version__ = "pim_server.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: a delete can say what the server's copy needs first; restore: the way back after a refused delete, refused as well: a sync conflict, told calmly (D-310)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.225: Initial: items of a server's collections saved, deleted and moved on the server first (R-23, D-194)
@@ -66,15 +67,30 @@ class ItemWriter:
         except ServerRefused as error:
             raise UsageError(f"The server did not take the change ({error}); nothing was changed") from None
 
-    def delete(self, info: CollectionInfo, item: str) -> None:
+    def delete(self, info: CollectionInfo, item: str, before: str = "") -> None:
         gateway = self._server(info)
         if gateway is None:
             self.store.delete(info.collection_id, item)
             return
         try:
-            self._count(gateway.delete(info, item))
+            self._count(gateway.delete(info, item, before))
         except ServerRefused as error:
             raise UsageError(f"The server did not take the delete ({error}); nothing was changed") from None
+
+    def restore(self, info: CollectionInfo, text: str, item: str) -> None:
+        """An item back to this text after the server refused its delete. The server refuses that too: the text stays here and a sync conflict
+        waits until the person fixed the server and settled it (D-310)."""
+        gateway = self._server(info)
+        if gateway is None:
+            self.store.put(info.collection_id, text, item)
+            return
+        try:
+            self._count(gateway.save(info, text, item))
+        except ServerRefused as error:
+            gateway.hold(info, item, text, str(error))
+            self.engine.report(Change("conflicts_changed", self.account))
+            raise UsageError(f"The server of {account_name(self.engine, self.account)} did not take this change. Your meeting is kept here as it was; "
+                             "when the server works again, you can settle it in Settings > Sync conflicts") from None
 
     def move(self, source: CollectionInfo, item: str, target: CollectionInfo) -> str:
         gateway = self._server(source)

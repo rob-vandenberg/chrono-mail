@@ -35,9 +35,10 @@ from chrono_mail.sync.davconflicts import (
 from chrono_mail.sync.davsync import CollectionState, DavState, ItemLink, address_for, digest_of, title_of, weigh
 
 # --- Version ------------------------------------------------------------
-__version__ = "davitems.py 4.3.498"
+__version__ = "davitems.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: delete(before): the corrected copy still waiting, the delete waits behind it; hold: a copy kept here against what the server holds, with a sync conflict (D-310)
 # v4.3.498: a contact's change reads the server's version first: a server that ignores If-Match (Kerio) never has a change there written
 #           over; the copy Keep both writes is read back and kept as the server stored it (its fingerprint too), so a server's own
 #           rewriting is no change of the person's; a copy that reads otherwise, also from a write not finished, is the person's;
@@ -205,8 +206,9 @@ class ItemGateway:
         kept = record(self.store, replace(conflict, name=title_of(info.kind, text), clashes=merged.clashes))
         return Outcome(item, CONFLICT, kept)
 
-    def delete(self, info: CollectionInfo, item: str) -> Outcome:
-        """Delete an item on the server first, then here."""
+    def delete(self, info: CollectionInfo, item: str, before: str = "") -> Outcome:
+        """Delete an item on the server first, then here. before: what the server's copy needed first; when that copy still waits here, no delete
+        goes now: the synchronisation sends both, in that order (D-310)."""
         collection_state = self.state.get(info.collection_id)
         found = _link_of(collection_state, item)
         conflict = open_conflict(self.store, info.collection_id, href=found[0] if found else "", item=item)
@@ -217,6 +219,11 @@ class ItemGateway:
             return Outcome("", DONE if conflict is None else CONFLICT)
         href, link = found
         _agreed(self.store, info, item, link)
+        if before and digest_of(self.store.get(info.collection_id, item)) != link.digest:
+            self.store.delete(info.collection_id, item)
+            collection_state.links[href] = replace(link, before_delete=before)
+            self.state.save()
+            return Outcome("", DONE)  # one change, told once: the copy that waits
         try:
             self.client.delete(href, link.etag)
         except DavConflict:
@@ -240,6 +247,15 @@ class ItemGateway:
         drop_base(self.store, info.collection_id, item)
         self.state.save()
         return Outcome("", DONE)
+
+    def hold(self, info: CollectionInfo, item: str, text: str, detail: str) -> None:
+        """The server took a changed copy, then refused both its delete and the way back: this text stays here, and a sync conflict says that the
+        server holds another version until the person settled it (D-310)."""
+        found = _link_of(self.state.get(info.collection_id), item)
+        theirs = self.store.get(info.collection_id, item)
+        self.store.put(info.collection_id, text, item)
+        if found is not None:
+            record(self.store, new_conflict(info.collection_id, found[0], item, info.kind.value, REFUSED, title_of(info.kind, text), found[1].etag, theirs, detail=detail))
 
     def move(self, source: CollectionInfo, item: str, target: CollectionInfo) -> Outcome:
         """Move an item to another collection of the account: made in the new place on the server, taken from the old place, then moved here."""

@@ -15,9 +15,10 @@ from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_lis
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.514"
+__version__ = "test_engine_invitation_files.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: every item of a text comes as a block, step by step, however many it holds (D-310)
 # v4.4.514: an export read back identical, every time zone kept, several calendars in one text (D-310)
 # v4.4.508: a text with several items: each its own card and answer, of every kind; invitation.add with Replace and Skip (D-310)
 # v4.4.507: Initial tests: an .ics attachment or file as a card, every command on it, several items added each on its own (D-310 step 4)
@@ -80,6 +81,19 @@ def test_a_file_that_asks_nothing_is_added_as_it_is(setup: Setup, tmp_path: Path
     assert "UID:meeting-1@example.com" in kept(setup)[0] and drafts(setup) == []
     card = on_file(setup, "invitation.card", path)
     assert card.stored_in  # the card says it is kept now
+
+
+def test_every_item_of_a_text_comes_as_a_block_step_by_step(setup: Setup, tmp_path: Path) -> None:  # noqa: F811
+    events = "".join(f"BEGIN:VEVENT\r\nUID:big-{number}@example.com\r\nDTSTAMP:20261028T090000Z\r\nDTSTART:20261110T100000Z\r\nSUMMARY:Item {number}\r\nEND:VEVENT\r\n" for number in range(130))
+    path = tmp_path / "big.ics"
+    path.write_text(f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n{events}END:VCALENDAR\r\n", newline="")
+    card = call(setup.engine, "invitation.card", account="", folder="", message="", file=str(path))
+    assert card.items == 130 and 0 < len(card.parts) < 130
+    seen = [part.title for part in card.parts]
+    while len(seen) < 130:
+        seen += [part.title for part in call(setup.engine, "invitation.blocks", account="", folder="", message="", file=str(path), first=len(seen), count=40).parts]
+    assert seen == [f"Item {number}" for number in range(130)]
+    assert call(setup.engine, "invitation.blocks", account="", folder="", message="", file=str(path), first=130, count=40).parts == ()
 
 
 def test_several_items_each_become_an_item_of_their_own(setup: Setup, tmp_path: Path) -> None:

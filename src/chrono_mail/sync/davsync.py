@@ -8,6 +8,7 @@ from pathlib import Path
 
 from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CertificateError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
 from chrono_mail.pimstore import PimStore
+from chrono_mail.pim.itip import ready_to_delete
 from chrono_mail.pim.merge import Clash, merge
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.protocols.dav import (
@@ -52,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.512"
+__version__ = "davsync.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: an item link remembers what a waiting delete needs first (before_delete): the corrected copy goes to the server, the delete only after it confirmed that (D-310)
 # v4.4.512: a collection remembers whether it is someone else's ("shared", D-310)
 # v4.2.449: push False is the first fill of a new account (D-300): nothing sent (items, names, colours, merges), nothing removed here
 # v4.2.441: a certificate that could not be verified stops the synchronisation of that account, as a refused login does: the window asks (D-299)
@@ -98,6 +100,7 @@ class ItemLink:
     item_id: str
     etag: str
     digest: str  # of the text of the item here at that time: another digest now means it was changed here
+    before_delete: str = ""  # deleted here while offline: what the server's copy needs first, so the server mails as the person chose (D-310)
 
 
 @dataclass(slots=True)
@@ -106,6 +109,11 @@ class CollectionState:
     ctag: str = ""
     links: dict[str, ItemLink] = field(default_factory=dict[str, ItemLink])  # by address on the server
     refused: str = ""  # the digest of a complete listing the guard refused; the same listing at the next synchronisation is trusted
+
+
+def _link_description(link: ItemLink) -> dict[str, str]:
+    description = {"id": link.item_id, "etag": link.etag, "digest": link.digest}
+    return description | {"before_delete": link.before_delete} if link.before_delete else description
 
 
 class DavState:
@@ -126,7 +134,7 @@ class DavState:
             for collection, description in data["collections"].items():
                 state = CollectionState(str(description.get("token", "")), str(description.get("ctag", "")), refused=str(description.get("refused", "")))
                 for href, link in description.get("links", {}).items():
-                    state.links[canonical_href(str(href))] = ItemLink(str(link["id"]), str(link["etag"]), str(link["digest"]))
+                    state.links[canonical_href(str(href))] = ItemLink(str(link["id"]), str(link["etag"]), str(link["digest"]), str(link.get("before_delete", "")))
                 self.collections[str(collection)] = state
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             self.collections = {}  # damaged or not there: start again
@@ -142,7 +150,7 @@ class DavState:
                     "token": state.token,
                     "ctag": state.ctag,
                     "refused": state.refused,
-                    "links": {href: {"id": link.item_id, "etag": link.etag, "digest": link.digest} for href, link in state.links.items()},
+                    "links": {href: _link_description(link) for href, link in state.links.items()},
                 }
                 for identifier, state in self.collections.items()
             },
@@ -751,6 +759,19 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
                 return
 
 
+def _prepared_delete(client: DavClient, remote: RemoteCollection, collection_state: CollectionState, href: str, link: ItemLink) -> str:
+    """The server's copy made ready for a delete that waited: the version to delete. Changed on the server meanwhile: DavConflict, as a delete gets."""
+    fetched = client.read(remote, href)
+    if fetched is None or (link.etag and fetched[0] != link.etag):
+        raise DavConflict(f"{href} changed on the server")
+    etag, text = fetched
+    ready = ready_to_delete(text, link.before_delete)
+    if ready is not None and ready != text:
+        etag = client.put(href, ready, remote.kind, etag=etag) or client.etag_of(href)
+    collection_state.links[href] = replace(link, etag=etag, before_delete="")  # done: should the delete fail now, only the delete is left
+    return etag
+
+
 def _push_delete(
     client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, collection_state: CollectionState, href: str, link: ItemLink,
     report: DavReport,
@@ -758,7 +779,7 @@ def _push_delete(
     """An item deleted here (offline): deleted on the server; changed there meanwhile, or the delete refused for good: a conflict."""
     collection = local.collection_id
     try:
-        client.delete(href, link.etag)
+        client.delete(href, _prepared_delete(client, remote, collection_state, href, link) if link.before_delete else link.etag)
         report.deleted_on_server += 1
         del collection_state.links[href]
     except DavConflict:

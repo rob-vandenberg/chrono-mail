@@ -1,6 +1,7 @@
 import re
 from collections.abc import Callable
 from dataclasses import replace as changed
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -15,8 +16,8 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, ChoicesResult, SourceParameters
-from chrono_mail.engine.invitations import InvitationInfo
+from chrono_mail.engine.commands_invitations import INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
+from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
@@ -32,16 +33,17 @@ from chrono_mail.ui.prefs import READING_PANES, InUse
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog, InvitationDelegateDialog
-from chrono_mail.ui.invitationcard import adds_all, home_word, item_word
+from chrono_mail.ui.invitationcard import InvitationCard, adds_all, home_word, item_word
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.514"
+__version__ = "readingpane.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: the blocks of a big text come as the person scrolls; after a click only that block changes, the place in the list stays (D-310)
 # v4.4.514: a window never closes by itself: the person closes it; every dialog of an invite belongs to the main window (D-310)
 # v4.4.512: a date added to a series is answered, never added by a button of its own; it asks for no calendar (D-310)
 # v4.4.511: after an answer every open window of that mail or file shows the new card; Choose a calendar opens on the main window when the card window is gone, and the answer finishes (D-310)
@@ -116,6 +118,7 @@ class ReadingPane(QObject):
         self.reader.link_activated.connect(self.open_link)
         self.reader.link_hovered.connect(status.line.show_link)
         self.reader.invitation_answer_requested.connect(self._answer_in_pane)
+        self.reader.card.blocks_wanted.connect(self._more_in_pane)
         self.reader.invitation_apply_requested.connect(self._apply_in_pane)
         self.reader.invitation_delegate_requested.connect(self._delegate_in_pane)
         self.reader.invitation_organize_requested.connect(self._organize_in_pane)
@@ -333,6 +336,7 @@ class ReadingPane(QObject):
             if reader is not None:
                 found: ReaderWidget = reader
                 place = CalendarSource(account, folder, message_id)
+                found.card.blocks_wanted.connect(partial(self._more_blocks, found.card, found, place))
 
                 def on_block() -> CalendarSource:
                     return changed(place, item=found.pressed_item)
@@ -386,6 +390,42 @@ class ReadingPane(QObject):
         """The message in the reading pane, as the source of its card."""
         return CalendarSource(*self.shown, item=self.reader.pressed_item) if self.shown is not None else None
 
+    def _more_in_pane(self, first: int) -> None:
+        if self.shown is not None:
+            self._more_blocks(self.reader.card, self.reader, CalendarSource(*self.shown), first)
+
+    def _more_blocks(self, card: InvitationCard, owner: QObject, source: CalendarSource, first: int) -> None:
+        """The next blocks of a card, as the person scrolls near them (D-310)."""
+        showing = card.showing
+
+        def got(result: BlocksResult) -> None:
+            if isValid(card) and card.showing == showing:  # (another message may have come)
+                card.add_blocks(first, result.parts)
+
+        def failed(error: ChronoMailError) -> None:
+            self._status.report("Could not read the rest of the items", error)
+            if isValid(card) and card.showing == showing:
+                card.blocks_failed()
+
+        parameters = BlocksParameters(source.account, source.folder, source.message, part=source.part, file=source.file, first=first, count=BLOCKS_AT_ONCE)
+        self._backend.ask(INVITATION_BLOCKS, parameters, got, failed, owner=owner)
+
+    def _renew_blocks(self, card: InvitationCard, owner: QObject, source: CalendarSource, item: int) -> bool:
+        """A card with several items takes only what changed, so the person keeps their place in the list (D-310). False: it has none."""
+        info = card.info
+        if info is None or not info.parts:
+            return False
+        showing = card.showing
+
+        def got(result: BlocksResult) -> None:
+            if isValid(card) and card.showing == showing:
+                card.update_blocks(result.parts)
+
+        first, count = (item, 1) if item >= 0 else (0, len(info.parts))
+        parameters = BlocksParameters(source.account, source.folder, source.message, part=source.part, file=source.file, first=first, count=count)
+        self._backend.ask(INVITATION_BLOCKS, parameters, got, lambda error: None, owner=owner)
+        return True
+
     @staticmethod
     def _card_of(reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> InvitationInfo | None:
         """The card of the item meant: of a text with several items, that item's own."""
@@ -436,6 +476,7 @@ class ReadingPane(QObject):
                 self.add_all_invitation(window, source)
 
             window.card.add_all_requested.connect(add_all_here)
+            window.card.blocks_wanted.connect(partial(self._more_blocks, window.card, window, source))
             window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.card_windows.append(window)
             window.destroyed.connect(lambda: self.card_windows.remove(window) if window in self.card_windows else None)
@@ -544,10 +585,12 @@ class ReadingPane(QObject):
         where = (place.account, place.folder, place.message)
         for window, source in self._card_windows:
             if isValid(window) and window is not reader and (source.account, source.folder, source.message, source.file) == (*where, place.file):
+                if self._renew_blocks(window.card, window, source, place.item if source.part == place.part else -1):
+                    continue
                 self._backend.ask(INVITATION_CARD, SourceParameters(source.account, source.folder, source.message, part=source.part, file=source.file), window.show_card, lambda error: None, owner=window)
         views = [self.reader] if self.shown == where else []
         views += [window.reader for window in self.message_windows if window.where == where]
-        views = [view for view in views if view is not reader]
+        views = [view for view in views if view is not reader and not self._renew_blocks(view.card, view, CalendarSource(*where), place.item if place.part < 0 else -1)]
         if not place.message or not views:
             return
 
@@ -568,7 +611,13 @@ class ReadingPane(QObject):
         if not isValid(reader):
             return  # closed meanwhile: there is nothing to show it in
         if isinstance(reader, InvitationWindow):  # (a file gone meanwhile: its card stays as it is)
+            if self._renew_blocks(reader.card, reader, place, place.item):
+                return
             self._backend.ask(INVITATION_CARD, SourceParameters(account, folder, message_id, part=place.part, file=place.file), reader.show_card, lambda error: None, owner=reader)
+            return
+        if reader is self.reader and self.shown != (account, folder, message_id):
+            return  # another message was chosen meanwhile: it stays on screen
+        if self._renew_blocks(reader.card, reader, place, place.item):
             return
         uid = reader.invitation.uid if reader.invitation is not None else ""
 

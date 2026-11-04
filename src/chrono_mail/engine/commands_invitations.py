@@ -11,7 +11,7 @@ from chrono_mail.core import ChronoMailError, CollectionInfo, CollectionKind, St
 from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, is_yours, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, blocks_of, card_of, is_yours, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
@@ -20,16 +20,17 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
+    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.514"
+__version__ = "commands_invitations.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: invitation.blocks: the cards of a big text step by step; a Decline that waits for the connection says what the server's copy needs first; refused twice, the meeting stays here with a sync conflict (D-310)
 # v4.4.514: Add all puts each item in as it was written, so an export comes back identical; a public calendar counts as yours again, a private one first (D-310)
 # v4.4.512: an added date is answered like an invitation: Accept and Tentative add it with your answer, Decline adds nothing, Delegate passes it on; invitation.apply only asks for a series you do not have (D-310)
 # v4.4.512: only your own calendars count as holding a meeting; a calendar that holds it already is marked and refused (D-310)
@@ -330,16 +331,18 @@ def _copy_for(text: str, mails: _Mailing) -> str:
 
 def _delete(writer: ItemWriter, info: CollectionInfo, item: str, text: str, mails: _Mailing) -> None:
     """Delete a copy. A server mails about that from what it holds, so what it holds says first whether it should."""
-    changed = mails.told and told_silent(text) == mails.server
-    if changed:
-        writer.put(info, _copy_for(text, mails), item)
+    before = ""
+    if mails.told and told_silent(text) == mails.server:
+        before = BEFORE_LOUD if mails.server else BEFORE_SILENT
     elif mails.bare:
-        writer.put(info, without_organizer(text) or text, item)
+        before = BEFORE_BARE
+    if before:
+        writer.put(info, ready_to_delete(text, before) or text, item)
     try:
-        writer.delete(info, item)
+        writer.delete(info, item, before)
     except UsageError:
-        if changed or mails.bare:
-            writer.put(info, text, item)  # refused: the meeting stays as it was, as the message says
+        if before:
+            writer.restore(info, text, item)  # refused: the meeting stays as it was, as the message says
         raise
 
 
@@ -799,6 +802,25 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     return OrganizeResult(done, stored_in, server, own.account.account_id, saved.folder, saved.message_id)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BlocksParameters(SourceParameters):
+    first: int = field(metadata=option("The place of the first item wanted"))
+    count: int = field(metadata=option("How many items"))
+
+
+@dataclass(frozen=True, slots=True)
+class BlocksResult:
+    parts: tuple[InvitationInfo, ...]
+
+
+def invitation_blocks(engine: Engine, parameters: BlocksParameters) -> BlocksResult:
+    """The cards of some items of a text with several items: the next ones as the person scrolls, or those that changed."""
+    if parameters.first < 0 or parameters.count < 1:
+        raise UsageError("Name a place and how many items")
+    opened = _opened(engine, replace(parameters, item=-1), busy=True, whole=True)
+    return BlocksResult(blocks_of(engine, parameters.part, opened.whole, parameters.first, parameters.count))
+
+
 def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationInfo:
     """The card of an attachment or a file, for a window of its own: the mail's own card comes with message.show."""
     opened = _opened(engine, parameters, busy=True, whole=True)
@@ -906,6 +928,7 @@ def invitation_busy(engine: Engine, parameters: BusyParameters) -> BusyResult:
 
 
 INVITATION_CARD: TypedCommand[SourceParameters, InvitationInfo] = TypedCommand("invitation.card", SourceParameters, InvitationInfo)
+INVITATION_BLOCKS: TypedCommand[BlocksParameters, BlocksResult] = TypedCommand("invitation.blocks", BlocksParameters, BlocksResult)
 INVITATION_BUSY: TypedCommand[BusyParameters, BusyResult] = TypedCommand("invitation.busy", BusyParameters, BusyResult)
 INVITATION_CHOICES: TypedCommand[ChoicesParameters, ChoicesResult] = TypedCommand("invitation.choices", ChoicesParameters, ChoicesResult)
 INVITATION_ADD: TypedCommand[AddParameters, AddResult] = TypedCommand("invitation.add", AddParameters, AddResult)
@@ -917,6 +940,7 @@ INVITATION_ORGANIZE: TypedCommand[OrganizeParameters, OrganizeResult] = TypedCom
 
 def register(registry: CommandRegistry) -> None:
     registry.register(INVITATION_CARD.id, "The card of a calendar attachment or file", SourceParameters, invitation_card, doing="Reading the calendar file")
+    registry.register(INVITATION_BLOCKS.id, "The cards of some items of a calendar text with several items", BlocksParameters, invitation_blocks, doing="Reading the calendar file")
     registry.register(INVITATION_BUSY.id, "Answer a request for your busy times from these calendars: a draft to send", BusyParameters, invitation_busy,
                       doing="Working out your busy times")
     registry.register(INVITATION_CHOICES.id, "The calendars an invitation can go into, and the one to start on", ChoicesParameters, invitation_choices,

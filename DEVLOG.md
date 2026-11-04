@@ -3820,3 +3820,9 @@ Open: lists A and B are done; C1 to C5 are later work.
 Built: ical calendars_in, zones_used; itip text_items per calendar, _delegate_lines; invitation.add writes each item as written; invitations is_yours and your_calendars; readingpane no closing, every dialog on the main window; accountedit and answers_by greyed only when certain; syncconflicts getattr reasons.
 Tests: tests/test_engine_invitation_files.py, test_engine_invitation_added.py, test_engine_invitation_organizer.py, test_engine_invitation_answers.py, test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py, test_ui_invitation_views.py, test_ui_confirmation_mails.py; the new ones fail on 4.4.513; Pyrefly 0 (Linux, win32), layer check kept; review round 1 found work growing with the square of the items, fixed; 20,000 items read in 5 seconds.
 Open: decisions 4, 6, 7, changelist items 1 to 25.
+
+## 2026-11-04, 4.4.515: a Decline while offline, a Decline refused twice, every item gets its block (the owner, D-310, decisions 4, 6, 7, item 20)
+Built: itip ready_to_delete; davsync ItemLink.before_delete, _prepared_delete; davitems delete(before), hold; pim_server restore; invitation.blocks, invitations blocks_of; invitationcard blocks_wanted, add_blocks, update_blocks; readingpane _more_blocks, _renew_blocks. text_items keeps the last text it read.
+Measured: a file of 5,000 items is read in 0.94 s, once; the next 20 blocks take 3 ms of reading.
+Tests: tests/test_engine_invitation_mailing.py, test_engine_invitation_files.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.514, except the one for a meeting changed on the server while the Decline waited, which guards what already held.
+Open: changelist items 1 to 19, 21 to 25.

@@ -1,13 +1,14 @@
 """The card above the text of a mail that holds a calendar message: an invitation, an answer, a cancellation (D-310)."""
 import html
+from dataclasses import replace
 from functools import partial
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal, SignalInstance
-from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QIcon, QShowEvent
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.core.colours import Theme
 from chrono_mail.engine.invitations import InvitationInfo, InvitationPerson
@@ -20,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.514"
+__version__ = "invitationcard.py 4.4.515"
 
 # --- Version history ----------------------------------------------------
+# v4.4.515: every item of a text gets its block, built as the person scrolls near it (blocks_wanted, add_blocks); update_blocks changes only some blocks (D-310)
 # v4.4.514: all_kept is gone: a window never closes by itself (D-310)
 # v4.4.512: a date added to a series you have shows the four answers; of a series you do not have: the text, and only the button Request (D-310)
 # v4.4.508: a text with several items: one block per item with its own details and buttons, and Add all at the top for items that ask no
@@ -147,8 +149,6 @@ def _holds_text(info: InvitationInfo) -> str:
         text += f" {_counted(info.journals, 'journal entry is', 'journal entries are')} left out."
     if info.damaged:
         text += f" {_counted(info.damaged, 'item cannot be read and is', 'items cannot be read and are')} left out."
-    if len(info.parts) < info.items and info.parts:
-        text += f" The first {len(info.parts)} are shown here."
     return text
 
 
@@ -252,6 +252,8 @@ class InvitationCard(QFrame):
     organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
     busy_requested = Signal()  # Send my busy times…
     add_all_requested = Signal()  # Add all
+    blocks_wanted = Signal(int)  # the person came near the end of the blocks built so far: the blocks from this place on, for add_blocks
+    blocks_changed = Signal()  # blocks came or changed: the card has another height
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -259,6 +261,10 @@ class InvitationCard(QFrame):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        self._next_block: int = 0  # the place of the first item without a block yet
+        self._asking: bool = False  # blocks_wanted was said and add_blocks has not answered yet
+        self.showing: int = 0  # counts what was shown here: an answer about what was shown before goes nowhere
+        self._scrolled_by: QScrollArea | None = None
         self._sections: list[QVBoxLayout] = []  # their margins follow the size factor (restyle)
         self._section_parts: list[QWidget] = []
         self.intro = self._plain()
@@ -452,6 +458,7 @@ class InvitationCard(QFrame):
             block.setParent(None)
             block.deleteLater()
         self.blocks = []
+        self._next_block = 0
 
     def _show_blocks(self, info: InvitationInfo) -> None:
         """A text with several items: what it holds at the top, then a block per item (D-310)."""
@@ -460,15 +467,77 @@ class InvitationCard(QFrame):
         for part in (self._middle_section, self._details_line, self._bottom_section):
             part.setVisible(not info.parts)
         self.add_all_button.setVisible(adds_all(info))
-        for part in info.parts:
+        self._asking = False
+        self._build_blocks(info.parts)
+        if info.parts:
+            self._watch_scrolling()
+            QTimer.singleShot(0, self, self._want_more)  # (the first blocks may leave room)
+
+    def _build_blocks(self, parts: tuple[InvitationInfo, ...]) -> None:
+        for part in parts:
             block = InvitationCard(self._blocks)
             block.show_invitation(part)
             self._forward(part.item, block)
             self._block_rows.addWidget(block)
             self.blocks.append(block)
+            self._next_block = part.item + 1
+
+    def _watch_scrolling(self) -> None:
+        """Every item gets its block, built when the person scrolls near it: a huge file opens as fast as a small one (D-310)."""
+        widget = self.parentWidget()
+        while widget is not None and not isinstance(widget, QScrollArea):
+            widget = widget.parentWidget()
+        if widget is None or widget is self._scrolled_by:
+            return
+        self._scrolled_by = widget
+        widget.verticalScrollBar().valueChanged.connect(self._want_more)
+        widget.verticalScrollBar().rangeChanged.connect(self._want_more)
+
+    def _want_more(self, *_: int) -> None:
+        area = self._scrolled_by
+        if self.info is None or area is None or self._asking or not self.isVisible() or self._next_block >= self.info.items or not self.info.parts:
+            return
+        bar = area.verticalScrollBar()
+        if bar.maximum() - bar.value() <= area.viewport().height():
+            self._asking = True
+            self.blocks_wanted.emit(self._next_block)
+
+    def blocks_failed(self) -> None:
+        """The next blocks could not be read: scrolling on tries again."""
+        self._asking = False
+
+    def add_blocks(self, first: int, parts: tuple[InvitationInfo, ...]) -> None:
+        """The answer to blocks_wanted: the blocks go below those on screen, and the place in the list stays."""
+        self._asking = False
+        if self.info is None or first != self._next_block:
+            return  # another card came meanwhile
+        if not parts:
+            self._next_block = self.info.items  # the rest cannot be read
+            return
+        self._build_blocks(parts)
+        self.info = replace(self.info, parts=self.info.parts + parts)
+        self.blocks_changed.emit()
+        QTimer.singleShot(0, self, self._want_more)
+
+    def update_blocks(self, parts: tuple[InvitationInfo, ...]) -> None:
+        """Only these blocks change, in their place: the person stays where they were in the list (D-310)."""
+        if self.info is None:
+            return
+        changed = {part.item: part for part in parts}
+        for block in self.blocks:
+            if block.info is not None and block.info.item in changed:
+                block.show_invitation(changed[block.info.item])
+        self.info = replace(self.info, parts=tuple(changed.get(part.item, part) for part in self.info.parts))
+        self.blocks_changed.emit()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt's name
+        super().showEvent(event)
+        QTimer.singleShot(0, self, self._want_more)
 
     def show_invitation(self, info: InvitationInfo) -> None:
         self.info = info
+        self.showing += 1
         self.pressed_item = -1
         self.restyle()
         colours = self._theme()
