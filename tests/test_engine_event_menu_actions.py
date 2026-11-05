@@ -17,9 +17,10 @@ from tests.test_engine_invitation_declined import second_calendar
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_event_menu_actions.py 4.4.558"
+__version__ = "test_engine_event_menu_actions.py 4.4.559"
 
 # --- Version history ----------------------------------------------------
+# v4.4.559: Delegate on all occurrences replaces the answer of a single date (D-310)
 # v4.4.558: Initial tests: what the commands refuse of what the menu greys, an answer on one date of a series declined in Local Folders, a calendar shared with you (D-318)
 
 SECOND_DAY = "2030-03-05T10:00:00+00:00"
@@ -32,8 +33,8 @@ def from_calendar(setup: Setup, item: str, answer: str, occurrence: str = "", ca
     return call(setup.engine, "invitation.answer", account="", folder="", message="", event=item, occurrence=occurrence, answer=answer, calendar=calendar, mail=False)
 
 
-def delegated(setup: Setup, item: str, occurrence: str = "", calendar: str = "") -> DelegateResult:  # noqa: F811
-    return call(setup.engine, "invitation.delegate", account="", folder="", message="", event=item, occurrence=occurrence, to="sam@example.org", calendar=calendar, mail=False)
+def delegated(setup: Setup, item: str, occurrence: str = "", calendar: str = "", to: str = "sam@example.org") -> DelegateResult:  # noqa: F811
+    return call(setup.engine, "invitation.delegate", account="", folder="", message="", event=item, occurrence=occurrence, to=to, calendar=calendar, mail=False)
 
 
 def stored_text(setup: Setup, row: OccurrenceInfo) -> str:  # noqa: F811
@@ -185,3 +186,26 @@ def test_a_move_that_cannot_be_made_keeps_the_declined_series(setup: Setup, monk
         delegated(setup, row.item, row.occurrence, target)
     hidden = call(setup.engine, "event.list", hidden=True, **MEETING_DAYS).events
     assert [each.answer for each in hidden] == ["DECLINED"] * 3 and {each.item for each in hidden} == {row.item}
+
+
+@pytest.mark.parametrize("answer", ["DECLINED", "TENTATIVE", "NEEDS-ACTION"])
+def test_delegate_on_all_occurrences_replaces_the_answer_of_a_single_date(setup: Setup, answer: str) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), series(OLIVIA, me("ACCEPTED"), dates=(["20300305T100000Z", OLIVIA, me(answer)],)))
+    delegated(setup, item)
+    shown = rows(setup, hidden=True)
+    assert [row.answer for row in shown] == ["DELEGATED"] * 3
+    assert stored_text(setup, shown[0]).count("DELEGATED-TO") == 2  # the series and the date
+
+
+def test_delegate_on_all_occurrences_also_replaces_a_date_delegated_to_someone_else(setup: Setup) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), series(OLIVIA, me("ACCEPTED")))
+    delegated(setup, item, SECOND_DAY, to="kim@example.org")
+    delegated(setup, item)
+    text = stored_text(setup, rows(setup)[0]).replace("\r\n ", "")
+    assert text.count('DELEGATED-TO="mailto:sam@example.org"') == 2 and 'DELEGATED-TO="mailto:kim@example.org"' not in text
+
+
+def test_delegate_of_one_date_leaves_the_other_dates_alone(setup: Setup) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), series(OLIVIA, me("ACCEPTED"), dates=(["20300305T100000Z", OLIVIA, me("TENTATIVE")],)))
+    delegated(setup, item, "2030-03-06T10:00:00+00:00")
+    assert [row.answer for row in rows(setup)] == ["ACCEPTED", "TENTATIVE", "DELEGATED"]

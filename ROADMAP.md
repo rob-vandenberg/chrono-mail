@@ -249,6 +249,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.432) Block 6: a message that changed where it is moves to its new place in the sort (D-146); the Contact mark and sort judge the person the row shows, one rule per list (D-295).
 - DONE (4.4.539) A folder is an object in the index: a rename or a move of a tree changes one row, whatever its size (index format 20, D-314).
 - DONE (4.4.546) A task without a due date has only a set-time reminder: the Reminder list of the task editor always offers At a set time…, and the choices counted from the due date are greyed without one (D-316).
+- DONE (4.4.559) Delegate on all occurrences replaces the separate answers on single dates, as Accept, Tentative and Decline (Q309, D-310).
 - DONE (4.4.558) The two right-click menus of an event in every view, greyed by the date right-clicked, the commands refusing the same; the question after the click; an answer on one date of a series declined in Local Folders moves the whole series (event menus, worker 5b, D-318).
 - DONE (4.4.557) Cancel and Restore of an event: server first, a real cancellation or a new version for your meeting, your own copy for someone else's, what a Cancelled event refuses (event menus, worker 5a, D-317).
 - DONE (4.4.556) Answers from the calendar: only what the organizer wrote goes out, the event right-clicked changes, the mail gets its Replied mark and an open card refreshes (event menus, worker 4, D-310).

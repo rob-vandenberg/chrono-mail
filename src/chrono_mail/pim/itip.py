@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.558"
+__version__ = "itip.py 4.4.559"
 
 # --- Version history ----------------------------------------------------
+# v4.4.559: Delegate on all occurrences replaces the separate answers on single dates, as Accept, Tentative and Decline (D-310)
 # v4.4.558: moved_answer (one date of a series declined in Local Folders: the whole series as one record), answer_given
 # v4.4.557: restored_copy takes Cancelled off, with your own meeting's attendees asked again; cancelled_in: a changed date goes by what it says itself (D-310)
 # v4.4.556: What goes out of an answer from the calendar: meeting_in_mail, the organizer's own text from the mail; shared_text; reply_text can leave out title and time; no server mark in a mail (D-310)
@@ -401,7 +402,7 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     """Your copy after answering, when one is kept already. take_message: the message is a newer version, so what it changed is copied into the
     copy (_follow; for one occurrence: into that occurrence); else the kept copy stays as it is with your answer set in it (for one occurrence: in
     that occurrence, taken from the message when the copy has no changed version of it). An answer on all of it is on every date, whatever you
-    answered on one (D-310); only a delegation leaves a date you answered otherwise."""
+    answered on one (D-310), a delegation too."""
     kept = _parse(stored)
     message = _parse(message_text)
     if kept is None or message is None:
@@ -414,14 +415,11 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
         _without_moment(series, "EXDATE", occurrence)  # a date taken out by Change my answer comes back with its answer
 
     if occurrence is None:
-        every_date = answer != "DELEGATED"
-        series_answer = _your_answer(series, lower) if series is not None else ""
         before = {id(each): _your_answer(each, lower) for each in _items_of(kept)}
         if take_message:
             _follow(kept, message, lower)
-        for component in _items_of(kept):  # (a delegation: the series and the occurrences that followed it; one you answered otherwise keeps that)
-            if every_date or component.get("RECURRENCE-ID") is None or _your_answer(component, lower) in ("", "NEEDS-ACTION", series_answer):
-                _answer_item(component, lower, answer, name, before.get(id(component), ""), free)
+        for component in _items_of(kept):
+            _answer_item(component, lower, answer, name, before.get(id(component), ""), free)
         return kept.to_ical().decode("utf-8")
     # A message about occurrences only (one or several): each of them into the copy, with your answer.
     incoming = [each for each in _items_of(message) if each.get("RECURRENCE-ID") is not None]
@@ -1009,15 +1007,9 @@ def with_delegate(text: str, address: str, delegate: str, occurrences: list[Mome
     you, other = address.strip().lower(), delegate.strip().lower()
     for item in _items_of(calendar):
         moment = _moment(item, "RECURRENCE-ID")
-        if occurrences:  # this delegation is about these occurrences only
-            if not any(_same_moment(moment, each) for each in occurrences):
-                continue
-        elif moment is not None and _your_answer(item, you) != "DELEGATED":
-            continue  # the whole series: the series, and the dates that followed it into DELEGATED now
+        if occurrences and not any(_same_moment(moment, each) for each in occurrences):
+            continue  # this delegation is about these occurrences only; else it is on every date, as any answer on all of it (D-310)
         props: Any = item.get("ATTENDEE")
-        mine = [person for person in (props if isinstance(props, list) else ([props] if props is not None else [])) if _address_of(person) == you]
-        if not occurrences and moment is not None and any(person.params.get("DELEGATED-TO") for person in mine):
-            continue  # a date delegated earlier to someone else stays theirs
         people: list[Any] = props if isinstance(props, list) else ([props] if props is not None else [])
         if any(_address_of(person) == other for person in people):
             continue

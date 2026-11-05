@@ -15,9 +15,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.555"
+__version__ = "test_engine_invitation_answers.py 4.4.559"
 
 # --- Version history ----------------------------------------------------
+# v4.4.559: Delegate on all occurrences replaces a date answered otherwise too (D-310)
 # v4.4.555: A Cancel mail sets Cancelled; a new version keeps a changed date it does not name (D-310)
 # v4.4.554: An answer on all occurrences replaces a date answered otherwise (D-310)
 # v4.4.552: A deleted date of a series shows nowhere (D-310)
@@ -503,18 +504,16 @@ def test_your_own_meeting_cannot_be_answered(setup: Setup) -> None:
 
 
 def test_an_answer_on_all_occurrences_replaces_a_date_answered_otherwise() -> None:
-    """The owner: "If it says "all events" it does "all events"" (D-310): for Accept, Tentative and Decline alike."""
+    """The owner: "If it says "all events" it does "all events"" (D-310): for Accept, Tentative, Delegate and Decline alike."""
     from chrono_mail.pim.itip import merged_answer
 
     series = calendar_text(method="", answer="TENTATIVE").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     declined = calendar_text(method="", answer="DECLINED").replace("SEQUENCE:0", "SEQUENCE:0\r\nRECURRENCE-ID:20261105T100000Z", 1)
     part = declined.split("BEGIN:VEVENT", 1)[1].split("END:VCALENDAR")[0]
     both = series.replace("END:VCALENDAR", "BEGIN:VEVENT" + part + "END:VCALENDAR", 1).replace("END:VEVENT\r\nEND:VEVENT", "END:VEVENT", 1)
-    for answer_given in ("ACCEPTED", "DECLINED", "TENTATIVE"):
+    for answer_given in ("ACCEPTED", "DECLINED", "DELEGATED", "TENTATIVE"):
         copy = merged_answer(both, calendar_text(), "me@example.com", answer_given, None, take_message=False)
         assert copy is not None and copy.count(f"PARTSTAT={answer_given}") == 2 and len(set(re.findall("PARTSTAT=([A-Z-]+)", copy)) - {"NEEDS-ACTION"}) == 1
-    delegated = merged_answer(both, calendar_text(), "me@example.com", "DELEGATED", None, take_message=False)
-    assert delegated is not None and "PARTSTAT=DECLINED" in delegated and "PARTSTAT=DELEGATED" in delegated  # a delegation leaves a date answered otherwise
 
 
 def test_an_invitation_to_several_occurrences_reaches_the_copy_whole() -> None:

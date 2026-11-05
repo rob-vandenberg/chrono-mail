@@ -4098,3 +4098,8 @@ What landed: `_event_actions` in `ui/calendarview.py`: one menu for invited, one
 Live, Kerio test account: Restore of your own meeting, also with the attendee's answer reset: 0 mails from Kerio, whole and one date, so the attendee gets one mail, from Chrono Mail; no fix needed. Left on Kerio, nothing deleted: `CM-EM r5wb4e7a8`, `CM-EM r5db4e7a8`.
 Proof: the new tests fail on 4.4.557, but for the guards that held already (a shared calendar: Accept, Cancel, Restore, Delete; a refused move; an empty space; another date's answer).
 Not tried: on screen, only through window tests; the move of a series on Kerio itself.
+
+## 2026-11-05 4.4.559 Delegate on all occurrences (Q309)
+
+What landed: `merged_answer` and `with_delegate` treat Delegate on All as any answer on all of it: every date gets DELEGATED and names the delegate, also a date answered otherwise or delegated earlier to someone else.
+Not tried: on screen; on Kerio.
