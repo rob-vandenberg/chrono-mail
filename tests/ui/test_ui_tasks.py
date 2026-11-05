@@ -2,24 +2,25 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPersistentModelIndex, QPoint, Qt
-from PySide6.QtGui import QImage, QPainter
-from PySide6.QtWidgets import QInputDialog, QMessageBox, QStyleOptionViewItem
+from PySide6.QtCore import QDate, QEvent, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QPoint, QTime, Qt
+from PySide6.QtGui import QHelpEvent, QImage, QPainter, QStandardItemModel
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QStyleOptionViewItem, QToolTip
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_tasklist import TaskPlace
 from chrono_mail.ui.collectionpanel import collection_items
 from chrono_mail.ui.sections import TASKS
 from chrono_mail.ui.tasksview import PAGE, ROW_ROLE, TaskListModel, TasksPage, draw_mark, due_text, group_of
-from chrono_mail.ui.taskeditor import TaskEditor
+from chrono_mail.ui.taskeditor import NEEDS_A_DUE_DATE, TaskEditor
 from tests.test_engine_pim_lists import MANY, todos
 from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tasks.py 3.2.342"
+__version__ = "test_ui_tasks.py 4.4.546"
 
 # --- Version history ----------------------------------------------------
+# v4.4.546: a task without a due date has only a set-time reminder: the list, the date and time, the greyed choices and a due date taken away and given back (D-316)
 # v3.2.342: a task from another program keeps its repeat, reminder and due time through a Save, shown on this computer's clock (RV-19, RV-23)
 # v1.9.265: laying the list out fetches no row: only the rows that come into view (R-44)
 # v1.1.244: a change of one task moves, adds or removes only its row and heading, never a reset; the selection stays by itself (R-06)
@@ -368,3 +369,137 @@ def test_a_task_from_another_program_keeps_its_repeat_reminder_and_due_time(worl
     after = world.call("task.show", item=item)
     assert (after.rrule, after.reminders) == ("FREQ=WEEKLY;BYDAY=MO,WE", (30,))
     assert datetime.fromisoformat(after.due) == datetime(2099, 11, 4, 15, 0, tzinfo=UTC)
+
+
+def new_editor(world: World, qtbot: QtBot) -> TaskEditor:
+    page = open_tasks(world, qtbot, 0)
+    editor = TaskEditor(page._backend, page._lists(), [], collection=lists(world))  # noqa: SLF001
+    qtbot.addWidget(editor)
+    return editor
+
+
+def usable(editor: TaskEditor, value: str) -> bool:
+    model = editor.reminder.model()
+    assert isinstance(model, QStandardItemModel)
+    return model.item(editor.reminder.findData(value)).isEnabled()
+
+
+def hover_text(editor: TaskEditor, value: str) -> str:
+    return str(editor.reminder.itemData(editor.reminder.findData(value), Qt.ItemDataRole.ToolTipRole) or "")
+
+
+def test_without_a_due_date_only_no_reminder_and_a_set_time_can_be_chosen(world: World, qtbot: QtBot) -> None:
+    """D-316: a reminder counted from the due date can never fire without one: its choices are greyed with a hover text, a due date makes them usable at once."""
+    editor = new_editor(world, qtbot)
+    counted_choices = ("0", "15", "60", "1440", "10080")
+    assert usable(editor, "") and usable(editor, "at") and not any(usable(editor, value) for value in counted_choices)
+    assert all(hover_text(editor, value) == NEEDS_A_DUE_DATE for value in counted_choices) and hover_text(editor, "at") == ""
+    editor.due.enabled.setChecked(True)
+    assert all(usable(editor, value) and hover_text(editor, value) == "" for value in counted_choices)
+    editor.due.enabled.setChecked(False)
+    assert not any(usable(editor, value) for value in counted_choices)
+
+
+def test_the_hover_text_of_a_greyed_choice_shows_in_the_open_list(world: World, qtbot: QtBot) -> None:
+    """OR-15: the hover text must reach the person, also on a choice that is greyed."""
+    editor = new_editor(world, qtbot)
+    editor.show()
+    editor.reminder.showPopup()
+    view = editor.reminder.view()
+    place = view.visualRect(view.model().index(editor.reminder.findData("15"), 0)).center()
+    QApplication.sendEvent(view.viewport(), QHelpEvent(QEvent.Type.ToolTip, place, view.viewport().mapToGlobal(place)))
+    assert QToolTip.text() == NEEDS_A_DUE_DATE
+    QToolTip.hideText()
+    editor.reminder.hidePopup()
+
+
+def test_a_set_time_shows_a_date_and_a_time_and_is_stored_in_the_task(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-316: At a set time… shows its fields only while chosen, is saved in the task, and comes back on this computer's clock; left alone it is not sent."""
+    world.call("pim.enable")
+    page = open_tasks(world, qtbot, 0)
+    shown: list[tuple[bool, bool, str, str]] = []
+
+    def fill(editor: TaskEditor) -> None:
+        editor.show()
+        shown.append((editor.reminder_date.isVisible(), editor.reminder_time.isVisible(), "", ""))
+        editor.summary.setText("Renew the passport")
+        editor.reminder.setCurrentIndex(editor.reminder.findData("at"))
+        shown.append((editor.reminder_date.isVisible(), editor.reminder_time.isVisible(), "", ""))
+        editor.reminder_date.setDate(QDate(2099, 3, 1))
+        editor.reminder_time.setTime(QTime(9, 30))
+
+    monkeypatch.setattr(TaskEditor, "exec", fake_exec(fill))
+    page.new_item()
+    wait(qtbot, lambda: len(page.model.rows()) == 1)
+    made = world.call("task.show", item=str(getattr(page.model.rows()[0], "item")))
+    assert shown == [(False, False, "", ""), (True, True, "", "")]
+    assert made.due == "" and made.reminders == (None,)
+    assert datetime.fromisoformat(made.reminder_moments[0]) == datetime(2099, 3, 1, 9, 30).astimezone()
+
+    def look(editor: TaskEditor) -> None:
+        editor.show()
+        shown.append((editor.reminder_date.isVisible(), editor.reminder_time.isVisible(), editor.reminder_date.date().toString("yyyy-MM-dd"), editor.reminder_time.time().toString("HH:mm")))
+        assert editor.parameters().reminder == () and editor.parameters().clear == ()
+        editor.reminder_time.setTime(QTime(10, 0))
+        assert editor.parameters().reminder == ("at:2099-03-01T10:00",)
+        editor.note.setPlainText("Moved")
+
+    monkeypatch.setattr(TaskEditor, "exec", fake_exec(look))
+    select(page, "Renew the passport")
+    page.act_edit.trigger()
+    wait(qtbot, lambda: world.call("task.show", item=made.item).description == "Moved")
+    assert shown[-1] == (True, True, "2099-03-01", "09:30")
+    assert datetime.fromisoformat(world.call("task.show", item=made.item).reminder_moments[0]) == datetime(2099, 3, 1, 10, 0).astimezone()
+
+
+def test_a_first_set_time_starts_in_the_future(world: World, qtbot: QtBot) -> None:
+    editor = new_editor(world, qtbot)
+    editor.reminder.setCurrentIndex(editor.reminder.findData("at"))
+    chosen = datetime.fromisoformat(editor.parameters().reminder[0].removeprefix("at:"))
+    assert chosen > datetime.now() and chosen.minute == 0
+
+
+def label_colour(editor: TaskEditor) -> set[int]:
+    """The colours of the text in the closed list."""
+    image = editor.reminder.grab().toImage()
+    return {image.pixel(x, y) for x in range(image.width() // 2) for y in range(image.height())}
+
+
+def test_a_task_whose_due_date_goes_keeps_its_choice_greyed_and_it_counts_again_with_a_due_date(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-316: the choice stays, shown greyed with the hover text, and what is stored is untouched; a due date makes it count again, from the due date."""
+    world.call("pim.enable")
+    collection = lists(world)
+    item = world.call("task.add", list=collection, summary="Call the bank", due="2099-01-01T17:00", reminder=("15",)).item
+    page = open_tasks(world, qtbot, 1)
+    seen: list[tuple[str, bool, str, bool]] = []
+
+    def take_away(editor: TaskEditor) -> None:
+        editor.show()
+        usual = label_colour(editor)
+        editor.due.enabled.setChecked(False)
+        seen.append((str(editor.reminder.currentData()), usable(editor, "15"), editor.reminder.toolTip(), label_colour(editor) != usual))
+        assert editor.reminder.isEnabled() and editor.parameters().reminder == () and editor.parameters().clear == ()
+
+    monkeypatch.setattr(TaskEditor, "exec", fake_exec(take_away))
+    select(page, "Call the bank")
+    page.act_edit.trigger()
+    wait(qtbot, lambda: world.call("task.show", item=item).due == "")
+    assert seen == [("15", False, NEEDS_A_DUE_DATE, True)]
+    assert world.call("task.show", item=item).reminders == (15,)
+
+    def give_back(editor: TaskEditor) -> None:
+        editor.show()
+        seen.append((str(editor.reminder.currentData()), usable(editor, "15"), editor.reminder.toolTip(), False))
+        editor.reminder.setCurrentIndex(0)
+        assert not usable(editor, "15") and editor.reminder.toolTip() == ""
+        editor.reminder.setCurrentIndex(editor.reminder.findData("15"))
+        editor.due.enabled.setChecked(True)
+        assert usable(editor, "15") and editor.reminder.toolTip() == ""
+        editor.due.stamp.setDate(QDate(2099, 2, 1))
+
+    monkeypatch.setattr(TaskEditor, "exec", fake_exec(give_back))
+    select(page, "Call the bank")
+    page.act_edit.trigger()
+    wait(qtbot, lambda: world.call("task.show", item=item).due != "")
+    assert seen[-1] == ("15", False, NEEDS_A_DUE_DATE, False)
+    assert world.call("task.show", item=item).reminders == (15,)

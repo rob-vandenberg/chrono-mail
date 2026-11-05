@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from datetime import UTC, datetime
+
 import pytest
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID
@@ -10,9 +12,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 4.4.513"
+__version__ = "test_engine_calendar.py 4.4.546"
 
 # --- Version history ----------------------------------------------------
+# v4.4.546: a task that gets its due time back counts its reminders from it; a task says the fixed time of its reminder (D-316)
 # v4.4.513: a series that picks its day by position takes its skipped date to another hour (D-310)
 # v4.2.460: removing an account with calendars tells the sections (collection_changed)
 # v4.2.438: a calendar's own colour is named "Default calendar colour"; the old default's name a calendar kept never wins (D-297)
@@ -529,6 +532,23 @@ def test_a_task_whose_due_time_goes_counts_its_reminders_from_the_start(engine: 
     with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
         text = store.get(tasks, added.item).replace("\r\n ", "")
     assert "DUE:" not in text and "DUE;" not in text and "RELATED=END" not in text and "TRIGGER:-PT15M" in text
+
+
+def test_a_task_that_gets_its_due_time_back_counts_its_reminders_from_it_again(engine: Engine) -> None:
+    """D-316: the reminder a task kept without a due time counts from the due time once it has one, on the server too: left counted from the start, other programs ring it at the wrong time."""
+    tasks = collection(engine, "tasks")
+    added = call(engine, "task.add", list=tasks, summary="Call the bank", start="2099-01-01T09:00", due="2099-01-01T17:00", time_zone="UTC", reminder=("15",))
+    call(engine, "task.edit", item=added.item, due="")
+    call(engine, "task.edit", item=added.item, due="2099-01-02T17:00", time_zone="UTC")
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        assert "TRIGGER;RELATED=END:-PT15M" in store.get(tasks, added.item).replace("\r\n ", "")
+
+
+def test_a_task_says_the_fixed_time_of_its_reminder(engine: Engine) -> None:
+    """D-316: the editor shows it, so the task has to say it; a reminder in minutes has none."""
+    added = call(engine, "task.add", list=collection(engine, "tasks"), summary="Renew the passport", time_zone="UTC", reminder=("at:2099-03-01T09:30", "15"))
+    assert added.reminders == (None, 15)
+    assert datetime.fromisoformat(added.reminder_moments[0]) == datetime(2099, 3, 1, 9, 30, tzinfo=UTC) and added.reminder_moments[1] == ""
 
 
 def test_a_new_rule_keeps_every_changed_date_and_a_hostile_rule_never_breaks_an_edit(engine: Engine) -> None:

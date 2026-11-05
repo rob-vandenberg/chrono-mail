@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-05, version 4.4.545 (a task's reminder fires, D-316); before it 4.4.544 (the index knows which reminders are due, D-316); before it 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
+*Last updated: 2026-11-05, version 4.4.546 (a task without a due date has only a set-time reminder, D-316); before it 4.4.545 (a task's reminder fires, D-316); before it 4.4.544 (the index knows which reminders are due, D-316); before it 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.546 done (D-316).** The Reminder list of the task editor always offers At a set time…, with a date and a time field. To check by the owner: in Tasks, New: without a due date only No reminder and At a set time… can be chosen, the others are greyed and say why on hover; tick Due and they are usable at once. Give a task 15 minutes before and a due date, untick Due: the choice stays, greyed; Save, open again, tick Due: it counts again. Not tried in a real run with a real server or on Windows.
 
 **4.4.545 done (D-316).** A task's reminder fires through the same due moment and check as an event's. The first start upgrades each calendar index, in a moment; the first look after it reads every task once, in the background. To check by the owner: in Tasks, give a task a due time some minutes ahead and a reminder in the task editor: it comes as a notification at its moment, also after a restart; complete it before that: nothing comes; open it again: it counts again; the same with status Cancelled and back. Not tried in a real run with the window, a real server or Windows.
 

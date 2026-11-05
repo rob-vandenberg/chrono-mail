@@ -4000,3 +4000,11 @@ Built: one path for both kinds in src/chrono_mail/engine/commands_reminders.py (
 Also needed: a mail of a reminder without a moment leaves the When line out.
 Tests: tests/test_engine_reminders.py; 30 tests fail on 4.4.544: the task tests by behaviour or because the kind does not exist there, the old upgrade tests because the format number moved to 5. test_a_damaged_item_fails_only_itself and the two upgrade tests of format 3 changed only for the new argument, format number and step.
 Open: not tried in a real run with the window, a real server or Windows.
+
+## 2026-11-05 4.4.546 A task without a due date has only a set-time reminder (D-316)
+
+Cause: the Reminder list of the task editor offered only choices counted from the due date, also without one, and no way to make a reminder at a set time.
+Built: ReminderChoice in src/chrono_mail/ui/taskeditor.py (the list, its greyed rows and hover text, the text of a kept choice drawn greyed), a date and a time field in src/chrono_mail/ui/forms/task_editor.ui. A first set time starts at the next whole hour.
+Also needed: TaskInfo.reminder_moments, so the editor can show a stored set time; a task that gets a due date again has its minutes stored as RELATED=END (src/chrono_mail/engine/commands_tasklist.py).
+Tests: tests/ui/test_ui_tasks.py, tests/test_engine_calendar.py; all 7 new tests fail on 4.4.545. Review: one round; its three points are old behaviour or the choice above, no code changed.
+Open: a second reminder from another program is lost when the choice is changed (old behaviour). A task with neither a start nor a due date keeps a reminder in minutes, which the standard does not allow: not tried on a real server. A set time already past never fires, without a word. Not tried in a real run with a real server or on Windows.

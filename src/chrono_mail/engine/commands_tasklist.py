@@ -14,9 +14,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 4.2.385"
+__version__ = "commands_tasklist.py 4.4.546"
 
 # --- Version history ----------------------------------------------------
+# v4.4.546: a task says the fixed time of its reminders (reminder_moments); a task that gets a due time counts its reminders in minutes from it again (D-316)
 # v4.2.385: task.import builds the text afresh as before and keeps from the text given only the time zones the task uses (VTIMEZONE), its
 #           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
 # v3.6.351: a task's floating start or due time stays floating on an edit without a zone
@@ -73,6 +74,7 @@ class TaskInfo:
     rrule: str
     tags: tuple[str, ...]
     reminders: tuple[int | None, ...]  # minutes before the due time (None: at a fixed time)
+    reminder_moments: tuple[str, ...]  # per reminder: its fixed time, empty when it counts in minutes
     parent: str
     url: str
     done: bool
@@ -91,7 +93,8 @@ def _overdue(task: Task) -> bool:
 def _info(item: str, account: str, collection: str, task: Task) -> TaskInfo:
     return TaskInfo(
         item, account, collection, task.uid, task.summary, task.description, task.location, format_moment(task.start), format_moment(task.due), format_moment(task.completed),
-        task.percent, task.status, task.priority, task.rrule, task.categories, tuple(r.minutes_before for r in task.reminders), task.parent, task.url, task.done, _overdue(task),
+        task.percent, task.status, task.priority, task.rrule, task.categories, tuple(r.minutes_before for r in task.reminders),
+        tuple(format_moment(r.at) for r in task.reminders), task.parent, task.url, task.done, _overdue(task),
     )
 
 
@@ -346,6 +349,8 @@ def _apply(task: Task, values: TaskFields) -> Task:
     if task.due is not None and result.due is None and result.start is not None and not values.reminder and any(item.relative_to_end for item in result.reminders):  # this edit
         # took the due time away: its reminders count from the start (RELATED=END needs a due time, RV-189); any other edit leaves them
         result = replace(result, reminders=tuple(replace(item, relative_to_end=False) for item in result.reminders))
+    if task.due is None and result.due is not None and not values.reminder:  # this edit gave the task a due time: its reminders in minutes count from it again
+        result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None) for item in result.reminders))
     if values.tag:
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.parent is not None:
