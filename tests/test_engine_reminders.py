@@ -1,26 +1,44 @@
-from collections.abc import Collection
+import sqlite3
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
+from pathlib import Path
+from typing import override
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.engine import Engine, UsageError, commands_reminders
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_reminders import ReminderCheck, _Due, _due_in, reminder_check
-from chrono_mail.pim.ical import EventSeries, parse_events
+from chrono_mail.engine.commands_reminders import _LOOKING, ReminderCheck, _Due, _due_in, _next_moment, reminder_check
+from chrono_mail.pim.ical import parse_events
 from chrono_mail.engine.pimaccess import open_pim
+from chrono_mail.pimstore import DueReminder, PimIndex, PimStore
 from chrono_mail.core import LOCAL_ACCOUNT_ID
 from tests.test_config import make_account
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.537"
+__version__ = "test_engine_reminders.py 4.4.544"
 
 # --- Version history ----------------------------------------------------
+# v4.4.544: the index knows which reminders are due: no limit in days, the look reads only those, the upgrade of the index (D-316)
 # v4.4.537: a placeholder alarm is no reminder and stays; old events are not read; account.edit takes none for invitation_answers
 # v4.4.536: Initial version (D-313)
+
+
+def store_get(monkeypatch: pytest.MonkeyPatch, read: list[str]) -> None:
+    """Every item the store gives from now on is noted in `read`."""
+    real = PimStore.get
+
+    def get(store: PimStore, collection: str, item: str) -> str:
+        text = real(store, collection, item)
+        read.append(text)
+        return text
+
+    monkeypatch.setattr(PimStore, "get", get)
 
 
 def looked_at(setup: Setup, moment: datetime) -> None:
@@ -149,19 +167,19 @@ def test_a_placeholder_never_fires_and_a_real_reminder_beside_it_does(setup: Set
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
 
 
-def test_the_look_reads_no_event_that_ended_long_ago(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_look_reads_only_what_is_due(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
     event_in(setup, -40 * 24 * 60, "Old", ("15",))
+    event_in(setup, 600, "Later", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()  # each is worked out at the first look after it is stored
     event_in(setup, 10, "Coming", ("15",))
     read: list[str] = []
-
-    def parse(text: str) -> list[EventSeries]:
-        read.append(text)
-        return parse_events(text)
-
-    monkeypatch.setattr(commands_reminders, "parse_events", parse)
+    store_get(monkeypatch, read)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Coming"]
     assert len(read) == 1 and "Coming" in read[0]
+    read.clear()
+    assert check(setup).notes == () and read == []
 
 
 def test_a_series_begun_long_ago_and_a_reminder_days_after_an_event_still_come(setup: Setup) -> None:
@@ -242,4 +260,322 @@ def test_an_email_reminder_with_nowhere_to_go_comes_as_a_notification(setup: Set
     monkeypatch.setattr(commands_reminders, "organizing_account", nobody)
     event_in(setup, 10, "Dentist", ("email:15",))
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+# --- the index knows which reminders are due (D-316) ---------------------------------------------------------------------------------------
+
+
+STAMP = "%Y%m%dT%H%M%SZ"
+
+
+def alarm(trigger: str) -> str:
+    return f"BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Look\r\nTRIGGER{trigger}\r\nEND:VALARM\r\n"
+
+
+def vevent(start: datetime, summary: str, more: str = "", uid: str = "made") -> str:
+    return (
+        f"BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:{start.strftime(STAMP)}\r\nDTEND:{(start + timedelta(hours=1)).strftime(STAMP)}\r\n"
+        f"SUMMARY:{summary}\r\n{more}END:VEVENT\r\n"
+    )
+
+
+def calendar_of(*events: str) -> str:
+    return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n" + "".join(events) + "END:VCALENDAR\r\n"
+
+
+def put(setup: Setup, text: str, item: str | None = None) -> str:
+    """As a synchronisation stores what the server holds."""
+    collection = local_calendar(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        return store.put(collection, text, item)
+
+
+def due_in_index(setup: Setup, moment: datetime) -> list[DueReminder]:
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        return store.index.reminders_due(int(moment.timestamp()))
+
+
+def far_ahead() -> datetime:
+    return datetime.now(UTC) + timedelta(days=100_000)
+
+
+def minute() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def test_a_reminder_40_days_after_its_event_waits_for_its_moment(setup: Setup) -> None:
+    start = minute() - timedelta(days=40, hours=1, minutes=-5)
+    put(setup, calendar_of(vevent(start, "Report back", alarm(";RELATED=END:P40D"))))
+    looked_at(setup, datetime.now(UTC) + timedelta(minutes=2))
+    assert check(setup).notes == ()  # not yet due: the first look worked it out
+    assert len(due_in_index(setup, far_ahead())) == 1
+
+
+def test_a_reminder_40_days_after_its_event_comes(setup: Setup) -> None:
+    start = minute() - timedelta(days=40, hours=1, minutes=3)
+    put(setup, calendar_of(vevent(start, "Report back", alarm(";RELATED=END:P40D"))))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Report back"]
+
+
+def moved_occurrence(moved_to: datetime) -> str:
+    """A daily series that ended 60 days ago, with one date moved to a time that is still to come."""
+    first = minute() - timedelta(days=70)
+    until = (first + timedelta(days=9)).strftime(STAMP)
+    master = vevent(first, "Series", f"RRULE:FREQ=DAILY;UNTIL={until}\r\n{alarm(':-PT15M')}", "series")
+    moved = vevent(moved_to, "Series moved", f"RECURRENCE-ID:{(first + timedelta(days=4)).strftime(STAMP)}\r\n{alarm(':-PT15M')}", "series")
+    return calendar_of(master, moved)
+
+
+def test_a_moved_occurrence_of_a_series_that_ended_long_ago_comes(setup: Setup) -> None:
+    put(setup, moved_occurrence(minute() + timedelta(minutes=10)))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Series moved"]
+
+
+def test_a_moved_occurrence_far_ahead_is_the_next_moment_of_its_ended_series() -> None:
+    moved_to = minute() + timedelta(days=500)
+    assert _next_moment(moved_occurrence(moved_to), datetime.now(UTC), UTC) == moved_to - timedelta(minutes=15)
+
+
+def test_a_series_without_an_end_keeps_only_its_next_reminder() -> None:
+    first = minute() - timedelta(days=4000)
+    text = calendar_of(vevent(first, "Daily", f"RRULE:FREQ=DAILY\r\n{alarm(':-PT15M')}"))
+    moment = datetime.now(UTC)
+    found = _next_moment(text, moment, UTC)
+    assert found is not None and moment < found <= moment + timedelta(days=1)
+    following = _next_moment(text, found, UTC)  # after it fired the next is worked out
+    assert following == found + timedelta(days=1)
+
+
+def test_a_series_is_given_again_for_each_of_its_reminders(setup: Setup) -> None:
+    first = minute() - timedelta(days=30) + timedelta(minutes=30)
+    put(setup, calendar_of(vevent(first, "Daily", f"RRULE:FREQ=DAILY\r\n{alarm(':-PT15M')}")))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=1))
+    check(setup)
+    assert due_in_index(setup, datetime.now(UTC) + timedelta(minutes=14)) == []
+    assert len(due_in_index(setup, datetime.now(UTC) + timedelta(minutes=16))) == 1
+
+
+def test_an_earlier_moved_date_comes_before_the_next_of_its_series() -> None:
+    first = minute() - timedelta(days=30) + timedelta(hours=5)
+    moved = vevent(first + timedelta(days=30) - timedelta(hours=3), "Moved", f"RECURRENCE-ID:{(first + timedelta(days=31)).strftime(STAMP)}\r\n{alarm(':-PT15M')}")
+    text = calendar_of(vevent(first, "Daily", f"RRULE:FREQ=DAILY\r\n{alarm(':-PT15M')}"), moved)
+    assert _next_moment(text, datetime.now(UTC), UTC) == first + timedelta(days=30) - timedelta(hours=3, minutes=15)
+
+
+def test_several_reminders_give_the_first_to_come_also_after_the_event() -> None:
+    start = minute() + timedelta(hours=1)
+    text = calendar_of(vevent(start, "Dentist", alarm(":-PT30M") + alarm(";RELATED=END:PT2H") + alarm(":-PT5M")))
+    assert _next_moment(text, datetime.now(UTC), UTC) == start - timedelta(minutes=30)
+    assert _next_moment(text, start, UTC) == start + timedelta(hours=3)
+    assert _next_moment(text, start + timedelta(hours=4), UTC) is None
+
+
+def test_a_reminder_at_a_fixed_moment_counts_once() -> None:
+    moment = minute() + timedelta(days=3)
+    text = calendar_of(vevent(minute() + timedelta(days=5), "Dentist", alarm(f";VALUE=DATE-TIME:{moment.strftime(STAMP)}")))
+    assert _next_moment(text, datetime.now(UTC), UTC) == moment
+    assert _next_moment(text, moment, UTC) is None
+
+
+def test_a_series_that_only_a_moved_date_reminds_of_is_walked_step_by_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(commands_reminders, "MAXIMUM_OCCURRENCES", 10)
+    first = minute() - timedelta(days=3)
+    moved_to = minute() + timedelta(days=25)
+    moved = vevent(moved_to, "Moved", f"RECURRENCE-ID:{(first + timedelta(days=40)).strftime(STAMP)}\r\n{alarm(':-PT15M')}")
+    text = calendar_of(vevent(first, "Daily", "RRULE:FREQ=DAILY\r\n"), moved)
+    moment = datetime.now(UTC)
+    for _ in range(10):
+        found = _next_moment(text, moment, UTC)
+        assert found is not None and found > moment
+        if found == moved_to - timedelta(minutes=15):
+            break
+        moment = found
+    else:
+        pytest.fail("the walk never reached the moved date")
+
+
+def test_a_floating_time_west_of_greenwich_comes_at_its_own_clock_time() -> None:
+    zone = ZoneInfo("America/New_York")
+    start = datetime(2030, 1, 5, 9, 0, tzinfo=zone)
+    wall = "DTSTART:20300105T090000\r\nDTEND:20300105T100000\r\n"
+    text = calendar_of(f"BEGIN:VEVENT\r\nUID:f\r\nDTSTAMP:20260101T000000Z\r\n{wall}SUMMARY:Floating\r\n{alarm(':-PT15M')}END:VEVENT\r\n")
+    trigger = start - timedelta(minutes=15)
+    assert _next_moment(text, trigger - timedelta(minutes=5), zone) == trigger
+    moment = trigger.astimezone(UTC) + timedelta(seconds=30)
+    assert [due.note.summary for due in _due_in(text, "account", moment - timedelta(minutes=1), moment, zone, ())] == ["Floating"]
+
+
+def test_another_time_zone_works_every_moment_out_again(setup: Setup) -> None:
+    event_in(setup, 600, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=1))
+    check(setup)
+    assert due_in_index(setup, datetime.now(UTC)) == []
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        store.index.keep_reminder_zone("Elsewhere/Town")
+        assert len(store.index.reminders_due(int(datetime.now(UTC).timestamp()))) == 1
+        (item,) = store.index.reminders_due(int(datetime.now(UTC).timestamp()))
+        store.index.keep_reminder_zone("Elsewhere/Town")
+        assert store.index.reminders_due(int(datetime.now(UTC).timestamp())) == [item]
+
+
+def test_a_change_by_a_sync_is_worked_out_again(setup: Setup) -> None:
+    item = put(setup, calendar_of(vevent(minute() + timedelta(days=5), "Dentist", alarm(":-PT15M"))))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=1))
+    check(setup)
+    put(setup, calendar_of(vevent(minute() + timedelta(minutes=10), "Dentist moved", alarm(":-PT15M"))), item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist moved"]
+
+
+def test_a_reminder_taken_away_by_a_sync_leaves_nothing_to_read(setup: Setup) -> None:
+    item = put(setup, calendar_of(vevent(minute() + timedelta(days=5), "Dentist", alarm(":-PT15M"))))
+    put(setup, calendar_of(vevent(minute() + timedelta(days=5), "Dentist")), item)
+    assert due_in_index(setup, far_ahead()) == []
+
+
+def test_a_look_that_read_an_item_before_it_changed_leaves_the_new_text_to_the_next_look(setup: Setup) -> None:
+    item = put(setup, calendar_of(vevent(minute() + timedelta(days=5), "Dentist", alarm(":-PT15M"))))
+    (read,) = due_in_index(setup, datetime.now(UTC))
+    put(setup, calendar_of(vevent(minute() + timedelta(days=2), "Dentist", alarm(":-PT15M"))), item)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        store.index.set_reminders([(read, int(far_ahead().timestamp()))])
+    (waiting,) = due_in_index(setup, datetime.now(UTC))
+    assert waiting.due < 0 and waiting.due != read.due
+
+
+def test_a_deleted_event_has_no_due_moment(setup: Setup) -> None:
+    item = event_in(setup, 10, "Dentist", ("15",))
+    call(setup.engine, "event.delete", item=item)
+    assert due_in_index(setup, far_ahead()) == []
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_an_event_without_reminders_is_never_read(setup: Setup) -> None:
+    event_in(setup, 10, "Lunch", ())
+    assert due_in_index(setup, far_ahead()) == []
+
+
+def test_a_rebuild_makes_the_moments_again(setup: Setup) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=1))
+    check(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        assert store.rebuild_index() == 1
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def index_file(setup: Setup) -> Path:
+    return setup.engine.directories.pim_directory(LOCAL_ACCOUNT_ID) / "pim.sqlite"
+
+
+def back_to_format_3(setup: Setup) -> None:
+    connection = sqlite3.connect(index_file(setup))
+    connection.execute("DROP INDEX items_by_reminder")
+    connection.execute("ALTER TABLE items DROP COLUMN reminder_due")
+    connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+
+
+def file_format(setup: Setup) -> tuple[str, bool]:
+    connection = sqlite3.connect(index_file(setup))
+    found = str(connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0])
+    columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(items)")]
+    connection.close()
+    return found, "reminder_due" in columns
+
+
+def test_the_upgrade_gives_existing_events_their_moment_and_keeps_the_items(setup: Setup) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    event_in(setup, 20, "Lunch", ())
+    back_to_format_3(setup)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+    assert file_format(setup) == ("4", True)
+    assert due_in_index(setup, far_ahead()) == []  # the one reminder fired, the other event has none: nothing is left to read
+    assert check(setup).notes == ()
+
+
+class Stop(BaseException):
+    """The program ends here."""
+
+
+@pytest.mark.parametrize("step", range(1, 5))
+def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    back_to_format_3(setup)
+    made: list[int] = []
+
+    class Stopping(sqlite3.Connection):
+        @override
+        def execute(self, sql: str, parameters: Sequence[str | int] = ()) -> sqlite3.Cursor:  # pyrefly: ignore[bad-override]
+            if sql.startswith(("ALTER", "UPDATE", "CREATE INDEX")):
+                made.append(1)
+                if len(made) == step:
+                    raise Stop
+            return super().execute(sql, parameters)
+
+    real = sqlite3.connect
+
+    def connect(path: Path, isolation_level: None, timeout: float) -> sqlite3.Connection:
+        return real(path, isolation_level=isolation_level, timeout=timeout, factory=Stopping)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    with pytest.raises(Stop):
+        PimIndex(index_file(setup))
+    monkeypatch.undo()
+    assert file_format(setup) == ("3", False)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+    assert file_format(setup) == ("4", True)
+
+
+def test_a_look_that_stops_before_the_last_look_is_written_finds_it_all_again(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    moment = datetime.now(UTC) - timedelta(minutes=6)
+    looked_at(setup, moment)
+
+    def stopped(engine: Engine, when: datetime) -> None:
+        raise Stop
+
+    with monkeypatch.context() as patch:
+        patch.setattr(commands_reminders, "_write_checked", stopped)
+        with pytest.raises(Stop):
+            check(setup)
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def test_moments_that_cannot_be_written_cost_no_reminder_and_nothing_comes_twice(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+
+    def refused(index: PimIndex, moments: object) -> None:
+        raise sqlite3.OperationalError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PimIndex, "set_reminders", refused)
+        assert [note.summary for note in check(setup).notes] == ["Dentist"]
+    assert check(setup).notes == ()
+    assert due_in_index(setup, datetime.now(UTC)) == []
+
+
+def test_a_look_while_the_one_before_it_runs_gives_nothing_and_the_reminder_comes_once(setup: Setup) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    with _LOOKING:
+        assert check(setup) == ReminderCheck()
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def test_a_look_stops_when_the_program_ends_and_the_next_start_finds_it_all(setup: Setup) -> None:
+    event_in(setup, 10, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    setup.engine.stop_event.set()
+    assert check(setup) == ReminderCheck()
+    setup.engine.stop_event.clear()
     assert [note.summary for note in check(setup).notes] == ["Dentist"]

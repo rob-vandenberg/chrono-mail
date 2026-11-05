@@ -1,13 +1,17 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 1.10.277"
+__version__ = "schema.py 4.4.544"
 
 # --- Version history ----------------------------------------------------
+# v4.4.544: Schema 4: reminder_due, when the next reminder of an event comes due (D-316); 3 is upgraded in place
 # v1.10.277: Schema 3: contact groups and their members (R-39)
 # v1.8.263: MINIMUM_SQLITE_VERSION moved to index/database.py (R-16)
 # v0.0.60: Schema 2: a second line for lists (organisation, place)
 # v0.0.59: Initial index schema for calendars, tasks and contacts
 
-SCHEMA_VERSION: int = 3
+SCHEMA_VERSION: int = 4
+FORMER_VERSION: int = 3  # upgraded in place: one transaction, so an interruption leaves the old format whole
+
+REMINDER_INDEX: str = "CREATE INDEX items_by_reminder ON items (reminder_due) WHERE reminder_due IS NOT NULL"
 
 STATEMENTS: tuple[str, ...] = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -34,13 +38,15 @@ STATEMENTS: tuple[str, ...] = (
         tags_folded TEXT NOT NULL,
         size INTEGER NOT NULL,
         is_group INTEGER NOT NULL,
-        members TEXT NOT NULL
+        members TEXT NOT NULL,
+        reminder_due INTEGER
     )""",
     "CREATE INDEX items_by_collection ON items (collection, kind)",
     "CREATE INDEX items_by_start ON items (kind, start)",
     "CREATE INDEX items_by_due ON items (kind, due) WHERE done = 0",
     "CREATE INDEX items_by_sort ON items (kind, sort_key)",
     "CREATE INDEX items_by_uid ON items (collection, uid)",
+    REMINDER_INDEX,
     """CREATE VIRTUAL TABLE text USING fts5 (
         title, body,
         content = '', contentless_delete = 1,

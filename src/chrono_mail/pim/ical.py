@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any  # icalendar hands out untyped property objects; every value is checked before it is used
@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.537"
+__version__ = "ical.py 4.4.544"
 
 # --- Version history ----------------------------------------------------
+# v4.4.544: occurrences_from: the occurrences one by one from a moment on, with no end: the walk of occurrences, now also for the next reminder of a series (D-316)
 # v4.4.537: an alarm with ACTION:NONE is no reminder: it is not read as one and stays in the item when the reminders change
 # v4.4.536: An e-mail reminder has the address and the summary the standard asks (round 4)
 # v4.4.527: the size limit of a text is measured and says so
@@ -763,6 +764,25 @@ def _as_aware(value: Moment, zone: tzinfo) -> datetime:
     return datetime(value.year, value.month, value.day, tzinfo=zone)
 
 
+def occurrences_from(text: str, start: datetime) -> Iterator[Occurrence]:
+    """The events of a calendar text that end after a moment, repeating ones expanded, exceptions and moved occurrences honoured, one by one in the
+    order of their start: a series without an end goes on for as long as it is asked."""
+    calendar = _parse(text)
+    if calendar is None:
+        return
+    try:
+        changed_ids = {(series.master.uid, change.recurrence_id) for series in parse_events(text) for change in series.overrides}
+        for component in recurring_ical_events.of(calendar, components=["VEVENT"]).after(start):  # in the order of their start
+            try:
+                event = _event_from(component)
+            except Exception:  # noqa: BLE001 - a damaged occurrence is left out
+                continue
+            if event is not None:
+                yield Occurrence(event, event.start, event.end, (event.uid, event.recurrence_id) in changed_ids)
+    except Exception:  # noqa: BLE001 - one damaged item must not empty the whole view (what it gave before the fault is kept)
+        return
+
+
 def occurrences(texts: Iterable[str], start: datetime, end: datetime, zone: tzinfo | None = None, limit: int = MAXIMUM_OCCURRENCES) -> list[Occurrence]:
     """The events of these calendar texts that happen between two moments, repeating ones expanded, exceptions and moved occurrences honoured,
     sorted by start; at most `limit`. Floating and all-day times are taken in `zone` (the local zone when not given). Occurrences are made one by
@@ -774,25 +794,12 @@ def occurrences(texts: Iterable[str], start: datetime, end: datetime, zone: tzin
     local = zone or datetime.now().astimezone().tzinfo or UTC
     found: list[Occurrence] = []
     for text in texts:
-        calendar = _parse(text)
-        if calendar is None:
-            continue
-        try:
-            changed_ids = {(series.master.uid, change.recurrence_id) for series in parse_events(text) for change in series.overrides}
-            for component in recurring_ical_events.of(calendar, components=["VEVENT"]).after(start):  # in the order of their start
-                try:
-                    event = _event_from(component)
-                except Exception:  # noqa: BLE001 - a damaged occurrence is left out
-                    continue
-                if event is None:
-                    continue
-                if _as_aware(event.start, local) >= end:
-                    break  # this one and every later one start after the range
-                found.append(Occurrence(event, event.start, event.end, (event.uid, event.recurrence_id) in changed_ids))
-                if len(found) >= limit:
-                    break
-        except Exception:  # noqa: BLE001 - one damaged item must not empty the whole view (what it gave before the fault is kept)
-            pass
+        for occurrence in occurrences_from(text, start):
+            if _as_aware(occurrence.start, local) >= end:
+                break  # this one and every later one start after the range
+            found.append(occurrence)
+            if len(found) >= limit:
+                break
         if len(found) >= limit:
             break
     found.sort(key=lambda item: (_as_aware(item.start, local), _as_aware(item.end, local)))

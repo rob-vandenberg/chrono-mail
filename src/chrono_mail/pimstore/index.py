@@ -1,4 +1,6 @@
 import re
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -6,12 +8,14 @@ from typing import override
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.index import IndexDatabase
 from chrono_mail.pimstore.extract import Extract, tag_text
-from chrono_mail.pimstore.schema import SCHEMA_VERSION, STATEMENTS
+from chrono_mail.pimstore.schema import FORMER_VERSION, REMINDER_INDEX, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.525"
+__version__ = "index.py 4.4.544"
 
 # --- Version history ----------------------------------------------------
+# v4.4.544: format 4: each event holds when its next reminder comes due, so the reminder check reads only what is due (D-316);
+#           format 3 is upgraded in place, every event to be worked out at the next look
 # v4.4.525: uids: every uid of a collection in one query
 # v2.5.335: a new file is made only after it is found empty again under the write lock: a second connection opening it at that
 #           moment took it for damaged, and the file was removed while the first still used it (D-247)
@@ -25,6 +29,7 @@ __version__ = "index.py 4.4.525"
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 FLOATING_MARGIN: int = 86_400  # wall-clock times are kept as if UTC: a range is widened by a day each way, the exact filtering is done on the real values
+REMINDER_ZONE_KEY: str = "reminder_zone"  # meta: the time zone the due moments were worked out in; a floating time comes due at another moment in another zone
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +61,20 @@ _COLUMNS = (
     "i.item_id, i.collection, i.kind, i.uid, i.title, i.subtitle, i.sort_key, i.start, i.end, i.due, i.floating, i.repeats, i.until, i.status, i.done, i.priority, "
     "i.percent, i.tags, i.size, i.is_group, i.members"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class DueReminder:
+    """An event the reminder check has to read. `due` is what the index held: a moment, or below zero, not worked out yet (D-316)."""
+
+    item_id: str
+    collection: str
+    due: int
+
+
+def _not_worked_out() -> int:
+    """A number below zero that says "not worked out yet", never the same twice: a look that read an item before it changed can never write its answer over the new text's."""
+    return -time.time_ns()
 
 
 def _item(row: tuple[object, ...]) -> IndexedItem:
@@ -109,6 +128,11 @@ class PimIndex(IndexDatabase):
                 for statement in STATEMENTS:
                     self._connection.execute(statement)
                 self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+            elif found == str(FORMER_VERSION):
+                self._connection.execute("ALTER TABLE items ADD COLUMN reminder_due INTEGER")
+                self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.EVENTS.value,))
+                self._connection.execute(REMINDER_INDEX)
+                self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
 
@@ -116,14 +140,15 @@ class PimIndex(IndexDatabase):
 
     def upsert(self, item_id: str, collection: str, kind: CollectionKind, extract: Extract, size: int) -> None:
         with self._transaction():
+            reminder_due = _not_worked_out() if extract.reminders else None
             self._remove(item_id)
             cursor = self._connection.execute(
                 "INSERT INTO items (item_id, collection, kind, uid, title, subtitle, sort_key, start, end, due, floating, repeats, until, status, done, priority, percent, tags, "
-                "tags_folded, size, is_group, members) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "tags_folded, size, is_group, members, reminder_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id, collection, kind.value, extract.uid, extract.title, extract.subtitle, extract.sort_key, extract.start, extract.end, extract.due, int(extract.floating),
                     int(extract.repeats), extract.until, extract.status, int(extract.done), extract.priority, extract.percent, tag_text(extract.tags), tag_text(extract.tags, True), size,
-                    int(extract.group), "\x1f".join(member.replace("\x1f", "") for member in extract.members),
+                    int(extract.group), "\x1f".join(member.replace("\x1f", "") for member in extract.members), reminder_due,
                 ),
             )
             self._connection.execute("INSERT INTO text (rowid, title, body) VALUES (?, ?, ?)", (cursor.lastrowid, extract.title, extract.text))
@@ -148,7 +173,27 @@ class PimIndex(IndexDatabase):
             self._connection.execute("DELETE FROM text")
             self._connection.execute("DELETE FROM items")
 
+    def keep_reminder_zone(self, zone: str) -> None:
+        """The time zone of this look. Another one than before: every due moment is worked out again, a floating time comes due at another moment there."""
+        row = self._connection.execute("SELECT value FROM meta WHERE key = ?", (REMINDER_ZONE_KEY,)).fetchone()
+        if row is not None and str(row[0]) == zone:
+            return
+        with self._transaction():
+            self._connection.execute("UPDATE items SET reminder_due = ? - id WHERE reminder_due IS NOT NULL", (_not_worked_out(),))
+            self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (REMINDER_ZONE_KEY, zone))
+
+    def set_reminders(self, moments: Iterable[tuple[DueReminder, int | None]]) -> None:
+        """The next due moment of events the check has read (None: none comes any more). An event stored again since it was read keeps its new number."""
+        with self._transaction():
+            for reminder, moment in moments:
+                self._connection.execute("UPDATE items SET reminder_due = ? WHERE item_id = ? AND reminder_due = ?", (moment, reminder.item_id, reminder.due))
+
     # --- asking --------------------------------------------------------------------------------
+
+    def reminders_due(self, moment: int) -> list[DueReminder]:
+        """The events with a reminder due by this moment, and the ones not worked out yet."""
+        rows = self._connection.execute("SELECT item_id, collection, reminder_due FROM items WHERE reminder_due IS NOT NULL AND reminder_due <= ?", (moment,)).fetchall()
+        return [DueReminder(str(row[0]), str(row[1]), int(row[2])) for row in rows]
 
     def item_ids(self, collection: str | None = None) -> set[str]:
         if collection is None:

@@ -3983,3 +3983,12 @@ Built: src/chrono_mail/protocols/releases.py: every connection of the update che
 A check that was hung up ends as "GitHub not reached", does not count as the check of the day, and the person sees nothing.
 Tests: tests/test_hangup.py, tests/ui/test_ui_closing.py. On 4.4.542 the 7 tests of the fault fail; the 8th (nothing stays held) passes there too, it guards the new handle.
 Open: tried with a local silent server only, not with GitHub itself, not on Windows; a name lookup still cannot be hung up (the owner's choice).
+
+## 2026-11-05 4.4.544 The index knows which reminders are due (D-316)
+
+Cause: the check read events by date and skipped every event that ended over 31 days ago, so a reminder 40 days after an event and a moved date of a finished series never came.
+Built: index format 4, column reminder_due (src/chrono_mail/pimstore/index.py, schema.py, extract.py), format 3 upgraded in place in one transaction. Storing marks an event with reminders to be worked out; the look reads what is due or marked, gives what came due and writes the next moment (_next_moment, src/chrono_mail/engine/commands_reminders.py). LONG_AFTER and every limit in days are gone. occurrences_from in src/chrono_mail/pim/ical.py walks occurrences one by one. One look at a time, and a look stops when the program ends.
+Also fixed: the period was given in UTC, so west of Greenwich a floating event's reminder never came.
+Measured on 20,000 generated events, 20 samples each: one look 2.94 s median (2.30 to 2.97) on 4.4.543, 0.053 s median (0.047 to 0.071) now; the one first look after the upgrade 26 s, in the background.
+Tests: tests/test_engine_reminders.py. On 4.4.543 the 40-day reminder, the moved date and the floating time fail by behaviour; the tests of the new parts fail there because those parts do not exist. test_the_look_reads_no_event_that_ended_long_ago enforced the removed limit and became test_the_look_reads_only_what_is_due.
+Open: not tried in a real run with the window, a real server or Windows. Tasks do not fire reminders (they never did, D-313 speaks of events).

@@ -9,9 +9,10 @@ from chrono_mail.pim.contact import member_address, member_uid, parse_contacts
 from chrono_mail.pim.ical import Moment, parse_events, parse_tasks
 
 # --- Version ------------------------------------------------------------
-__version__ = "extract.py 1.10.277"
+__version__ = "extract.py 4.4.544"
 
 # --- Version history ----------------------------------------------------
+# v4.4.544: reminders: whether an event holds any, so an event without one is never looked at for them (D-316)
 # v1.10.277: A contact group: marked as a group, with its members (R-39)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial extraction of what the index holds from an item
@@ -42,6 +43,7 @@ class Extract:
     text: str = ""
     group: bool = False  # a contact group (R-39)
     members: tuple[str, ...] = ()  # a group's members: "uid:<bare uid>" or "mailto:<address in lower case>"
+    reminders: bool = False  # an event that holds reminders, in itself or in a changed occurrence (D-316)
 
 
 def epoch(moment: Moment | None) -> tuple[int | None, bool]:
@@ -92,6 +94,7 @@ def extract(kind: CollectionKind, text: str) -> Extract:
         return Extract(
             event.uid, event.summary, event.location, str(start or 0).zfill(12), start, end, None, floating, event.repeats, _until(event.rrule) if event.rrule else None,
             event.status, False, 0, 0, event.categories, body,
+            reminders=any(item.reminders for one in series for item in (one.master, *one.overrides)),
         )
     if kind is CollectionKind.TASKS:
         tasks = parse_tasks(text)

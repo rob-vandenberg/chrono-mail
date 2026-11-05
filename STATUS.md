@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-05, version 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
+*Last updated: 2026-11-05, version 4.4.544 (the index knows which reminders are due, D-316); before it 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -9,11 +9,13 @@
 - **Open in milestone 1:** 1.14 (the Windows setup.exe builds on the Windows computer; still to test there: the password store in the installed program, and a Windows run of the program itself).
 - **UI restyle, first round (D-083, D-084):** steps 1 to 3 of 5 done; step 4 (the Settings pages and the other dialogs) and step 5 (Calendar, Tasks, Contacts) are open.
 - **The last versions:** `git log` and `DEVLOG.md`; the full list up to 4.2.462 is in `STATUS-ARCHIVE.md` (moved 2026-11-01).
-- Design decisions: D-001 to D-315 (D-277 never used), one short file each in `decisions/` with topic files; `DECISIONS.md` is the entry point with the core decisions (D-193, the basic rule, first) and the topics (D-162; rewritten on 2026-11-03 from one file of 111 KB, of which every chat now reads about 18 KB at the start); the full and older wordings of each decision are in `decision-details/` (this computer only).
+- Design decisions: D-001 to D-316 (D-277 never used), one short file each in `decisions/` with topic files; `DECISIONS.md` is the entry point with the core decisions (D-193, the basic rule, first) and the topics (D-162; rewritten on 2026-11-03 from one file of 111 KB, of which every chat now reads about 18 KB at the start); the full and older wordings of each decision are in `decision-details/` (this computer only).
 - Tests: 2,497 offline tests (1,711 engine incl. 2 Windows-only skips, 786 window; 2026-10-21, R-45: all pass in their own process and in any order, `tests/run_isolated.py`, `tests/runorder.py`, AGENTS.md 4.5.5); before: 2219 offline tests (from 1.1.176 to 2.0.295 not in git; in git again since 2.0.296, D-233), 65 live tests, plus the other opt-in tests (credential store, performance). The count per version is in `STATUS-ARCHIVE.md`.
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.544 done (D-316).** The calendar index keeps each event's next due reminder; the check reads only those, and no limit in days remains. To check by the owner: give an event a reminder a few minutes ahead: it comes as before; a moved date of a finished series and a reminder long after an event now come too. The first start upgrades each calendar index at once; the first look reads every event once, in the background (26 s measured for 14,000 events with reminders), and a look after that takes 0.05 s (was 2.94 s on 20,000 events). Not tried in a real run: the window itself, a real server, Windows.
 
 **4.4.543 done (D-315).** The update check is hung up at closing like every other connection; a silent update server no longer delays the end of closing, and the person sees nothing of it. Tested with a local silent server only: not with GitHub itself, not on Windows.
 

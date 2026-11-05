@@ -42,3 +42,4 @@ See also: [[sync-conflicts]]
 - [[D-310]] Calendar messages in mail (iTIP)
 - [[D-312]] The appointment window
 - [[D-313]] Reminders fire from Chrono Mail
+- [[D-316]] The index knows which reminders are due
