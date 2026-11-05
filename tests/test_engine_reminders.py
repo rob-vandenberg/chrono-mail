@@ -15,15 +15,16 @@ from chrono_mail.engine.commands_reminders import _LOOKING, ReminderCheck, _Due,
 from chrono_mail.pim.ical import parse_events
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.pimstore import DueReminder, PimIndex, PimStore
-from chrono_mail.core import LOCAL_ACCOUNT_ID
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
 from tests.test_config import make_account
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.544"
+__version__ = "test_engine_reminders.py 4.4.545"
 
 # --- Version history ----------------------------------------------------
+# v4.4.545: a task reminds through the same look; the upgrade of the index to format 5 (D-316)
 # v4.4.544: the index knows which reminders are due: no limit in days, the look reads only those, the upgrade of the index (D-316)
 # v4.4.537: a placeholder alarm is no reminder and stays; old events are not read; account.edit takes none for invitation_answers
 # v4.4.536: Initial version (D-313)
@@ -243,10 +244,10 @@ def test_a_damaged_item_fails_only_itself(setup: Setup, monkeypatch: pytest.Monk
     event_in(setup, 10, "Dentist", ("15",))
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
 
-    def odd(text: str, account: str, since: datetime, now: datetime, zone: tzinfo, yours: Collection[str]) -> list[_Due]:
+    def odd(text: str, account: str, since: datetime, now: datetime, zone: tzinfo, yours: Collection[str], kind: CollectionKind) -> list[_Due]:
         if "Odd" in text:
             raise TypeError("odd")
-        return real(text, account, since, now, zone, yours)
+        return real(text, account, since, now, zone, yours, kind)
 
     real = _due_in
     monkeypatch.setattr(commands_reminders, "_due_in", odd)
@@ -496,7 +497,7 @@ def test_the_upgrade_gives_existing_events_their_moment_and_keeps_the_items(setu
     back_to_format_3(setup)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("4", True)
+    assert file_format(setup) == ("5", True)
     assert due_in_index(setup, far_ahead()) == []  # the one reminder fired, the other event has none: nothing is left to read
     assert check(setup).notes == ()
 
@@ -505,7 +506,7 @@ class Stop(BaseException):
     """The program ends here."""
 
 
-@pytest.mark.parametrize("step", range(1, 5))
+@pytest.mark.parametrize("step", range(1, 6))
 def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     event_in(setup, 10, "Dentist", ("15",))
     back_to_format_3(setup)
@@ -532,7 +533,7 @@ def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_a
     assert file_format(setup) == ("3", False)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("4", True)
+    assert file_format(setup) == ("5", True)
 
 
 def test_a_look_that_stops_before_the_last_look_is_written_finds_it_all_again(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -579,3 +580,295 @@ def test_a_look_stops_when_the_program_ends_and_the_next_start_finds_it_all(setu
     assert check(setup) == ReminderCheck()
     setup.engine.stop_event.clear()
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+# --- a task reminds through the same look (D-316) -------------------------------------------------------------------------------------------------
+
+
+def local_list(setup: Setup) -> str:
+    local_calendar(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        (tasks,) = store.collections(CollectionKind.TASKS)
+        return tasks.collection_id
+
+
+def task_in(setup: Setup, minutes: int, summary: str, reminder: tuple[str, ...], **more: str | int) -> str:
+    due = (datetime.now(UTC) + timedelta(minutes=minutes)).replace(microsecond=0)
+    return str(call(setup.engine, "task.add", list=local_list(setup), summary=summary, due=due.isoformat(), reminder=reminder, **more).item)
+
+
+def fixed_in(minutes: int) -> str:
+    return "at:" + (datetime.now(UTC) + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+
+
+def vtodo(due: datetime | None, summary: str, more: str = "", uid: str = "made-task") -> str:
+    moment = f"DUE:{due.strftime(STAMP)}\r\n" if due is not None else ""
+    return f"BEGIN:VTODO\r\nUID:{uid}\r\nDTSTAMP:20260101T000000Z\r\n{moment}SUMMARY:{summary}\r\n{more}END:VTODO\r\n"
+
+
+def put_task(setup: Setup, text: str, item: str | None = None) -> str:
+    """As a synchronisation stores what the server holds."""
+    collection = local_list(setup)
+    with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
+        return store.put(collection, text, item)
+
+
+def summaries(setup: Setup) -> list[str]:
+    return [note.summary for note in check(setup).notes]
+
+
+def test_a_task_reminds_minutes_before_its_due_time_and_once(setup: Setup) -> None:
+    task_in(setup, 10, "Pay rent", ("15",), location="Bank")
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    (note,) = check(setup).notes
+    assert (note.summary, note.location) == ("Pay rent", "Bank") and note.when
+    assert check(setup).notes == ()
+
+
+def test_a_task_reminds_at_its_due_time(setup: Setup) -> None:
+    task_in(setup, -2, "Pay rent", ("0",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=3))
+    assert summaries(setup) == ["Pay rent"]
+
+
+def test_a_task_not_yet_due_for_a_reminder_waits_and_then_comes(setup: Setup) -> None:
+    item = task_in(setup, 60, "Pay rent", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=1))
+    assert check(setup).notes == ()
+    (waiting,) = [one for one in due_in_index(setup, far_ahead()) if one.item_id == item]
+    assert waiting.kind is CollectionKind.TASKS and waiting.due > 0
+    assert due_in_index(setup, datetime.now(UTC)) == []  # not read again until its moment
+
+
+def test_a_reminder_of_a_task_at_a_fixed_time_comes(setup: Setup) -> None:
+    task_in(setup, 600, "Pay rent", (fixed_in(-2),))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=3))
+    assert summaries(setup) == ["Pay rent"]
+
+
+def test_minutes_count_from_the_due_time_also_when_the_alarm_names_the_start() -> None:
+    """The task editor says minutes before the due time, and a reminder set before there was a due time stays RELATED=START."""
+    due = minute() + timedelta(days=3)
+    text = calendar_of(vtodo(due, "Pay rent", f"DTSTART:{(due - timedelta(days=2)).strftime(STAMP)}\r\n{alarm(':-PT15M')}"))
+    assert _next_moment(text, minute(), UTC, CollectionKind.TASKS) == due - timedelta(minutes=15)
+
+
+def test_a_task_due_on_a_day_reminds_from_the_start_of_that_day() -> None:
+    day = (datetime.now(UTC) + timedelta(days=3)).date()
+    text = calendar_of(vtodo(None, "Pay rent", f"DUE;VALUE=DATE:{day.strftime('%Y%m%d')}\r\n{alarm(';RELATED=END:-P1D')}"))
+    assert _next_moment(text, minute(), UTC, CollectionKind.TASKS) == datetime(day.year, day.month, day.day, tzinfo=UTC) - timedelta(days=1)
+
+
+def test_a_repeating_task_keeps_only_its_next_reminder_and_goes_on_after_it_fired(setup: Setup) -> None:
+    first = minute() - timedelta(days=3)  # long past due and never completed: the rule goes on, as a series of events does
+    text = calendar_of(vtodo(first, "Water plants", f"RRULE:FREQ=DAILY\r\n{alarm(';RELATED=END:-PT15M')}"))
+    now = minute()
+    found = _next_moment(text, now, UTC, CollectionKind.TASKS)
+    assert found is not None and now < found <= now + timedelta(days=1)
+    following = _next_moment(text, found, UTC, CollectionKind.TASKS)
+    assert following == found + timedelta(days=1)
+    put_task(setup, text)
+    looked_at(setup, found - timedelta(minutes=1))
+    assert [one.due for one in due_in_index(setup, far_ahead())] != []
+    assert len(_due_in(text, "account", found - timedelta(minutes=1), found + timedelta(minutes=1), UTC, (), CollectionKind.TASKS)) == 1
+
+
+def test_a_repeating_task_that_is_completed_goes_on_from_its_next_time(setup: Setup) -> None:
+    item = task_in(setup, 10, "Water plants", ("15",), rrule="FREQ=DAILY")
+    call(setup.engine, "task.complete", item=item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()  # this time is done
+    (next_time,) = [one for one in due_in_index(setup, far_ahead()) if one.item_id == item]
+    assert timedelta(hours=23) < datetime.fromtimestamp(next_time.due, UTC) - datetime.now(UTC) < timedelta(hours=25)
+
+
+def test_a_moved_occurrence_of_a_task_counts_like_any_other() -> None:
+    first = minute() - timedelta(days=3)
+    moved_to = minute() + timedelta(days=25)
+    moved = vtodo(moved_to, "Moved", f"RECURRENCE-ID:{(first + timedelta(days=40)).strftime(STAMP)}\r\n{alarm(';RELATED=END:-PT15M')}")
+    text = calendar_of(vtodo(first, "Daily", "RRULE:FREQ=DAILY;COUNT=5\r\n"), moved)
+    assert _next_moment(text, minute(), UTC, CollectionKind.TASKS) == moved_to - timedelta(minutes=15)
+
+
+def test_a_change_by_a_sync_moves_the_reminder_of_a_task(setup: Setup) -> None:
+    far = minute() + timedelta(days=2)
+    item = put_task(setup, calendar_of(vtodo(far, "Pay rent", alarm(";RELATED=END:-PT15M"))))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+    put_task(setup, calendar_of(vtodo(minute() + timedelta(minutes=10), "Pay rent", alarm(";RELATED=END:-PT15M"))), item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert summaries(setup) == ["Pay rent"]
+
+
+def test_a_reminder_taken_away_by_a_sync_leaves_a_task_with_nothing_to_read(setup: Setup) -> None:
+    item = put_task(setup, calendar_of(vtodo(minute() + timedelta(minutes=10), "Pay rent", alarm(";RELATED=END:-PT15M"))))
+    put_task(setup, calendar_of(vtodo(minute() + timedelta(minutes=10), "Pay rent")), item)
+    assert due_in_index(setup, far_ahead()) == []
+
+
+def test_a_deleted_task_has_no_due_moment_and_gives_nothing(setup: Setup) -> None:
+    item = task_in(setup, 10, "Pay rent", ("15",))
+    call(setup.engine, "task.delete", item=item)
+    assert due_in_index(setup, far_ahead()) == []
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_one_missed_while_closed_counts_only_for_a_task_not_yet_due(setup: Setup) -> None:
+    task_in(setup, 30, "Not yet due", ("60",))
+    task_in(setup, -10, "Past due", ("20",))
+    looked_at(setup, datetime.now(UTC) - timedelta(hours=2))
+    assert summaries(setup) == ["Not yet due"]
+
+
+def test_a_task_without_a_due_time_that_missed_its_reminder_while_closed_still_gets_it(setup: Setup) -> None:
+    call(setup.engine, "task.add", list=local_list(setup), summary="Call the bank", reminder=(fixed_in(-60),))
+    looked_at(setup, datetime.now(UTC) - timedelta(hours=2))
+    assert summaries(setup) == ["Call the bank"]
+
+
+def test_a_finished_task_fires_nothing_and_is_not_read(setup: Setup) -> None:
+    item = task_in(setup, 10, "Pay rent", ("15",))
+    call(setup.engine, "task.complete", item=item)
+    assert due_in_index(setup, far_ahead()) == []
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_a_task_finished_by_a_sync_fires_nothing(setup: Setup) -> None:
+    put_task(setup, calendar_of(vtodo(minute() + timedelta(minutes=10), "Pay rent", f"STATUS:COMPLETED\r\n{alarm(';RELATED=END:-PT15M')}")))
+    assert due_in_index(setup, far_ahead()) == []
+
+
+def test_a_task_opened_again_counts_again(setup: Setup) -> None:
+    item = task_in(setup, 10, "Pay rent", ("15",))
+    call(setup.engine, "task.complete", item=item)
+    call(setup.engine, "task.reopen", item=item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert summaries(setup) == ["Pay rent"]
+
+
+def test_a_cancelled_task_is_inert_and_counts_again_when_its_status_changes_back(setup: Setup) -> None:
+    item = task_in(setup, 10, "Pay rent", ("15",))
+    call(setup.engine, "task.edit", item=item, status="cancelled")
+    assert due_in_index(setup, far_ahead()) == []
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+    call(setup.engine, "task.edit", item=item, status="needs-action")
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert summaries(setup) == ["Pay rent"]
+
+
+def test_a_repeating_task_cancelled_by_a_sync_fires_nothing_at_any_of_its_times() -> None:
+    text = calendar_of(vtodo(minute() - timedelta(days=3), "Daily", f"STATUS:CANCELLED\r\nRRULE:FREQ=DAILY\r\n{alarm(';RELATED=END:-PT15M')}"))
+    assert _next_moment(text, minute(), UTC, CollectionKind.TASKS) is None
+
+
+def test_a_task_without_a_due_date_fires_only_a_reminder_at_a_fixed_time(setup: Setup) -> None:
+    start = (datetime.now(UTC) + timedelta(minutes=10)).replace(microsecond=0).isoformat()
+    call(setup.engine, "task.add", list=local_list(setup), summary="Counted from the start", start=start, reminder=("15",))
+    call(setup.engine, "task.add", list=local_list(setup), summary="No dates", reminder=("15",))
+    call(setup.engine, "task.add", list=local_list(setup), summary="Fixed", reminder=(fixed_in(-2),))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert summaries(setup) == ["Fixed"]
+    assert due_in_index(setup, far_ahead()) == []
+
+
+def test_a_repeating_task_without_a_due_date_gets_no_made_up_due_time() -> None:
+    start = minute() - timedelta(days=3)
+    text = calendar_of(vtodo(None, "Daily", f"DTSTART:{start.strftime(STAMP)}\r\nRRULE:FREQ=DAILY\r\n{alarm(':-PT15M')}"))
+    assert _next_moment(text, minute(), UTC, CollectionKind.TASKS) is None
+
+
+def test_the_note_and_the_mail_of_a_task_without_a_due_date_have_no_empty_when(setup: Setup) -> None:
+    moment = (minute() - timedelta(minutes=2)).strftime(STAMP)
+    call(setup.engine, "task.add", list=local_list(setup), summary="Call the bank", reminder=(fixed_in(-2),))
+    put_task(setup, calendar_of(vtodo(None, "Mail the bank", f"BEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Bank\r\nDESCRIPTION:Bank\r\nTRIGGER;VALUE=DATE-TIME:{moment}\r\nEND:VALARM\r\n")))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=3))
+    result = check(setup)
+    assert [(note.summary, note.when) for note in result.notes] == [("Call the bank", "")] and result.mails == 1
+    (received,) = setup.smtp.received
+    assert b"Reminder: Mail the bank" in received.data and b"When:" not in received.data
+
+
+def test_an_email_alarm_of_a_task_from_elsewhere_is_mailed_like_an_event_s(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    mails: list[_Due] = []
+
+    def send(_engine: Engine, due: _Due) -> bool:
+        mails.append(due)
+        return True
+
+    monkeypatch.setattr(commands_reminders, "_send", send)
+    text = vtodo(minute() + timedelta(minutes=10), "Pay rent", "BEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Pay\r\nDESCRIPTION:Pay\r\nTRIGGER;RELATED=END:-PT15M\r\nEND:VALARM\r\n")
+    put_task(setup, calendar_of(text))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    result = check(setup)
+    assert result.notes == () and result.mails == 1 and [one.note.summary for one in mails] == ["Pay rent"]
+
+
+def back_to_format_4(setup: Setup) -> None:
+    connection = sqlite3.connect(index_file(setup))
+    connection.execute("UPDATE items SET reminder_due = NULL WHERE kind = 'tasks'")
+    connection.execute("UPDATE meta SET value = '4' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+
+
+def test_the_upgrade_gives_existing_tasks_their_moment_and_leaves_events_as_they_are(setup: Setup) -> None:
+    task_in(setup, 10, "Pay rent", ("15",))
+    task_in(setup, 20, "Tidy up", ())
+    event_in(setup, 300, "Dentist", ("15",))
+    looked_at(setup, datetime.now(UTC) - timedelta(seconds=1))
+    check(setup)  # every moment worked out
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    events_before = due_in_index(setup, far_ahead())
+    back_to_format_4(setup)
+    assert file_format(setup) == ("4", True)
+    assert summaries(setup) == ["Pay rent"]
+    assert file_format(setup) == ("5", True)
+    assert [one for one in due_in_index(setup, far_ahead()) if one.kind is CollectionKind.TASKS] == []  # the one fired, the other has none
+    assert due_in_index(setup, far_ahead()) == [one for one in events_before if one.kind is CollectionKind.EVENTS]
+    assert check(setup).notes == ()
+
+
+def test_format_3_comes_to_format_5_with_events_and_tasks(setup: Setup) -> None:
+    task_in(setup, 10, "Pay rent", ("15",))
+    event_in(setup, 10, "Dentist", ("15",))
+    back_to_format_3(setup)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert sorted(summaries(setup)) == ["Dentist", "Pay rent"]
+    assert file_format(setup) == ("5", True)
+
+
+@pytest.mark.parametrize("step", range(1, 3))
+def test_the_upgrade_for_tasks_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
+    task_in(setup, 10, "Pay rent", ("15",))
+    back_to_format_4(setup)
+    made: list[int] = []
+
+    class Stopping(sqlite3.Connection):
+        @override
+        def execute(self, sql: str, parameters: Sequence[str | int] = ()) -> sqlite3.Cursor:  # pyrefly: ignore[bad-override]
+            if sql.startswith("UPDATE"):
+                made.append(1)
+                if len(made) == step:
+                    raise Stop
+            return super().execute(sql, parameters)
+
+    real = sqlite3.connect
+
+    def connect(path: Path, isolation_level: None, timeout: float) -> sqlite3.Connection:
+        return real(path, isolation_level=isolation_level, timeout=timeout, factory=Stopping)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    with pytest.raises(Stop):
+        PimIndex(index_file(setup))
+    monkeypatch.undo()
+    assert file_format(setup) == ("4", True)
+    connection = sqlite3.connect(index_file(setup))
+    assert connection.execute("SELECT COUNT(*) FROM items WHERE kind = 'tasks' AND reminder_due IS NOT NULL").fetchone() == (0,)
+    connection.close()
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert summaries(setup) == ["Pay rent"]
+    assert file_format(setup) == ("5", True)
+

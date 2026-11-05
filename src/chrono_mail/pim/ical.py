@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.544"
+__version__ = "ical.py 4.4.545"
 
 # --- Version history ----------------------------------------------------
+# v4.4.545: task_occurrences_from: the times a task falls due, one by one from a moment on, for its reminders; Task.inert (D-316)
 # v4.4.544: occurrences_from: the occurrences one by one from a moment on, with no end: the walk of occurrences, now also for the next reminder of a series (D-316)
 # v4.4.537: an alarm with ACTION:NONE is no reminder: it is not read as one and stays in the item when the reminders change
 # v4.4.536: An e-mail reminder has the address and the summary the standard asks (round 4)
@@ -138,6 +139,11 @@ class Task:
     @property
     def done(self) -> bool:
         return self.status == "COMPLETED" or self.completed is not None
+
+    @property
+    def inert(self) -> bool:
+        """It exists and does nothing: finished or cancelled, it gives no reminder (D-316)."""
+        return self.done or self.status == "CANCELLED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -780,6 +786,24 @@ def occurrences_from(text: str, start: datetime) -> Iterator[Occurrence]:
             if event is not None:
                 yield Occurrence(event, event.start, event.end, (event.uid, event.recurrence_id) in changed_ids)
     except Exception:  # noqa: BLE001 - one damaged item must not empty the whole view (what it gave before the fault is kept)
+        return
+
+
+def task_occurrences_from(text: str, start: datetime) -> Iterator[Task]:
+    """The times the tasks of a text fall due after a moment, repeating ones expanded, moved occurrences honoured, one by one in the order of their start
+    (their due time when they have no start): a series without an end goes on for as long as it is asked. A task without a due time has none: left to
+    the library it would be given one of its own making."""
+    calendar = _parse(text)
+    if calendar is None:
+        return
+    calendar.subcomponents = [part for part in calendar.subcomponents if part.name != "VTODO" or part.get("DUE") is not None]
+    try:
+        for component in recurring_ical_events.of(calendar, components=["VTODO"]).after(start):  # in the order of their start
+            try:
+                yield _task_from(component)
+            except Exception:  # noqa: BLE001 - a damaged occurrence is left out
+                continue
+    except Exception:  # noqa: BLE001 - one damaged item gives what it gave before the fault
         return
 
 

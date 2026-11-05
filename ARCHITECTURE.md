@@ -150,7 +150,7 @@ Calendars, tasks and contacts next to mail, for every kind of account: local (no
 ### 7.4 Storage (D-072)
 
 - One directory per account with `pim.json` and `collections/<id>/`, each item an encrypted text written atomically like mail, with the same data key. A damaged item is one lost item, never a stalled collection. Deleted items go to `.deleted/` (purged after 30 days).
-- The index (`pim.sqlite`) holds what the views need and is rebuilt from the items at any time. Occurrences of repeating events are expanded when a range is asked for, not stored. Each event holds when its next reminder comes due (`reminder_due`, D-316): the reminder check reads only those, worked out at the look after the event is stored.
+- The index (`pim.sqlite`) holds what the views need and is rebuilt from the items at any time. Occurrences of repeating events are expanded when a range is asked for, not stored. Each event and each unfinished task holds when its next reminder comes due (`reminder_due`, D-316): the reminder check reads only those, worked out at the look after the event is stored.
 - Server state (sync tokens, etags) is kept beside the items (`dav-state.json`). Local collections belong to a pseudo-account, like Local Folders.
 
 ### 7.5 Finding the server (D-180 to D-183)

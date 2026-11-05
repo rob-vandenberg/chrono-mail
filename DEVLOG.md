@@ -3992,3 +3992,11 @@ Also fixed: the period was given in UTC, so west of Greenwich a floating event's
 Measured on 20,000 generated events, 20 samples each: one look 2.94 s median (2.30 to 2.97) on 4.4.543, 0.053 s median (0.047 to 0.071) now; the one first look after the upgrade 26 s, in the background.
 Tests: tests/test_engine_reminders.py. On 4.4.543 the 40-day reminder, the moved date and the floating time fail by behaviour; the tests of the new parts fail there because those parts do not exist. test_the_look_reads_no_event_that_ended_long_ago enforced the removed limit and became test_the_look_reads_only_what_is_due.
 Open: not tried in a real run with the window, a real server or Windows. Tasks do not fire reminders (they never did, D-313 speaks of events).
+
+## 2026-11-05 4.4.545 A task's reminder fires (D-316)
+
+Cause: a task's reminder could be set in the task editor, but the check read events only.
+Built: one path for both kinds in src/chrono_mail/engine/commands_reminders.py (_parts, _times), task_occurrences_from in src/chrono_mail/pim/ical.py, index format 5 (index.py, schema.py, extract.py) with formats 3 and 4 upgraded in place in one transaction. Minutes count from the due time; a finished or cancelled task has no moment and is inert, a task opened again is marked again; a task without a due date fires only a reminder at a fixed time.
+Also needed: a mail of a reminder without a moment leaves the When line out.
+Tests: tests/test_engine_reminders.py; 30 tests fail on 4.4.544: the task tests by behaviour or because the kind does not exist there, the old upgrade tests because the format number moved to 5. test_a_damaged_item_fails_only_itself and the two upgrade tests of format 3 changed only for the new argument, format number and step.
+Open: not tried in a real run with the window, a real server or Windows.

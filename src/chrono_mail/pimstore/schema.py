@@ -1,15 +1,17 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.4.544"
+__version__ = "schema.py 4.4.545"
 
 # --- Version history ----------------------------------------------------
+# v4.4.545: Schema 5: reminder_due also for tasks (D-316); 3 and 4 are upgraded in place
 # v4.4.544: Schema 4: reminder_due, when the next reminder of an event comes due (D-316); 3 is upgraded in place
 # v1.10.277: Schema 3: contact groups and their members (R-39)
 # v1.8.263: MINIMUM_SQLITE_VERSION moved to index/database.py (R-16)
 # v0.0.60: Schema 2: a second line for lists (organisation, place)
 # v0.0.59: Initial index schema for calendars, tasks and contacts
 
-SCHEMA_VERSION: int = 4
-FORMER_VERSION: int = 3  # upgraded in place: one transaction, so an interruption leaves the old format whole
+SCHEMA_VERSION: int = 5
+VERSION_WITHOUT_REMINDERS: int = 3  # upgraded in place, like the next: one transaction, so an interruption leaves the old format whole
+VERSION_WITHOUT_TASK_REMINDERS: int = 4
 
 REMINDER_INDEX: str = "CREATE INDEX items_by_reminder ON items (reminder_due) WHERE reminder_due IS NOT NULL"
 

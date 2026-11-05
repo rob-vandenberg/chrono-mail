@@ -248,6 +248,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.433) A selected message that moves under a folded group bar opens it and stays in view (D-146).
 - DONE (4.2.432) Block 6: a message that changed where it is moves to its new place in the sort (D-146); the Contact mark and sort judge the person the row shows, one rule per list (D-295).
 - DONE (4.4.539) A folder is an object in the index: a rename or a move of a tree changes one row, whatever its size (index format 20, D-314).
+- DONE (4.4.545) A task's reminder fires, through the same due moment and check as an event's: minutes before the due time or at a fixed time; a finished or cancelled task fires none (D-316).
 - DONE (4.4.544) The index knows which reminders are due: the check reads only those and no limit in days remains, so a reminder long after an event and a moved date of a finished series come (D-316).
 - DONE (4.4.543) The update check is hung up at closing too, also while its connection is being made; none starts after that (D-315).
 - DONE (4.4.542) Closing waits for no server: every connection is hung up, a send finishes its mail, the status bar and busy bar say what closing waits for (D-315).
