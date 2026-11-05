@@ -4025,3 +4025,12 @@ Measured in the real window: width 570 before and after; height 684 as on 4.4.54
 The appointment window and every other use: New event, and a task with two reminders, with a row added and removed by its close button: no stray row in a real window. A row that goes from an open window is deleted in the window's own loop. Not run: an appointment with reminders refilled by Edit on a repeating event; it deletes from a click in the window's loop, like the close button.
 Tests: tests/ui/test_ui_tasks.py, the two new ones with the two loops of the program, both fail on 4.4.547. test_a_task_whose_due_date_goes_keeps_its_rows_greyed_and_they_count_again_with_a_due_date now waits until the window holds its rows: it read a list 2 pixels high, and passed before only through the height the measured row gave. Review: two rounds; round 1 found that a new test also counted rows of earlier tests.
 Open: not tried on Windows.
+
+---
+
+## 2026-11-05 4.4.549 A test never depends on the order of the test files
+
+Cause: pytest 9 gives a conftest's fixtures to the exact folder object it collected first. A command that lists tests/ui files, then a tests/ file, then tests/ui files again makes a second tests/ui folder object; it got no `world`, no `dialogs` and no clean-up (23 errors in test_ui_updates.py, 4 in test_ui_across.py).
+Fix (tests only): tests/ui/conftest.py is now the plugin tests/ui/uiplugin.py, named in `pytest_plugins` of tests/conftest.py; its per-test clean-up acts only on tests under tests/ui. AGENTS.md 4.5.5.3 names the new file; the rule is unchanged.
+Proof: test_ui_closing, test_engine_updates and test_ui_updates pass together in both orders (57), alone, and with --run-order reverse; test_ui_across before test_engine_updates and test_ui_updates passes (52). Review: one round, nothing real found.
+Open: Pyrefly shows 1 error (QApplication.palette("QMenu")) in uiplugin.py, as the old conftest did, and 4 signal.SIGALRM errors on win32 in tests/conftest.py, both older than this change. test_ui_unanswered.py followed by test_calendar_layout.py gives 'oktober 2026' for 'October 2026' (the machine's locale after the application is made); reported by the reviewer, not checked against the old code, not fixed.

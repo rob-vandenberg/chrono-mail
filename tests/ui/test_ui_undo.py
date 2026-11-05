@@ -27,9 +27,10 @@ def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return texts
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_undo.py 4.2.409"
+__version__ = "test_ui_undo.py 4.4.549"
 
 # --- Version history ----------------------------------------------------
+# v4.4.549: the file the clean-up lives in is tests/ui/uiplugin.py now
 # v4.2.409: after Ctrl+Z the clean-up after a test leaves no key held (AGENTS 4.5.5.3)
 # v4.1.382: an Undo not answered after a second says "Preparing to undo…", not once the engine counts its messages, then its last line (D-266)
 # v4.0.374: the stand-in of the status line takes the running flag of 3.6.364 and passes it on
@@ -225,7 +226,7 @@ def test_after_ctrl_z_the_clean_up_after_a_test_leaves_no_key_held(world: World,
     test's selection in code is a plain one (Delete permanently waited in vain after these tests)."""
     from PySide6.QtGui import QGuiApplication
 
-    from tests.ui.conftest import let_go_of_keys
+    from tests.ui.uiplugin import let_go_of_keys
 
     deleted_first(qtbot, world)
     press(world.window, Qt.Key.Key_Z)

@@ -8,9 +8,10 @@ from tests.ui.test_ui_columnsetup import open_folder
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_plain_text.py 3.6.355"
+__version__ = "test_ui_plain_text.py 4.4.549"
 
 # --- Version history ----------------------------------------------------
+# v4.4.549: the file the clean-up lives in is tests/ui/uiplugin.py now
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.350: a hover text from mail is the text itself (the list's rows, plain_tip); "&" in a folder name shows in Move to
 # v3.6.349: every message box made by hand sets its text format where it is made (guard; the reviewer of 3.5.348)
@@ -42,7 +43,7 @@ def test_the_ready_made_boxes_are_plain_and_nothing_watches_every_event() -> Non
         assert all(QMessageBox.__dict__[name].__func__ is show for name, show in READY_MADE.items())
     finally:
         for name, function in before.items():
-            setattr(QMessageBox, name, function)  # the run's own stand-ins again (tests/ui/conftest.py)
+            setattr(QMessageBox, name, function)  # the run's own stand-ins again (tests/ui/uiplugin.py)
 
 
 def test_every_message_box_made_by_hand_says_how_its_text_is_shown() -> None:

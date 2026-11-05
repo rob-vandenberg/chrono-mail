@@ -1,6 +1,7 @@
 import sys
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -15,12 +16,14 @@ from chrono_mail.ui.passwordfield import PasswordBox
 from chrono_mail.ui.textbox import TextBox
 from tests.ui.world import dialogs, world
 
-__all__ = ["dialogs", "world"]  # fixtures, found by pytest in this directory
+__all__ = ["dialogs", "world"]  # fixtures, found by pytest everywhere (a plugin, see tests/conftest.py)
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 4.2.454"
+__version__ = "uiplugin.py 4.4.549"
 
 # --- Version history ----------------------------------------------------
+# v4.4.549: was tests/ui/conftest.py; now a plugin that tests/conftest.py names, because pytest 9 gives a conftest's fixtures only to the
+#           folder object it collected first, so a second batch of tests/ui files in one command had no `world`, no `dialogs` and no clean-up
 # v4.2.454: the text box of a given width (TextBox.ask) that no test answers is answered with Cancel and fails the test
 # v4.2.437: the password box (PasswordBox.ask) that no test answers is answered with Cancel and fails the test, as QInputDialog.getText
 # v4.2.409: after every test no key is held: a simulated Ctrl+Z left Qt sure that Ctrl was still down, so a later test's selection in
@@ -181,9 +184,12 @@ def _unanswered_quit_question(parent: object, count: int) -> tuple[str, bool]:
 
 
 @pytest.fixture(autouse=True)
-def every_test_starts_clean(qapp: QApplication) -> Generator[None]:
+def every_test_starts_clean(request: pytest.FixtureRequest) -> Generator[None]:
     """Every window test starts as the first test of a run does, whatever ran before it, and leaves nothing behind."""
-    app = qapp
+    if not Path(str(request.node.path)).is_relative_to(Path(__file__).parent):  # a plugin sees every test; only the window tests are ours
+        yield
+        return
+    app = cast(QApplication, request.getfixturevalue("qapp"))
     if not _first_look:
         if sys.platform == "win32":
             app.setFont(QFont(WINDOWS_FONT, 9))  # the real program's font there; Qt's "Sans Serif" would be a decorative font on Windows

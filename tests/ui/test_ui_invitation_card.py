@@ -12,9 +12,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_card.py 4.4.526"
+__version__ = "test_ui_invitation_card.py 4.4.549"
 
 # --- Version history ----------------------------------------------------
+# v4.4.549: the file the clean-up lives in is tests/ui/uiplugin.py now
 # v4.4.526: the card's new words (D-310)
 # v4.4.519: "your invitation" only for your own meeting (D-310)
 # v4.4.504: Initial tests: the invitation card above the text, alone when the text shows nothing, never markup, its part not a file (D-310)
@@ -96,7 +97,7 @@ def test_another_theme_recolours_the_card(reader: ReaderWidget, qtbot: QtBot) ->
     card = reader._card  # noqa: SLF001
     reader.show_message(replace(shown(html="<p></p>"), invitation=CARD))
     other = theme_of(not card._theme().dark)  # noqa: SLF001
-    QApplication.setPalette(palette_of(other))  # as Settings > Appearance does; tests/ui/conftest.py puts the colours back
+    QApplication.setPalette(palette_of(other))  # as Settings > Appearance does; tests/ui/uiplugin.py puts the colours back
     qtbot.waitUntil(lambda: card._theme_shown == other.name)  # noqa: SLF001
     assert other.roles["Mid"][0].lower() in card.styleSheet().lower()
 

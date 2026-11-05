@@ -6,6 +6,8 @@ from types import FrameType
 
 import pytest
 
+pytest_plugins = ["tests.ui.uiplugin"]
+
 # Qt runs without a screen in the tests; set before anything creates the application object.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if sys.platform == "win32":  # Qt without a screen finds no fonts on Windows (text then measures twice as wide): give it the real ones
@@ -14,9 +16,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu 
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 4.4.542"
+__version__ = "conftest.py 4.4.549"
 
 # --- Version history ----------------------------------------------------
+# v4.4.549: the window tests' fixtures and clean-up (tests/ui/uiplugin.py) are a plugin, so they reach every test whatever the order of the files
 # v4.4.542: every test starts with connections allowed, whatever the window of the test before did
 # v4.2.402: no test touches the start at login of the computer it runs on: it goes to the test's own folder (D-284)
 # v3.6.353: the kept index connections are let go after every test (D-266)
