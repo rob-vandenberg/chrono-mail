@@ -249,6 +249,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.432) Block 6: a message that changed where it is moves to its new place in the sort (D-146); the Contact mark and sort judge the person the row shows, one rule per list (D-295).
 - DONE (4.4.539) A folder is an object in the index: a rename or a move of a tree changes one row, whatever its size (index format 20, D-314).
 - DONE (4.4.546) A task without a due date has only a set-time reminder: the Reminder list of the task editor always offers At a set time…, and the choices counted from the due date are greyed without one (D-316).
+- DONE (4.4.548) No stray reminder row in the task editor: the width of a row is measured without a row in the window (D-316).
 - DONE (4.4.547) A task's reminders work like an appointment's: the rows with Notification or Email, a number, a unit and a close button, Add notification, at most 5, also at a set time; every reminder is shown and kept (D-316).
 - DONE (4.4.545) A task's reminder fires, through the same due moment and check as an event's: minutes before the due time or at a fixed time; a finished or cancelled task fires none (D-316).
 - DONE (4.4.544) The index knows which reminders are due: the check reads only those and no limit in days remains, so a reminder long after an event and a moved date of a finished series come (D-316).

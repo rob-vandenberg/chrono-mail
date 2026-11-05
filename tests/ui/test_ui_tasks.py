@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 import pytest
-from PySide6.QtCore import QDate, QEvent, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QPoint, QTime, Qt
+from PySide6.QtCore import QDate, QEvent, QEventLoop, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QPoint, QTime, QTimer, Qt
 from PySide6.QtGui import QHelpEvent, QImage, QPainter, QStandardItemModel
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QStyleOptionViewItem, QToolTip
 from pytestqt.qtbot import QtBot
@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tasks.py 4.4.547"
+__version__ = "test_ui_tasks.py 4.4.548"
 
 # --- Version history ----------------------------------------------------
+# v4.4.548: New task opened the way the program does: inside its event loop, with a loop of the window's own on top; no reminder row outside the Reminder part
 # v4.4.547: a task's reminders are the rows of an appointment: every reminder shown and kept, a number and a unit or a set time, at most 5, and the rows counted from the due date greyed without one (D-316)
 # v4.4.546: a task without a due date has only a set-time reminder: the list, the date and time, the greyed choices and a due date taken away and given back (D-316)
 # v3.2.342: a task from another program keeps its repeat, reminder and due time through a Save, shown on this computer's clock (RV-19, RV-23)
@@ -619,6 +620,7 @@ def test_a_task_whose_due_date_goes_keeps_its_rows_greyed_and_they_count_again_w
     def take_away(editor: TaskEditor) -> None:
         editor.show()
         row, set_time = editor.reminders.rows
+        wait(qtbot, lambda: row.unit.height() >= row.unit.minimumSizeHint().height())  # the window has grown to hold its rows
         usual = label_colour(row)
         editor.due.enabled.setChecked(False)
         seen.append(state(row, label_colour(row) != usual))
@@ -682,3 +684,64 @@ def test_the_row_of_an_appointment_has_no_set_time(qtbot: QtBot) -> None:
     row.show()
     assert [row.unit.itemText(index) for index in range(row.unit.count())] == ["minutes", "hours", "days", "weeks"]
     assert row.number.isVisible() and not row.date.isVisible() and not row.time.isVisible() and row.value() == "15"
+
+
+def new_task_as_the_program_opens_it(page: TasksPage, monkeypatch: pytest.MonkeyPatch, look: Callable[[TaskEditor], None]) -> None:
+    """The action runs inside the program's event loop and the window waits in a loop of its own on top of it, as it does on screen: what
+    was given to Qt to delete in the outer loop stays there all the time the window is open. Without the two loops it would simply be deleted."""
+
+    def wait_in_the_window(editor: TaskEditor) -> int:
+        editor.show()
+        window_loop = QEventLoop()
+
+        def look_and_leave() -> None:
+            look(editor)
+            editor.reject()
+            window_loop.quit()
+
+        QTimer.singleShot(0, look_and_leave)
+        window_loop.exec()
+        return 0
+
+    monkeypatch.setattr(TaskEditor, "exec", wait_in_the_window)
+    program_loop = QEventLoop()
+
+    def new_task() -> None:
+        page.act_new.trigger()
+        program_loop.quit()
+
+    QTimer.singleShot(0, new_task)
+    program_loop.exec()
+
+
+def test_new_task_has_no_reminder_row_outside_the_reminder_part(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-316: a row added only to measure the width floated over Done and Repeat for as long as the window was open."""
+    page = open_tasks(world, qtbot, 0)
+    rows: list[int] = []
+    places: list[tuple[int, int]] = []
+
+    def look(editor: TaskEditor) -> None:
+        rows.append(len(editor.findChildren(ReminderRow)))
+        place = editor.reminders.add_button.pos()
+        editor.reminders.add_button.click()
+        rows.append(len(editor.findChildren(ReminderRow)))
+        row = editor.reminders.rows[0]
+        wait(qtbot, lambda: row.y() > 0)  # the window has placed it
+        places.extend(((place.x(), place.y()), (row.x(), row.y())))
+
+    new_task_as_the_program_opens_it(page, monkeypatch, look)
+    assert rows == [0, 1]  # none at first, and Add notification gives exactly its own
+    assert places[0] == places[1]  # the row stands where the button stood: in the Reminder part
+
+
+def test_measuring_the_widest_reminder_row_leaves_no_row_behind(world: World, qtbot: QtBot) -> None:
+    """D-316: the row that is only measured is in no window, and ends at once."""
+    page = open_tasks(world, qtbot, 0)
+
+    def rows_alive() -> int:
+        return sum(isinstance(widget, ReminderRow) for widget in QApplication.allWidgets())
+
+    before = rows_alive()  # no event loop runs between the two counts, so a row of another test cannot end in between
+    editor = TaskEditor(page._backend, page._lists(), [], collection=lists(world))  # noqa: SLF001
+    qtbot.addWidget(editor)
+    assert rows_alive() == before and editor.reminders.rows == []

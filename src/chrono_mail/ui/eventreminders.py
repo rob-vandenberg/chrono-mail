@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QLabel,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QSpinBox,
     QStyle,
     QStyleOptionComboBox,
@@ -26,9 +28,10 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventreminders.py 4.4.547"
+__version__ = "eventreminders.py 4.4.548"
 
 # --- Version history ----------------------------------------------------
+# v4.4.548: keep_room_for_the_widest_row: a row that is only measured is never in a window, so no row can stay behind in an open task editor; a row ends with its last reference
 # v4.4.547: the task editor uses these rows too: in a task a row can be at a set time, and without a due date the rows counted from it are greyed with a hover text (D-316)
 # v4.4.536: Initial version: the reminders of an event, each Notification or Email, a number and a unit (round 4)
 
@@ -129,7 +132,8 @@ class ReminderRow(QWidget):
             self.time.setTime(QTime(next_hour.time().hour(), 0))
         self.fixed: QLabel = part(form, QLabel, "fixed")
         self.remove: QToolButton = part(form, QToolButton, "remove")
-        self.remove.clicked.connect(lambda: removed(self))
+        self._removed: Callable[["ReminderRow"], None] = removed
+        self.remove.clicked.connect(self._remove)
         self._index: int = index  # its place in the event: left as it was, it stays exactly as it was
         self._has_due: bool = True
         self._fits: bool = reminder is None or _fits(reminder, of_task)
@@ -155,6 +159,9 @@ class ReminderRow(QWidget):
         self._first: str = self._text()
         self.unit.currentIndexChanged.connect(self._follow)
         self._follow()
+
+    def _remove(self) -> None:
+        self._removed(self)
 
     def _show_moment(self, text: str) -> None:
         """The fixed time of a reminder, on this computer's clock, as the due date is shown (RV-23)."""
@@ -204,6 +211,11 @@ class ReminderList:
         self._of_task: bool = of_task
         self._has_due: bool = True
         add_button.clicked.connect(self.add)
+
+    def keep_room_for_the_widest_row(self) -> None:
+        """The rows' part is as wide as a row at a set time, also while it has no row. That row is only measured: it is never in the window."""
+        widest = ReminderRow(self.remove, of_task=self._of_task, at_a_set_time=True)
+        self._layout.addSpacerItem(QSpacerItem(widest.minimumSizeHint().width(), 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
 
     def show_reminders(self, reminders: tuple[ReminderInfo, ...]) -> None:
         for row in self.rows:

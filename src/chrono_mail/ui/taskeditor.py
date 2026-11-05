@@ -33,9 +33,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.547"
+__version__ = "taskeditor.py 4.4.548"
 
 # --- Version history ----------------------------------------------------
+# v4.4.548: the width of a reminder row is measured without a row in the window: a row removed again stayed on screen over Done and Repeat while the window was open
 # v4.4.547: the reminders are the rows of an appointment (eventreminders.py): every reminder of a task is shown and kept, each Notification or Email, a number and a unit or a set time, at most 5 (D-316)
 # v4.4.546: the Reminder list always offers At a set time… with a date and a time; without a due date the choices counted from it are greyed with a hover text, and a task that has one keeps it, shown greyed (D-316)
 # v4.0.378: the task editor and its date fields are built from their Qt Designer forms (ui/forms/task_editor.ui, task_date.ui, D-276); its
@@ -149,10 +150,8 @@ class TaskEditor(QDialog):
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        self.reminders.follow_due(False)
-        self.reminders.add()  # the widest row, at a set time, there only while the width is measured
+        self.reminders.keep_room_for_the_widest_row()
         forms.smallest(self, 520)  # its texts are never cut off, also at the largest size, the date and time of a reminder counted
-        self.reminders.show_reminders(())
         if task is not None:
             self._fill(task)
         self.due.enabled.toggled.connect(self.reminders.follow_due)

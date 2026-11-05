@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-05, version 4.4.547 (a task's reminders work like an appointment's, D-316); before it 4.4.546 (a task without a due date has only a set-time reminder, D-316); before it 4.4.545 (a task's reminder fires, D-316); before it 4.4.544 (the index knows which reminders are due, D-316); before it 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
+*Last updated: 2026-11-05, version 4.4.548 (no stray reminder row in the task editor, D-316); before it 4.4.547 (a task's reminders work like an appointment's, D-316); before it 4.4.546 (a task without a due date has only a set-time reminder, D-316); before it 4.4.545 (a task's reminder fires, D-316); before it 4.4.544 (the index knows which reminders are due, D-316); before it 4.4.543 (the update check is hung up at closing too, D-315); before it 4.4.542 (closing waits for no server: every connection is hung up, D-315); before it 4.4.541 (the code of 4.4.539 again); before it 4.4.539 (a folder is an object in the index: a rename changes one row, index format 20, D-314); before it 4.4.538 (a click on the arrow before a folder in Show on startup opens or closes it and the list stays open); before it 4.4.537 (a server's placeholder alarm is no reminder; unticking Send confirmation emails via works; the reminder check reads no old events)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.548 done (D-316).** No reminder row floats in the task editor any more. To check by the owner: in Tasks, New: nothing lies over Done and Repeat; Add notification puts its row beside Reminder. The window is as wide as before and as high as on 4.4.546: 4.4.547 opened 35 pixels higher only because of the row that was measured.
 
 **4.4.547 done (D-316).** A task's reminders are the rows of an appointment. To check by the owner: in Tasks, New, tick Due: Add notification gives Notification, 15, minutes; set 12 hours, add an Email row, set a third to At a set time…: a date and a time show; 5 rows grey the button. Save and open again: all as set. Untick Due: the counted rows go grey with the hover text, the set-time row stays usable; Save, open, tick Due: they count again. Without a due date Add notification gives a row at a set time. A task from another program with two reminders shows both; change one, the other stays. An appointment looks as before.
 
