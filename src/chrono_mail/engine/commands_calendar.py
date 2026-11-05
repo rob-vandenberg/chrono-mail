@@ -1,28 +1,30 @@
-from collections.abc import Collection, Iterator
+from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, tzinfo
 from email.utils import parseaddr
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
+from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
 from chrono_mail.engine.invitations import take_mark_off
-from chrono_mail.engine.meetingmail import MeetingDraft, copy_for, delete_copy, meeting_mail, organizer_from, organizing_account, quiet, who_mails, your_addresses_lower
+from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
-from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Occurrence, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
+from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, cancelled_on, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
 from chrono_mail.pim.itip import attendee_addresses, you_declined
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.550"
+__version__ = "commands_calendar.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: Every row says invited, your answer and read-only; hidden means declined, in a ticked calendar; a deleted date shows nowhere and has no way back (event.restore gone);
+#           Delete of someone else's meeting never mails from here and goes the silent way; Delete of a Cancelled meeting mails nothing (D-310)
 # v4.4.550: OccurrenceInfo.cancelled: a cancelled event or date, drawn grey (D-316)
 # v4.4.547: An e-mail reminder can be at a fixed time; a task uses the address and the info of a reminder too (D-316)
 # v4.4.536: Reminders by e-mail, at most 5 given, and keep: for one that stays as it is (round 4)
@@ -82,9 +84,12 @@ class OccurrenceInfo:
     tags: tuple[str, ...]
     colour_id: str = ""  # the colour of its calendar's palette it has (empty: the calendar's own); `colour` is what that is now
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
-    answerable: bool = False  # hidden, with an organizer other than you: it can be answered again; else it can only be restored
-    whole: bool = False  # hidden as a whole (a declined meeting): it can be deleted; one date of a series cannot
-    hidden: bool = False  # a date of a series that was deleted or declined: shown greyed only when asked for, it can only be looked at
+    answerable: bool = False  # hidden, with an organizer other than you: it can be answered again
+    whole: bool = False  # hidden as a whole (a declined meeting): the actions on it are for all of it; else for this one date
+    hidden: bool = False  # a meeting or a date you declined: shown greyed only when asked for
+    invited: bool = False  # someone else organizes it and lists you; anything else is self-created
+    answer: str = ""  # invited: your answer on this occurrence (NEEDS-ACTION: none yet); it says nothing of `status`, a fact of its own
+    read_only: bool = False  # its calendar takes no changes
 
     @property
     def cancelled(self) -> bool:
@@ -213,7 +218,7 @@ class ListParameters:
     calendars: tuple[str, ...] = field(default=(), metadata=option("Only these calendars (repeat; default: all)"))
     text: str = field(default="", metadata=option("Only events with these words"))
     limit: int = field(default=0, metadata=option("How many at most (0: every one)"))
-    hidden: bool = field(default=False, metadata=option("Also what is hidden: meetings you declined and dates of a series that were deleted or declined"))
+    hidden: bool = field(default=False, metadata=option("Also what you declined: meetings and dates of a series"))
     item: str = field(default="", metadata=option("Only this event (the calendar replaces only the blocks of an event that changed)"))
 
 
@@ -233,15 +238,25 @@ def _declined(event: Event, yours: Collection[str]) -> bool:
     return any(person.status == "DECLINED" and person.address.strip().lower() in yours for person in event.attendees)
 
 
-def _skipped(text: str) -> Iterator[tuple[Event, Moment, Moment]]:
-    """The dates a series skips (EXDATE), each at the length of the series. Dates of a kind that cannot be measured are left out."""
-    for series in parse_events(text):
-        master = series.master
-        for moment in master.exdates:
-            try:
-                yield master, moment, moment + (master.end - master.start)  # type: ignore[operator]  # (times of two kinds: the TypeError below)
-            except (OverflowError, TypeError):
-                continue
+def _your_lines(event: Event, yours: Collection[str]) -> list[Attendee]:
+    return [person for person in event.attendees if person.address.strip().lower() in yours]
+
+
+def _others_meeting(event: Event, yours: Collection[str]) -> bool:
+    """Someone else organizes it, whether or not you are listed: nothing you do to your copy should mail them unless you answer."""
+    return event.organizer is not None and event.organizer.address.strip().lower() not in yours
+
+
+def _invited(event: Event, yours: Collection[str]) -> bool:
+    """Someone else organizes it and lists you. An event that names another organizer without listing you is self-created."""
+    return _others_meeting(event, yours) and bool(_your_lines(event, yours))
+
+
+def _your_answer(event: Event, yours: Collection[str]) -> str:
+    """Your answer on an invited event or date, as `_declined` reads it when two of your addresses are listed."""
+    if not _invited(event, yours):
+        return ""
+    return "DECLINED" if _declined(event, yours) else _your_lines(event, yours)[0].status
 
 
 def event_list(engine: Engine, parameters: ListParameters) -> EventList:
@@ -269,9 +284,6 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 chosen = (parameters.calendar,) if parameters.calendar in names else ()
             else:
                 chosen = tuple(collection for collection in names if not parameters.calendars or collection in parameters.calendars)
-            ticked = frozenset(chosen)
-            if parameters.hidden and account == LOCAL_ACCOUNT_ID and parameters.calendar is None:
-                chosen = tuple(names)  # declined copies land here without asking, so what is hidden shows here whichever calendar is ticked
             if not chosen:
                 continue
             query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
@@ -289,12 +301,11 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 text = store.get(item.collection, item.item_id)
                 times = occurrences([text], start, end, zone, limit=room)
                 cut = cut or len(times) >= room
-                skipped = [Occurrence(master, moment, last) for master, moment, last in _skipped(text) if _key(moment, zone) < end and _key(last, zone) > start] if parameters.hidden and item.repeats else []
-                for occurrence in [*times, *skipped]:
+                for occurrence in times:
                     e = occurrence.event
                     key = _key(occurrence.start, zone)
-                    hidden = occurrence in skipped or _declined(e, yours)
-                    if (hidden and not parameters.hidden) or (not hidden and item.collection not in ticked):
+                    hidden = _declined(e, yours)
+                    if hidden and not parameters.hidden:
                         continue
                     whole = hidden and (not item.repeats or you_declined(text, yours))
                     organizer = e.organizer.address.strip().lower() if e.organizer is not None else ""
@@ -304,7 +315,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats else "", e.status,
-                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, answerable, whole, hidden,
+                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, answerable, whole, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
     if parameters.limit and len(found) > parameters.limit:
@@ -730,19 +741,24 @@ class DeleteResult:
     draft: MeetingDraft = MeetingDraft()  # the cancellation to the attendees, ready to send
 
 
-@dataclass(frozen=True, slots=True)
-class RestoreParameters:
-    item: str = field(metadata=option("The event id (see event.list)"))
-    occurrence: str = field(metadata=option("The date of the series that comes back"))
+def _silent(engine: Engine, found: Located, gone: str = "") -> Mailing:
+    """Your copy of someone else's meeting changes without a word from here, and the server is kept silent as far as it can be (D-310)."""
+    settings = settings_of(engine, found.account)
+    address = settings.account.email_address.strip().lower() if settings is not None else ""
+    return quiet(who_mails(engine, (found.account, found.collection), found.account, address, gone))
 
 
-@dataclass(frozen=True, slots=True)
-class RestoreResult:
-    item: str
+def _news_of_delete(mails: Mailing, tell: bool, cancelled: bool) -> Mailing:
+    """Who hears of the delete of your meeting. A Cancelled meeting: Chrono Mail mails nothing and a server that listens stays silent, as Cancel was the
+    moment to tell them; a server that mails whatever it is told is followed (D-310)."""
+    if cancelled:
+        return replace(mails, server=mails.server and not mails.told, chrono=False)
+    return mails if tell else quiet(mails)
 
 
 def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) -> DeleteResult:
-    """The whole event goes; a damaged one too, which nothing can be said about. Your meeting: the attendees hear of it as the person said."""
+    """The whole event goes; a damaged one too, which nothing can be said about. Your meeting: the attendees hear of it as the person said. Someone
+    else's meeting: nothing is mailed, the server stays silent too (D-310)."""
     try:
         original = found.store.get(found.item.collection, parameters.item)
         parsed = parse_events(original)
@@ -750,12 +766,13 @@ def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) 
         original, parsed = "", list[EventSeries]()
     you = organizing_account(engine, found.account) if parsed and _organizes(engine, parsed[0].master) else None
     if you is None:
+        others = bool(parsed) and _others_meeting(parsed[0].master, your_addresses_lower(engine))
         with item_writer(engine, found.account, found.store) as writer:
-            writer.delete(found.collection, parameters.item)
+            delete_copy(writer, found.collection, parameters.item, original, _silent(engine, found, parameters.item) if others else Mailing())
         take_mark_off(engine, original)
         return DeleteResult(parameters.item, True)
     mails = who_mails(engine, (found.account, found.collection), found.account, you.account.email_address.strip().lower(), parameters.item, answers=False)
-    mails = mails if parameters.tell else quiet(mails)
+    mails = _news_of_delete(mails, parameters.tell, cancelled_on(parsed[0], None))
     with item_writer(engine, found.account, found.store) as writer:
         delete_copy(writer, found.collection, parameters.item, original, mails)
     draft = MeetingDraft()
@@ -765,28 +782,9 @@ def _delete_whole(engine: Engine, parameters: DeleteParameters, found: Located) 
     return DeleteResult(parameters.item, True, draft)
 
 
-def event_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResult:
-    """A date of your own series that was deleted comes back (D-310)."""
-    with located(engine, parameters.item, CollectionKind.EVENTS) as found:
-        if found.collection.read_only:
-            raise UsageError("This calendar is read-only")
-        original = found.store.get(found.item.collection, parameters.item)
-        series = _series(original)
-        try:
-            moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
-        except ValueError as error:
-            raise UsageError(f"occurrence: {error}") from None
-        master = replace(series.master, exdates=tuple(each for each in series.master.exdates if each != moment))
-        with item_writer(engine, found.account, found.store) as writer:
-            writer.put(found.collection, events_to_text(replace(series, master=master), original), parameters.item)
-    return RestoreResult(parameters.item)
-
-
-EVENT_RESTORE: TypedCommand[RestoreParameters, RestoreResult] = TypedCommand("event.restore", RestoreParameters, RestoreResult)
-
-
 def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
-    """Delete an event, or one occurrence of a repeating event (it becomes an exception). The file is kept in .deleted for 30 days."""
+    """Delete an event, or one occurrence of a repeating event: its date goes on the series' list of removed dates, for good. The file of a whole event is
+    kept in .deleted for 30 days. For one date of someone else's meeting no silent way is known on a server that mails whatever it is told: that is followed."""
     try:
         with located(engine, parameters.item, CollectionKind.EVENTS) as found:
             if found.collection.read_only:
@@ -806,11 +804,12 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
             text = events_to_text(replace(series, master=master, overrides=overrides), original)
             you = organizing_account(engine, found.account) if _organizes(engine, series.master) else None
             if you is None:
+                others = _others_meeting(series.master, your_addresses_lower(engine))
                 with item_writer(engine, found.account, found.store) as writer:
-                    writer.put(found.collection, text, parameters.item)
+                    writer.put(found.collection, copy_for(text, _silent(engine, found)) if others else text, parameters.item)
                 return DeleteResult(parameters.item, False)
             mails = who_mails(engine, (found.account, found.collection), found.account, you.account.email_address.strip().lower(), answers=False)
-            mails = mails if parameters.tell else quiet(mails)
+            mails = _news_of_delete(mails, parameters.tell, cancelled_on(series, moment))
             with item_writer(engine, found.account, found.store) as writer:
                 writer.put(found.collection, copy_for(text, mails), parameters.item)
             draft = MeetingDraft()
@@ -923,7 +922,6 @@ def register(registry: CommandRegistry) -> None:
     registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
     registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
     registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit, doing="Saving an event")
-    registry.register(EVENT_RESTORE.id, "Bring back a deleted date of your own series", RestoreParameters, event_restore, doing="Restoring a date")
     registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True, doing="Deleting an event")
     registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move, doing="Moving an event")
     registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import), doing="Importing events")

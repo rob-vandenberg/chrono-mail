@@ -19,12 +19,13 @@ from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.sections import CALENDAR
 
 from tests.ui.test_ui_window import started
-from tests.ui.world import World, answer_calendar_mail, wait
+from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.550"
+__version__ = "test_ui_calendar.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: A deleted date shows nowhere, a declined date can be deleted as that date, a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey with a hover text in every view, and takes its colour again (D-316)
 # v4.4.537: a placeholder alarm shows no row; a normal reminder shows as type, number and unit
 # v4.4.536: Reminder rows (round 4)
@@ -569,29 +570,20 @@ def test_a_reminder_at_a_set_time_shows_as_that_never_as_no_reminder(world: Worl
     assert "reminder" in editor.parameters().clear
 
 
-def test_a_deleted_date_of_a_series_shows_greyed_on_request_and_can_only_be_looked_at(world: World, qtbot: QtBot) -> None:
+def test_a_deleted_date_of_a_series_shows_nowhere_also_with_show_declined_on(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot)
     standup = next(entry for entry in page.entries if entry.summary == "Standup")
     world.call("event.delete", item=standup.row.item, occurrence=standup.row.occurrence)
     page.reload()
-    wait(qtbot, lambda: not any(entry.row.occurrence == standup.row.occurrence for entry in page.entries))
+    wait(qtbot, lambda: summaries(page).count("Standup") == 4)
     page.hidden_button.setChecked(True)
-    wait(qtbot, lambda: any(entry.row.hidden for entry in page.entries))
-    hidden = next(entry for entry in page.entries if entry.row.hidden)
-    assert hidden.colour == theme().task_grey and world.window.settings.value("calendar_show_hidden") == "true"
-    page._entry_clicked(hidden)  # noqa: SLF001
-    assert page.selected is None
-    menu = QMenu()
-    page._hidden_actions(menu, hidden)  # noqa: SLF001
-    assert [action.text() for action in menu.actions()] == ["Restore"]  # your own series: no organizer
-    menu.actions()[0].trigger()
-    wait(qtbot, lambda: world.call("event.list", from_date="2026-10-12", to_date="2026-10-17", hidden=True).events != () and not any(row.hidden for row in world.call("event.list", from_date="2026-10-12", to_date="2026-10-17", hidden=True).events))
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert summaries(page).count("Standup") == 4 and not any(entry.row.hidden for entry in page.entries)
     page.hidden_button.setChecked(False)
-    wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
 
 
 def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qtbot: QtBot) -> None:
-    """D-310: with an organizer: Accept, Tentative, Delegate, Delete. Each goes on as on a card; one date of a series has nothing to delete."""
+    """D-310: with an organizer: Accept, Tentative, Delegate, Delete. Each goes on as on a card."""
     page = open_calendar(world, qtbot)
     entry = next(entry for entry in page.entries if entry.summary == "Lunch")
     row = entry.row
@@ -610,9 +602,45 @@ def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qt
     one_date = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, occurrence="2026-10-14T12:30:00+00:00"))
     menu = QMenu()
     page._hidden_actions(menu, one_date)  # noqa: SLF001
-    assert not menu.actions()[3].isEnabled()
+    assert menu.actions()[3].isEnabled()
     menu.actions()[0].trigger()
     assert asked[-1] == (row.item, "2026-10-14T12:30:00+00:00", "ACCEPTED")
+
+
+def test_delete_of_a_declined_date_deletes_that_date_and_the_series_stays(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
+    page = open_calendar(world, qtbot)
+    common = ["UID:weekly@example.org", "DTSTAMP:20261001T000000Z", "SUMMARY:Daily", "ORGANIZER:mailto:olivia@example.org"]
+    main = [*common, "DTSTART:20261012T090000Z", "DTEND:20261012T093000Z", "RRULE:FREQ=DAILY;COUNT=3", "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.com"]
+    date_item = [*common, "RECURRENCE-ID:20261013T090000Z", "DTSTART:20261013T090000Z", "DTEND:20261013T093000Z", "ATTENDEE;PARTSTAT=DECLINED:mailto:me@example.com"]
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//Example//EN", "BEGIN:VEVENT", *main, "END:VEVENT", "BEGIN:VEVENT", *date_item, "END:VEVENT", "END:VCALENDAR"]
+    world.call("event.import", calendar=calendar_id(world), text="\r\n".join(lines) + "\r\n")
+    page.hidden_button.setChecked(True)
+    wait(qtbot, lambda: any(entry.row.hidden for entry in page.entries))
+    declined = next(entry for entry in page.entries if entry.row.hidden)
+    monkeypatch.setattr(QMessageBox, "question", yes)
+    menu = QMenu()
+    page._hidden_actions(menu, declined)  # noqa: SLF001
+    next(action for action in menu.actions() if action.text() == "Delete").trigger()
+    wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
+    wait(qtbot, lambda: summaries(page).count("Daily") == 2)
+
+
+def test_delete_of_a_cancelled_meeting_asks_nothing_about_a_mail(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
+    page = open_calendar(world, qtbot)
+    asked = answer_calendar_mail(monkeypatch, Choice.SEND)
+    info = world.call("event.add", calendar=calendar_id(world), summary="Budget", start="2026-10-14T15:00", end="2026-10-14T16:00", time_zone="UTC", attendee=("sam@example.org",), status="cancelled", tell=False)
+    wait(qtbot, lambda: "Budget" in summaries(page))
+    page._entry_clicked(next(e for e in page.entries if e.row.item == info.item))  # noqa: SLF001
+    monkeypatch.setattr(QMessageBox, "question", yes)
+    opened: list[str] = []
+
+    def mail_ready(_account: str, _folder: str, message: str, _note: str) -> None:
+        opened.append(message)
+
+    page.mail_ready.connect(mail_ready)
+    page.delete_selected()
+    wait(qtbot, lambda: "Budget" not in summaries(page))
+    assert asked == [] and opened == []
 
 
 def cancelled(page: CalendarPage, world: World, qtbot: QtBot, summary: str) -> str:

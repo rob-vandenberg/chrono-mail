@@ -1,17 +1,21 @@
 from dataclasses import dataclass, field
 
 from chrono_mail.core import CollectionInfo, CollectionKind
+from chrono_mail.engine.commands_calendar import in_event_zone
 from chrono_mail.engine.commands_drafts import DraftOpenParameters, draft_open
 from chrono_mail.engine.commands_mail import SendParameters, SendResult, mail_send
 from chrono_mail.engine.meetingmail import organizing_account, who_mails
-from chrono_mail.engine.pimaccess import located, open_collection
-from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
+from chrono_mail.engine.pimaccess import Located, located, open_collection
+from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.ical import cancelled_on, parse_events
+from chrono_mail.pim.times import parse_moment
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendarmail.py 4.4.532"
+__version__ = "commands_calendarmail.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: event.mailing says when a meeting about to be deleted is Cancelled: nobody is asked about a mail then (D-310)
 # v4.4.532: Initial: a calendar mail goes without the composer, with the person's message, and the window can ask who would mail (D-310)
 
 
@@ -42,12 +46,14 @@ def calendar_mail_send(engine: Engine, parameters: CalendarMailParameters) -> Se
 class MailingParameters:
     calendar: str = field(default="", metadata=option("A meeting about to be made: its calendar"))
     item: str = field(default="", metadata=option("A meeting that exists: its event id"))
-    deleting: bool = field(default=False, metadata=option("The whole meeting is about to be deleted"))
+    deleting: bool = field(default=False, metadata=option("The meeting is about to be deleted"))
+    occurrence: str = field(default="", metadata=option("Deleting: only this date of it"))
 
 
 @dataclass(frozen=True, slots=True)
 class MailingResult:
     chrono: bool  # Chrono Mail would mail the attendees: the calendar's server does not
+    cancelled: bool = False  # about to be deleted and Cancelled: Chrono Mail mails nothing, so nobody is asked (D-310)
 
 
 def _chrono_mails(engine: Engine, account: str, info: CollectionInfo, gone: str) -> MailingResult:
@@ -56,11 +62,25 @@ def _chrono_mails(engine: Engine, account: str, info: CollectionInfo, gone: str)
     return MailingResult(you is not None and who_mails(engine, (account, info), account, address, gone, answers=False).chrono)
 
 
+def _deleting_cancelled(found: Located, parameters: MailingParameters) -> bool:
+    if not parameters.deleting:
+        return False
+    parsed = parse_events(found.store.get(found.item.collection, parameters.item))
+    if not parsed:
+        return False
+    try:
+        return cancelled_on(parsed[0], in_event_zone(parse_moment(parameters.occurrence), parsed[0].master.start) if parameters.occurrence else None)
+    except ValueError as error:
+        raise UsageError(f"occurrence: {error}") from None
+
+
 def event_mailing(engine: Engine, parameters: MailingParameters) -> MailingResult:
     """Who would tell the attendees of your meeting, asked before it is saved or deleted: the person can then still take the action back."""
     if parameters.item:
         with located(engine, parameters.item, CollectionKind.EVENTS) as found:
-            return _chrono_mails(engine, found.account, found.collection, parameters.item if parameters.deleting else "")
+            if _deleting_cancelled(found, parameters):
+                return MailingResult(False, True)
+            return _chrono_mails(engine, found.account, found.collection, parameters.item if parameters.deleting and not parameters.occurrence else "")
     with open_collection(engine, parameters.calendar, CollectionKind.EVENTS) as (account, _, info):
         return _chrono_mails(engine, account, info, "")
 

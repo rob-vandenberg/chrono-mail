@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.532"
+__version__ = "test_engine_invitation_answers.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: A deleted date of a series shows nowhere (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a Decline keeps its copy on this computer (D-310)
 # v4.4.521: a declined date is hidden, the series stays whole; shown greyed when asked for (D-310)
@@ -710,7 +711,7 @@ def test_a_declined_date_is_hidden_the_series_stays_and_the_option_shows_it_grey
     assert listed(setup, hidden=True) == [("2026-11-02", False), ("2026-11-09", True), ("2026-11-16", False)]
 
 
-def test_the_option_shows_a_deleted_date_of_a_series_but_nothing_of_a_deleted_single_event(setup: Setup) -> None:
+def test_the_option_shows_nothing_of_a_deleted_date_of_a_series_or_a_deleted_single_event(setup: Setup) -> None:
     calendar = local_calendar(setup)
     series = call(setup.engine, "event.add", calendar=calendar, summary="Series", start="2026-11-03T10:00", end="2026-11-03T11:00", time_zone="UTC", rrule="FREQ=WEEKLY;COUNT=2")
     single = call(setup.engine, "event.add", calendar=calendar, summary="Single", start="2026-11-05T10:00", end="2026-11-05T11:00", time_zone="UTC")
@@ -718,5 +719,5 @@ def test_the_option_shows_a_deleted_date_of_a_series_but_nothing_of_a_deleted_si
     call(setup.engine, "event.delete", item=series.item, occurrence=occurrence)
     call(setup.engine, "event.delete", item=single.item)
     assert listed(setup) == [("2026-11-03", False)]
-    assert listed(setup, hidden=True) == [("2026-11-03", False), ("2026-11-10", True)]
+    assert listed(setup, hidden=True) == [("2026-11-03", False)]
 

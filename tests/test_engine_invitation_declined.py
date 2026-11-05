@@ -9,9 +9,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_declined.py 4.4.528"
+__version__ = "test_engine_invitation_declined.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: What is declined follows the ticked calendars; a deleted date has no way back and shows nowhere (D-310)
 # v4.4.528: Initial tests: a declined invitation stays as a hidden event of this computer, can be answered again from the calendar or deleted (D-310)
 
 DAYS = {"from_date": "2026-10-26", "to_date": "2026-11-02"}
@@ -69,12 +70,14 @@ def test_a_declined_invitation_with_no_organizer_can_be_answered_again_never_res
     assert row.answerable and row.whole
 
 
-def test_what_is_hidden_shows_whichever_local_calendar_is_ticked(setup: Setup) -> None:
+def test_what_is_declined_shows_only_when_its_calendar_is_ticked(setup: Setup) -> None:
     message = deliver(setup, invitation_mail(calendar_text()))
     decline(setup, message)
     other = second_calendar(setup)
-    (row,) = call(setup.engine, "event.list", hidden=True, calendars=(other,), **DAYS).events
-    assert row.hidden
+    (row,) = rows(setup, hidden=True)
+    assert call(setup.engine, "event.list", hidden=True, calendars=(other,), **DAYS).events == ()
+    (shown,) = call(setup.engine, "event.list", hidden=True, calendars=(row.collection,), **DAYS).events
+    assert shown.hidden
 
 
 def test_deleting_a_declined_event_really_deletes_it_with_no_mail_and_the_invitation_shows_as_new(setup: Setup) -> None:
@@ -117,7 +120,7 @@ def test_an_invitation_in_a_file_remembers_its_decline_too(setup: Setup, tmp_pat
     assert call(setup.engine, "invitation.card", account="", folder="", message="", file=str(file)).your_answer == "DECLINED"
 
 
-def test_a_date_of_a_series_comes_back_for_its_own_series_and_can_be_answered_for_a_meeting(setup: Setup) -> None:
+def test_a_date_deleted_from_your_own_series_shows_nowhere(setup: Setup) -> None:
     ensure_local_pim(setup.engine)
     with open_pim(setup.engine, LOCAL_ACCOUNT_ID) as store:
         (info,) = store.collections(CollectionKind.EVENTS)
@@ -125,10 +128,7 @@ def test_a_date_of_a_series_comes_back_for_its_own_series_and_can_be_answered_fo
     series = call(setup.engine, "event.add", calendar=calendar, summary="Mine", start="2026-10-27T09:00", end="2026-10-27T09:15", time_zone="UTC", rrule="FREQ=DAILY;COUNT=3")
     date = next(row for row in rows(setup) if row.start.startswith("2026-10-28"))
     call(setup.engine, "event.delete", item=series.item, occurrence=date.occurrence)
-    gone = next(row for row in rows(setup, hidden=True) if row.hidden)
-    assert not gone.answerable and not gone.whole and gone.occurrence == date.occurrence
-    call(setup.engine, "event.restore", item=series.item, occurrence=gone.occurrence)
-    assert len(rows(setup)) == 3 and not any(row.hidden for row in rows(setup, hidden=True))
+    assert len(rows(setup, hidden=True)) == 2 and not any(row.hidden for row in rows(setup, hidden=True))
 
 
 def test_a_date_taken_out_of_a_meeting_is_asked_as_that_date_alone() -> None:

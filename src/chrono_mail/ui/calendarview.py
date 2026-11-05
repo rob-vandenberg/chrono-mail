@@ -27,8 +27,7 @@ from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
-from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList
-from chrono_mail.engine.commands_calendar import RestoreParameters as EventRestore
+from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, DeleteResult, EventInfo, EventList
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
@@ -50,9 +49,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.550"
+__version__ = "calendarview.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: A deleted date has no way back; Delete of a declined date deletes that date, never the series; Delete of a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey instead of its colour, in every view (D-316)
 # v4.4.535: A double click opens an appointment read-only; Edit in the list and the menu still go straight to the editor; New starts All day (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -565,23 +565,35 @@ class CalendarPage(PimPage):
                 return
             if scope == "occurrence":
                 values = EventDelete(values.item, row.occurrence)
+        self._delete_asked(entry, values)
 
+    def _delete_asked(self, entry: Entry, values: EventDelete) -> None:
         def asked(result: EventInfo) -> None:
             self._delete_chosen(entry, values, result)
 
-        self._backend.ask(EVENT_SHOW, EventItem(row.item), asked, lambda _: self._delete_chosen(entry, values, None), owner=self)  # a damaged event can still go
+        self._backend.ask(EVENT_SHOW, EventItem(values.item), asked, lambda _: self._delete_chosen(entry, values, None), owner=self)  # a damaged event can still go
 
     def _delete_chosen(self, entry: Entry, values: EventDelete, event: EventInfo | None) -> None:
-        """Your own meeting: the attendees hear of it as the person says (D-310); anything else asks only when it is the whole event."""
+        """Your own meeting: the attendees hear of it as the person says (D-310); anything else goes on to the question."""
         if event is not None and event.yours:
-            self._backend.ask(EVENT_MAILING, MailingParameters(item=values.item, deleting=not values.occurrence), lambda mailing: self._delete_meeting(entry, values, mailing), self._failed, owner=self)
+            self._backend.ask(EVENT_MAILING, MailingParameters(item=values.item, deleting=True, occurrence=values.occurrence), lambda mailing: self._delete_meeting(entry, values, mailing), self._failed, owner=self)
             return
-        if (not entry.row.repeats or entry.row.hidden) and QMessageBox.question(self.content, "Delete", f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
-            return
+        self._delete_confirmed(entry, values)
+
+    def _delete_confirmed(self, entry: Entry, values: EventDelete) -> None:
+        """Asks only when no choice of this occurrence or all occurrences came first."""
+        if not entry.row.repeats or entry.row.hidden:
+            text = f"Delete this date of “{entry.summary}”?" if values.occurrence else f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days."
+            if QMessageBox.question(self.content, "Delete", text) != QMessageBox.StandardButton.Yes:
+                return
         self._delete(values, "")
 
     def _delete_meeting(self, entry: Entry, values: EventDelete, mailing: MailingResult) -> None:
-        """Chrono Mail would mail the cancellation: the person says so first; closing the question keeps the meeting. The server mails: it is told to."""
+        """Chrono Mail would mail the cancellation: the person says so first; closing the question keeps the meeting. The server mails: it is told to.
+        A Cancelled meeting never asks about a mail (D-310)."""
+        if mailing.cancelled:
+            self._delete_confirmed(entry, values)
+            return
         note = ""
         tell = True
         if mailing.chrono:
@@ -634,21 +646,14 @@ class CalendarPage(PimPage):
         self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
 
     def _hidden_actions(self, menu: QMenu, entry: Entry) -> None:
-        """What can be done with a hidden event (D-310). With an organizer it is a meeting you declined, or a date of one: answer it again, or delete it for good.
-        Otherwise it is a date of your own series: it can only come back. One date of a series has nothing left to delete."""
+        """What can be done with what you declined (D-310): answer it again, or delete it for good. A declined date of a series is that one date: the series stays."""
         row = entry.row
         occurrence = "" if row.whole else row.occurrence
-        if not row.answerable:
-            menu.addAction("Restore", lambda: self._backend.ask(EVENT_RESTORE, EventRestore(row.item, row.occurrence), lambda _: self._saved(""), self._failed, owner=self))
-            return
-        menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED"))
-        menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE"))
-        menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence))
-        delete = menu.addAction("Delete", lambda: self._delete_chosen(entry, EventDelete(row.item), None))
-        delete.setEnabled(row.whole)
-        if not row.whole:
-            delete.setToolTip("Only this date is declined: the series stays")
-            menu.setToolTipsVisible(True)
+        if row.answerable:
+            menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED"))
+            menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE"))
+            menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence))
+        menu.addAction("Delete", lambda: self._delete_asked(entry, EventDelete(row.item, occurrence)))
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)

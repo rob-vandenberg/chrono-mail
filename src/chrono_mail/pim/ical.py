@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.550"
+__version__ = "ical.py 4.4.552"
 
 # --- Version history ----------------------------------------------------
+# v4.4.552: cancelled_on: whether a whole event or one date is Cancelled (D-310)
 # v4.4.550: Event.inert: a cancelled event gives no reminder (D-316)
 # v4.4.545: task_occurrences_from: the times a task falls due, one by one from a moment on, for its reminders; Task.inert (D-316)
 # v4.4.544: occurrences_from: the occurrences one by one from a moment on, with no end: the walk of occurrences, now also for the next reminder of a series (D-316)
@@ -160,6 +161,12 @@ class Occurrence:
     start: Moment
     end: Moment
     changed: bool = False  # this occurrence was changed or moved on its own
+
+
+def cancelled_on(series: EventSeries, moment: Moment | None) -> bool:
+    """Whether the whole event (moment None) or that date is Cancelled: a date with a status of its own keeps it, any other date follows the series."""
+    own = next((each.status for each in series.overrides if each.recurrence_id == moment), "") if moment is not None else ""
+    return (own or series.master.status) == "CANCELLED"
 
 
 def new_uid() -> str:
