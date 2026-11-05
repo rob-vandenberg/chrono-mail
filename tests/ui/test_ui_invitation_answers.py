@@ -13,9 +13,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.529"
+__version__ = "test_ui_invitation_answers.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: Cancel in calendar (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.527: attendees past those listed are counted (D-310)
 # v4.4.526: the words on the card, the place as a link, the Delegate window of a task (D-310)
@@ -54,6 +55,17 @@ def test_an_out_of_date_invitation_greys_its_buttons_with_a_reason(reader: Reade
     assert not card.accept_button.isEnabled() and not card.decline_button.isEnabled() and card.answers_mark.isVisible()
 
 
+def test_the_button_of_a_cancel_mail_is_greyed_once_it_is_cancelled(reader: ReaderWidget, qtbot: QtBot) -> None:
+    waiting = replace(CARD, method="CANCEL", stored_in="Calendar (Work)", occurrence_kept=True)
+    card = reader._card  # noqa: SLF001
+    reader.show_message(replace(shown(html="<p></p>"), invitation=waiting))
+    qtbot.waitUntil(lambda: card.apply_button.isVisible())
+    assert card.apply_button.isEnabled()
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(waiting, kept_cancelled=True)))
+    qtbot.waitUntil(lambda: not card.apply_button.isEnabled())
+    assert card.apply_button.text() == "Cancel in calendar"
+
+
 def test_a_shared_item_offers_add_to_calendar(reader: ReaderWidget, qtbot: QtBot) -> None:
     reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="PUBLISH")))
     card = reader._card  # noqa: SLF001
@@ -62,7 +74,7 @@ def test_a_shared_item_offers_add_to_calendar(reader: ReaderWidget, qtbot: QtBot
 
 
 def test_the_organizers_changes_have_their_own_button() -> None:
-    assert apply_text(replace(CARD, method="CANCEL", stored_in="Calendar (Work)", occurrence_kept=True)) == "Remove from calendar"
+    assert apply_text(replace(CARD, method="CANCEL", stored_in="Calendar (Work)", occurrence_kept=True)) == "Cancel in calendar"
     assert apply_text(replace(CARD, method="CANCEL", stored_in="Calendar (Work)")) == ""  # the series is kept, that occurrence is not
     assert apply_text(replace(CARD, method="CANCEL")) == ""
     assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="newer", your_answer="ACCEPTED")) == "Update calendar"

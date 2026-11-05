@@ -339,7 +339,7 @@ def apply_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return ""
     if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
-        return f"Remove this date from {home}" if info.one_date else f"Remove from {home}"
+        return f"Cancel this date in {home}" if info.one_date else f"Cancel in {home}"
     if asks_for_series(info):
         return "Request"
     if only_update(info) or (info.method == "PUBLISH" and info.stored_in and info.version == "newer"):
@@ -376,7 +376,7 @@ class InvitationCard(QFrame):
     link_activated = Signal(QUrl)  # the organizer's address or a web address in the place was clicked
     link_hovered = Signal(str)  # the pointer came on such an address (its link), or left it ("")
     answer_requested = Signal(str)  # ACCEPTED, TENTATIVE or DECLINED (Add to calendar: ACCEPTED of a shared item)
-    apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Remove from calendar, Add to calendar, Ask…
+    apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Cancel in calendar, Add to calendar, Ask…
     delegate_requested = Signal()  # Delegate…: someone else goes in your place
     organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
     busy_requested = Signal()  # Send my busy times…
@@ -844,6 +844,8 @@ class InvitationCard(QFrame):
         self._answer_line.setVisible(shown)
         outdated = info.version == "older"
         reason = f"A newer version of this {item_word(info)} is in your {home_word(info)}: this message is out of date." if outdated else (organize_reason(info) if choices else "")
+        if not reason and apply and info.method == "CANCEL" and info.kept_cancelled:
+            reason = f"This {item_word(info)} is cancelled in your {home_word(info)}."
         answering = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.busy_button)
         buttons = (*answering, self.change_button, self.add_button, self.apply_button, *self.organize_buttons)
         for button in buttons:

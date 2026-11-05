@@ -8,7 +8,7 @@ from pathlib import Path
 
 from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CertificateError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
 from chrono_mail.pimstore import PimStore
-from chrono_mail.pim.itip import ready_to_delete
+from chrono_mail.pim.itip import ready_to_delete, with_organizer
 from chrono_mail.pim.merge import Clash, merge
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.protocols.dav import (
@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.515"
+__version__ = "davsync.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: organizer_later: a waiting copy goes without its organizer first, so the server mails nothing; a conflict or a delete drops that (D-310)
 # v4.4.515: an item link remembers what a waiting delete needs first (before_delete): the corrected copy goes to the server, the delete only after it confirmed that (D-310)
 # v4.4.512: a collection remembers whether it is someone else's ("shared", D-310)
 # v4.2.449: push False is the first fill of a new account (D-300): nothing sent (items, names, colours, merges), nothing removed here
@@ -109,6 +110,7 @@ class CollectionState:
     ctag: str = ""
     links: dict[str, ItemLink] = field(default_factory=dict[str, ItemLink])  # by address on the server
     refused: str = ""  # the digest of a complete listing the guard refused; the same listing at the next synchronisation is trusted
+    organizer_later: set[str] = field(default_factory=set[str])  # items that wait here: sent without their organizer first, then as they are, so the server mails nothing (D-310)
 
 
 def _link_description(link: ItemLink) -> dict[str, str]:
@@ -132,7 +134,8 @@ class DavState:
             if data.get("version") != STATE_VERSION:
                 return
             for collection, description in data["collections"].items():
-                state = CollectionState(str(description.get("token", "")), str(description.get("ctag", "")), refused=str(description.get("refused", "")))
+                state = CollectionState(str(description.get("token", "")), str(description.get("ctag", "")), refused=str(description.get("refused", "")),
+                                        organizer_later={str(item) for item in description.get("organizer_later", [])})
                 for href, link in description.get("links", {}).items():
                     state.links[canonical_href(str(href))] = ItemLink(str(link["id"]), str(link["etag"]), str(link["digest"]), str(link.get("before_delete", "")))
                 self.collections[str(collection)] = state
@@ -150,6 +153,7 @@ class DavState:
                     "token": state.token,
                     "ctag": state.ctag,
                     "refused": state.refused,
+                    "organizer_later": sorted(state.organizer_later),
                     "links": {href: _link_description(link) for href, link in state.links.items()},
                 }
                 for identifier, state in self.collections.items()
@@ -691,6 +695,7 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
     held = [(c.href, c.item) for c in load_conflicts(store) if c.collection == collection]
     held_hrefs = {href for href, _ in held}
     held_items = {item for _, item in held if item}
+    collection_state.organizer_later &= existing - held_items  # deleted, or in a conflict: what the person settles goes as it is (D-310)
     for href, link in list(links.items()):
         if href in held_hrefs or link.item_id in held_items:
             continue
@@ -702,8 +707,9 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             if digest_of(text) == link.digest:
                 continue
             try:
-                etag = client.put(href, text, remote.kind, etag=link.etag)
+                etag = client.put(href, text, remote.kind, etag=_organizer_first(client, remote, collection_state, href, link, text))
             except DavConflict:  # changed on the server meanwhile (or deleted there)
+                collection_state.organizer_later.discard(link.item_id)
                 fetched = client.read(remote, href)
                 if fetched is None:
                     record(store, new_conflict(collection, href, link.item_id, local.kind.value, DELETED_ON_SERVER, title_of(local.kind, text), "", ""))
@@ -716,12 +722,14 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             except ProtocolError as error:
                 if passing_failure(error):
                     raise
+                collection_state.organizer_later.discard(link.item_id)
                 fetched = client.read(remote, href)
                 record(store, new_conflict(collection, href, link.item_id, local.kind.value, REFUSED, title_of(local.kind, text),
                                            fetched[0] if fetched else link.etag, fetched[1] if fetched else "", detail=str(error)))
                 report.conflicts += 1
                 continue
             links[href] = ItemLink(link.item_id, etag or client.etag_of(href), digest_of(text))
+            collection_state.organizer_later.discard(link.item_id)
             drop_base(store, collection, link.item_id)
             report.pushed += 1
         except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
@@ -736,15 +744,21 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             text = store.get(collection, item_id)
             uid = extract(local.kind, text).uid
             href = address_for(remote, uid, item_id)
+            first = _without_organizer(text) if item_id in collection_state.organizer_later else None
             try:
                 try:
-                    etag = client.put(href, text, remote.kind, create=True)
+                    etag = client.put(href, first or text, remote.kind, create=True)
                 except DavConflict:  # that name is taken by another item
                     href = address_for(remote, "", item_id)
-                    etag = client.put(href, text, remote.kind, create=True)
+                    etag = client.put(href, first or text, remote.kind, create=True)
+                if first is not None:  # the server holds it now: should the rest fail, the next synchronisation goes on from here
+                    links[href] = ItemLink(item_id, etag or client.etag_of(href), digest_of(first))
+                    etag = client.put(href, text, remote.kind, etag=links[href].etag)
+                    collection_state.organizer_later.discard(item_id)
             except ProtocolError as error:
                 if passing_failure(error):
                     raise
+                collection_state.organizer_later.discard(item_id)
                 record(store, new_conflict(collection, href, item_id, local.kind.value, REFUSED, title_of(local.kind, text), "", "", detail=str(error)))
                 report.conflicts += 1
                 continue
@@ -757,6 +771,20 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             report.errors.append(f"{remote.name}: {error}")
             if isinstance(error, ProtocolError) and passing_failure(error):
                 return
+
+
+def _without_organizer(text: str) -> str | None:
+    return with_organizer(text, "") or None
+
+
+def _organizer_first(client: DavClient, remote: RemoteCollection, collection_state: CollectionState, href: str, link: ItemLink, text: str) -> str:
+    """The version to write a waiting copy over: a copy that should reach the server silently goes there without its organizer first (D-310)."""
+    first = _without_organizer(text) if link.item_id in collection_state.organizer_later else None
+    if first is None:
+        return link.etag
+    etag = client.put(href, first, remote.kind, etag=link.etag) or client.etag_of(href)
+    collection_state.links[href] = replace(link, etag=etag)  # should the rest fail, the next synchronisation goes on from here
+    return etag
 
 
 def _prepared_delete(client: DavClient, remote: RemoteCollection, collection_state: CollectionState, href: str, link: ItemLink) -> str:

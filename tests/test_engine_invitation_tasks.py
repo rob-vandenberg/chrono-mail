@@ -13,9 +13,10 @@ from tests.test_engine_invitation_answers import drafts
 from tests.test_engine_invitations import deliver, invitation_mail, show
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_tasks.py 4.4.507"
+__version__ = "test_engine_invitation_tasks.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: A cancelled task stays, Cancelled (D-310)
 # v4.4.507: Initial tests: every flow of an invitation also works on a task, in task lists, in the person's words (D-310 step 4)
 
 
@@ -95,10 +96,10 @@ def test_a_newer_version_from_the_organizer_asks_again_when_its_due_moment_moved
     assert result.done == "updated" and "DUE:20261106T170000Z" in text and "PARTSTAT=NEEDS-ACTION" in text
 
 
-def test_a_cancelled_task_leaves_the_task_list(setup: Setup) -> None:
+def test_a_cancelled_task_stays_in_the_task_list(setup: Setup) -> None:
     stored_task(setup, task_text(method=""))
-    assert run(setup, "invitation.apply", deliver(setup, invitation_mail(task_text("CANCEL", sequence=1)))).done == "removed"
-    assert kept_tasks(setup) == []
+    assert run(setup, "invitation.apply", deliver(setup, invitation_mail(task_text("CANCEL", sequence=1)))).done == "cancelled"
+    assert "STATUS:CANCELLED" in kept_tasks(setup)[0]
 
 
 def test_delegate_passes_the_task_on_in_the_persons_words(setup: Setup) -> None:

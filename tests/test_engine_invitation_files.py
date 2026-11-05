@@ -13,14 +13,15 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.mime import Attachment
 from chrono_mail.pim.itip import read_calendar_message, text_items
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
-from tests.test_engine_invitation_answers import drafts, kept
+from tests.test_engine_invitation_answers import drafts, kept, local_calendar
 from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_list, task_text
-from tests.test_engine_invitations import calendar_text, deliver, stored
+from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.531"
+__version__ = "test_engine_invitation_files.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: A file with no organizer asks no answer (D-310)
 # v4.4.531: A calendar file opened from your own Sent or Drafts is your own: no buttons (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.527: what you have at that time, one invitation shown once (D-310)
@@ -417,3 +418,26 @@ def test_the_kept_copy_of_a_single_file_is_shown_on_the_card(setup: Setup, tmp_p
 def test_the_items_of_a_text_are_counted_by_their_uid() -> None:
     series = calendar_text(method="").replace("END:VEVENT", "END:VEVENT\r\nBEGIN:VEVENT\r\nUID:meeting-1@example.com\r\nRECURRENCE-ID:20261105T100000Z\r\nDTSTART:20261105T110000Z\r\nEND:VEVENT")
     assert len(text_items(series).texts) == 1 and len(text_items(two_events()).texts) == 2 and text_items("nothing").texts == ()
+
+
+NO_ORGANIZER = calendar_text().replace("ORGANIZER;CN=Olivia Organizer:mailto:olivia@example.org\r\n", "")
+
+
+def test_a_file_with_no_organizer_asks_no_answer_and_is_only_added(setup: Setup, tmp_path: Path) -> None:
+    path = file_with(tmp_path, NO_ORGANIZER)
+    card = on_file(setup, "invitation.card", path)
+    assert card.method == "PUBLISH" and card.plain
+    check = on_file(setup, "invitation.answer", path, answer="ACCEPTED", calendar=local_calendar(setup), dry=True)
+    assert not check.no_organizer and not check.chrono
+    on_file(setup, "invitation.answer", path, answer="ACCEPTED", calendar=local_calendar(setup))
+    (text,) = kept(setup)
+    assert "ORGANIZER" not in text and "METHOD" not in text and not drafts(setup)
+
+
+def test_a_file_with_an_organizer_still_asks_its_answer(setup: Setup, tmp_path: Path) -> None:
+    assert on_file(setup, "invitation.card", file_with(tmp_path, calendar_text())).method == "REQUEST"
+
+
+def test_a_mail_with_no_organizer_still_asks_its_answer(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    assert call(setup.engine, "invitation.card", account=setup.account_id, folder="Inbox", message=message).method == "REQUEST"

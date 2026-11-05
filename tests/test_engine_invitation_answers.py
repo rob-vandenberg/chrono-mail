@@ -15,9 +15,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.554"
+__version__ = "test_engine_invitation_answers.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: A Cancel mail sets Cancelled; a new version keeps a changed date it does not name (D-310)
 # v4.4.554: An answer on all occurrences replaces a date answered otherwise (D-310)
 # v4.4.552: A deleted date of a series shows nowhere (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -231,16 +232,17 @@ def test_a_new_time_asks_your_answer_again(setup: Setup) -> None:
     assert "PARTSTAT=NEEDS-ACTION" in kept(setup)[0]
 
 
-def test_a_cancellation_removes_the_meeting_or_its_one_occurrence(setup: Setup) -> None:
+def test_a_cancellation_sets_the_meeting_or_its_one_occurrence_cancelled(setup: Setup) -> None:
     series = calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     stored(setup, series)
     one = calendar_text(method="CANCEL", sequence=1).replace("SEQUENCE:1", "SEQUENCE:1\r\nRECURRENCE-ID:20261105T100000Z", 1)
     call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(one)))
     (text,) = kept(setup)
-    assert "EXDATE:20261105T100000Z" in text
+    assert "RECURRENCE-ID:20261105T100000Z" in text and text.count("STATUS:CANCELLED") == 1 and "EXDATE" not in text
     whole = calendar_text(method="CANCEL", sequence=2).replace("Choice of colours", "Choice of colours")
     result = call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(whole).replace(b"Subject: Invitation", b"Subject: Invitation", 1)))
-    assert result.done == "removed" and kept(setup) == []
+    (text,) = kept(setup)
+    assert result.done == "cancelled" and text.count("STATUS:CANCELLED") == 2
 
 
 def test_an_added_occurrence_of_a_series_you_do_not_have_asks_for_it(setup: Setup) -> None:
@@ -295,12 +297,13 @@ def test_an_older_update_changes_nothing(setup: Setup) -> None:
         call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(calendar_text(sequence=1))))
 
 
-def test_a_cancellation_of_the_only_occurrence_kept_removes_it(setup: Setup) -> None:
+def test_a_cancellation_of_the_only_occurrence_kept_keeps_it_cancelled(setup: Setup) -> None:
     only = calendar_text(method="").replace("SEQUENCE:0", "SEQUENCE:0\r\nRECURRENCE-ID:20261105T100000Z", 1)
     stored(setup, only)
     cancel = calendar_text(method="CANCEL", sequence=1).replace("SEQUENCE:1", "SEQUENCE:1\r\nRECURRENCE-ID:20261105T100000Z", 1)
     result = call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(cancel)))
-    assert result.done == "removed" and kept(setup) == []
+    (text,) = kept(setup)
+    assert result.done == "cancelled" and "STATUS:CANCELLED" in text
 
 
 def test_the_answer_to_a_delegation_names_the_delegate() -> None:
@@ -372,14 +375,14 @@ def test_an_outdated_invitation_cannot_be_answered(setup: Setup) -> None:
     assert len(kept(setup)) == 1 and drafts(setup) == []
 
 
-def test_a_new_version_of_the_whole_series_drops_occurrences_it_no_longer_changes(setup: Setup) -> None:
-    """Step 2 review round 4: Update calendar kept a moved occurrence the organizer had put back."""
+def test_a_new_version_of_the_whole_series_keeps_a_changed_date_it_does_not_name(setup: Setup) -> None:
+    """The owner: a series is one record, what a new version changes is copied in; the changed date is part of that record (D-310)."""
     series = calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     moved = calendar_text(method="").replace("SEQUENCE:0", "SEQUENCE:0\r\nRECURRENCE-ID:20261105T100000Z", 1).split("BEGIN:VEVENT", 1)[1].split("END:VCALENDAR")[0]
     stored(setup, series.replace("END:VCALENDAR", "BEGIN:VEVENT" + moved + "END:VCALENDAR", 1).replace("END:VEVENT\r\nEND:VEVENT", "END:VEVENT", 1))
     newer = calendar_text(sequence=1).replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(newer)))
-    assert "RECURRENCE-ID" not in kept(setup)[0]
+    assert "RECURRENCE-ID:20261105T100000Z" in kept(setup)[0]
 
 
 def test_another_time_zone_asks_the_answer_again() -> None:
@@ -433,19 +436,17 @@ def test_an_added_date_takes_the_series_answer(setup: Setup) -> None:
     assert "NEEDS-ACTION" not in kept(setup)[0]
 
 
-def test_a_removed_occurrence_offers_nothing_more_and_is_never_excluded_twice(setup: Setup) -> None:
-    """Step 2 review round 6: Remove from calendar stayed after the removal, and a second click wrote the same EXDATE twice."""
+def test_a_cancellation_of_a_date_you_deleted_offers_nothing_and_changes_nothing(setup: Setup) -> None:
     from tests.test_engine_invitations import show
 
-    stored(setup, calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
+    stored(setup, calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nEXDATE:20261105T100000Z\r\nSUMMARY:", 1))
     cancel = calendar_text(method="CANCEL", sequence=1).replace("SEQUENCE:1", "SEQUENCE:1\r\nRECURRENCE-ID:20261105T100000Z", 1)
     message = deliver(setup, invitation_mail(cancel))
-    call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=message)
     card = show(setup, message).invitation
     assert card is not None and not card.occurrence_kept
-    with pytest.raises(UsageError, match="not in your calendar"):  # removed already: said so, nothing written
+    with pytest.raises(UsageError, match="not in your calendar"):  # deleted already: said so, nothing written
         call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=message)
-    assert kept(setup)[0].count("EXDATE") == 1
+    assert kept(setup)[0].count("EXDATE") == 1 and "STATUS" not in kept(setup)[0]
 
 
 def test_a_new_version_of_the_series_keeps_your_declined_date(setup: Setup) -> None:
@@ -534,12 +535,12 @@ def two_occurrences(method: str, sequence: int, first: str = "20261105T100000Z",
     return one.replace("END:VCALENDAR", "BEGIN:VEVENT" + part + "END:VCALENDAR", 1).replace("END:VEVENT\r\nEND:VEVENT", "END:VEVENT", 1)
 
 
-def test_a_cancellation_of_several_occurrences_removes_them_all(setup: Setup) -> None:
-    """Step 2 review round 10: only the first cancelled occurrence was removed."""
+def test_a_cancellation_of_several_occurrences_cancels_them_all(setup: Setup) -> None:
+    """Step 2 review round 10: only the first cancelled occurrence was handled."""
     stored(setup, calendar_text(method="").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1))
     call(setup.engine, "invitation.apply", account=setup.account_id, folder="Inbox", message=deliver(setup, invitation_mail(two_occurrences("CANCEL", 1))))
     (text,) = kept(setup)
-    assert "20261105T100000Z" in text and "20261112T100000Z" in text and text.count("EXDATE") == 2
+    assert "RECURRENCE-ID:20261105T100000Z" in text and "RECURRENCE-ID:20261112T100000Z" in text and text.count("STATUS:CANCELLED") == 2
 
 
 def test_delegating_several_occurrences_names_the_delegate_on_each(setup: Setup) -> None:

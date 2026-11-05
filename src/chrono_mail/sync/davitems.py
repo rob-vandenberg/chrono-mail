@@ -35,9 +35,10 @@ from chrono_mail.sync.davconflicts import (
 from chrono_mail.sync.davsync import CollectionState, DavState, ItemLink, address_for, digest_of, title_of, weigh
 
 # --- Version ------------------------------------------------------------
-__version__ = "davitems.py 4.4.515"
+__version__ = "davitems.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: organizer_later: a waiting copy goes to the server without its organizer first, also a later write unless the server is to mail it; a delete drops that, a move takes it along (D-310)
 # v4.4.515: delete(before): the corrected copy still waiting, the delete waits behind it; hold: a copy kept here against what the server holds, with a sync conflict (D-310)
 # v4.3.498: a contact's change reads the server's version first: a server that ignores If-Match (Kerio) never has a change there written
 #           over; the copy Keep both writes is read back and kept as the server stored it (its fingerprint too), so a server's own
@@ -210,6 +211,7 @@ class ItemGateway:
         """Delete an item on the server first, then here. before: what the server's copy needed first; when that copy still waits here, no delete
         goes now: the synchronisation sends both, in that order (D-310)."""
         collection_state = self.state.get(info.collection_id)
+        self.organizer_now(info, item)
         found = _link_of(collection_state, item)
         conflict = open_conflict(self.store, info.collection_id, href=found[0] if found else "", item=item)
         if found is None or conflict is not None:
@@ -248,6 +250,21 @@ class ItemGateway:
         self.state.save()
         return Outcome("", DONE)
 
+    def organizer_waits(self, info: CollectionInfo, item: str) -> bool:
+        return item in self.state.get(info.collection_id).organizer_later
+
+    def organizer_now(self, info: CollectionInfo, item: str) -> None:
+        """A copy that waited to go without its organizer first goes as it is: deleted, or the server is to mail it after all (D-310)."""
+        waiting = self.state.get(info.collection_id).organizer_later
+        if item in waiting:
+            waiting.remove(item)
+            self.state.save()
+
+    def organizer_later(self, info: CollectionInfo, item: str) -> None:
+        """A copy that waits here: the synchronisation sends it without its organizer first, then as it is (D-310)."""
+        self.state.get(info.collection_id).organizer_later.add(item)
+        self.state.save()
+
     def hold(self, info: CollectionInfo, item: str, text: str, detail: str) -> None:
         """The server took a changed copy, then refused both its delete and the way back: this text stays here, and a sync conflict says that the
         server holds another version until the person settled it (D-310)."""
@@ -261,6 +278,12 @@ class ItemGateway:
         """Move an item to another collection of the account: made in the new place on the server, taken from the old place, then moved here."""
         text = self.store.get(source.collection_id, item)
         source_state = self.state.get(source.collection_id)
+        if item in source_state.organizer_later:  # it waits to go silently, and goes on waiting in the new place (D-310)
+            moved = self.store.move(source.collection_id, item, target.collection_id)
+            source_state.organizer_later.remove(item)
+            self.state.get(target.collection_id).organizer_later.add(moved)
+            self.state.save()
+            return Outcome(moved, WAITING)
         found = _link_of(source_state, item)
         remote = remote_of(target)
         href = address_for(remote, extract(target.kind, text).uid, item)

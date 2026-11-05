@@ -29,9 +29,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World, answer_calendar_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.533"
+__version__ = "test_ui_invitation_window.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: Cancel this date in calendar (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; the warning before Accept (D-310)
@@ -64,7 +65,7 @@ CALENDAR_FILE = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGI
 
 def test_a_task_speaks_of_a_task_and_its_task_list() -> None:
     assert intro_text(TASK) == "You have been asked to do this task."
-    assert apply_text(replace(TASK, method="CANCEL", stored_in="Tasks (Work)", occurrence_kept=True)) == "Remove from task list"
+    assert apply_text(replace(TASK, method="CANCEL", stored_in="Tasks (Work)", occurrence_kept=True)) == "Cancel in task list"
     assert apply_text(replace(TASK, stored_in="Tasks (Work)", version="newer", your_answer="ACCEPTED")) == "Update task list"
     yours = replace(TASK, method="REPLY", organizer=replace(TASK.organizer, you=True))  # type: ignore[arg-type]
     assert organize_reason(yours) == "This task is not in your task list any more."
@@ -597,7 +598,7 @@ def test_an_update_shows_the_old_time_and_the_new() -> None:
 def test_a_mail_about_one_date_says_so_also_on_its_button() -> None:
     date_of = replace(KEPT, one_date=True)
     assert intro_text(replace(date_of, method="CANCEL")) == "This date of the series was cancelled by its organizer."
-    assert apply_text(replace(date_of, method="CANCEL")) == "Remove this date from calendar" and apply_text(date_of) == "Update this date in calendar"
+    assert apply_text(replace(date_of, method="CANCEL")) == "Cancel this date in calendar" and apply_text(date_of) == "Update this date in calendar"
     assert intro_text(replace(date_of, version="same")) == "You have been invited to this date of the series."
 
 

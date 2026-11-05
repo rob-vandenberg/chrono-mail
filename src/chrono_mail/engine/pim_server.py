@@ -11,14 +11,16 @@ from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path
 from chrono_mail.engine.pimaccess import account_name
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.itip import with_organizer
 from chrono_mail.pimstore import PimStore
 from chrono_mail.sync.davitems import CONFLICT, WAITING, ItemGateway, Outcome, ServerRefused, on_server
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 4.4.515"
+__version__ = "pim_server.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: put_organizer_last: a copy saved without its organizer first, so a server that mails whatever it is told stays silent; put: mailed (D-310)
 # v4.4.515: a delete can say what the server's copy needs first; restore: the way back after a refused delete, refused as well: a sync conflict, told calmly (D-310)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -57,15 +59,39 @@ class ItemWriter:
             self.conflicts += 1
         return outcome.item
 
-    def put(self, info: CollectionInfo, text: str, item: str | None = None) -> str:
-        """Save an item (new when item is None); returns its id here."""
+    def put(self, info: CollectionInfo, text: str, item: str | None = None, mailed: bool = False) -> str:
+        """Save an item (new when item is None); returns its id here. A copy that waits to go silently goes on doing so, unless mailed: the server is to mail this write (D-310)."""
         gateway = self._server(info)
         if gateway is None:
             return self.store.put(info.collection_id, text, item)
+        if item is not None and not mailed and gateway.organizer_waits(info, item):
+            return self.put_organizer_last(info, text, item)
         try:
-            return self._count(gateway.save(info, text, item))
+            outcome = gateway.save(info, text, item)
         except ServerRefused as error:
             raise UsageError(f"The server did not take the change ({error}); nothing was changed") from None
+        if mailed:
+            gateway.organizer_now(info, outcome.item)
+        return self._count(outcome)
+
+    def put_organizer_last(self, info: CollectionInfo, text: str, item: str | None = None) -> str:
+        """Save an item a server may mail nothing about, whatever it is told: first without its organizer, then with it. Measured on Kerio: a first save with an
+        organizer mails, these two do not (D-310). Offline the synchronisation sends both, in that order."""
+        gateway = self._server(info)
+        bare = with_organizer(text, "")
+        if gateway is None or bare is None:
+            return self.put(info, text, item, mailed=True)
+        try:
+            outcome = gateway.save(info, bare, item)
+        except ServerRefused as error:
+            raise UsageError(f"The server did not take the change ({error}); nothing was changed") from None
+        saved = self._count(outcome)
+        if outcome.status == WAITING:
+            gateway.organizer_later(info, saved)
+            return self.store.put(info.collection_id, text, saved)
+        self.restore(info, text, saved)
+        gateway.organizer_now(info, saved)
+        return saved
 
     def delete(self, info: CollectionInfo, item: str, before: str = "") -> None:
         gateway = self._server(info)

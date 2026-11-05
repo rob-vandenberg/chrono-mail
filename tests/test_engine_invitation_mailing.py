@@ -7,21 +7,24 @@ import pytest
 
 from chrono_mail.config import AppConfig, load_config, save_config
 from chrono_mail.core import MessageFlag
+from chrono_mail.engine.commands_dav import _state_path  # pyright: ignore[reportPrivateUsage]
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.pim.itip import reply_text, without_organizer
 from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davitems import ItemGateway, ServerRefused
-from tests.fakedav import FakeDav
+from chrono_mail.sync.davsync import DavState
+from tests.fakedav import Collection, FakeDav
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.554"
+__version__ = "test_engine_invitation_mailing.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: An invitation with no organizer: Send gives one mail, Don't send none (also with a later write, a move, a conflict), also on a server that mails whatever it is told and while offline (D-310)
 # v4.4.554: A Decline is one write that stays in the calendar; the waiting delete is tested through Change my answer (D-310)
 # v4.4.526: an answer says it waits for the connection (D-310)
 # v4.4.520: an answer the server mails sets the Replied mark (D-310)
@@ -402,3 +405,224 @@ def test_an_answer_the_server_mails_sets_the_replied_mark_at_once(setup: Setup, 
     with open_mailbox(setup.engine, setup.account_id) as mailbox:
         assert MessageFlag.REPLIED in mailbox.current_flags(mailbox.reference(mailbox.folder("Inbox"), message))
 
+
+NO_ORGANIZER = calendar_text().replace("ORGANIZER;CN=Olivia Organizer:mailto:olivia@example.org\r\n", "")
+
+
+def always_mails(setup: Setup) -> str:  # noqa: F811
+    """A server that mails whatever it is told, and the mail of an invitation that names no organizer."""
+    settings(setup, dav_always_answers=True, dav_addresses=("me@example.com",))
+    return deliver(setup, invitation_mail(NO_ORGANIZER))
+
+
+def answer_to(setup: Setup, message: str, address: str, mail: bool):  # noqa: ANN201, F811 - the command's own answer
+    return call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=calendar_id(setup), to=address, mail=mail)
+
+
+def test_with_no_organizer_the_person_is_asked_also_when_the_server_mails(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = always_mails(setup)
+    check = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=calendar_id(setup), dry=True)
+    assert check.chrono and check.no_organizer and check.server_answers and on_server(server) == []
+
+
+def test_send_on_a_server_that_mails_is_one_save_with_the_organizer_and_no_mail_from_here(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    sent = put_texts(server, monkeypatch)
+    result = answer_to(setup, message, "sam@example.org", True)
+    assert result.server_answers and result.draft_message is None and drafts(setup) == []
+    assert len(sent) == 1 and "mailto:sam@example.org" in sent[0].replace("\r\n ", "")
+
+
+def test_dont_send_on_a_server_that_mails_saves_the_organizer_last(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    sent = put_texts(server, monkeypatch)
+    result = answer_to(setup, message, "sam@example.org", False)
+    assert not result.server_answers and drafts(setup) == []
+    assert len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:sam@example.org" in sent[1].replace("\r\n ", "")
+    assert "PARTSTAT=ACCEPTED" in sent[0] and "PARTSTAT=ACCEPTED" in sent[1]  # the same answer, or the second save mails
+    assert "mailto:sam@example.org" in calendar_items(setup)[0].replace("\r\n ", "") and len(on_server(server)) == 1
+
+
+def test_dont_send_on_a_copy_a_server_made_takes_its_organizer_off_first(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    server.add("events", "kerio-copy", NO_ORGANIZER.replace("METHOD:REQUEST\r\n", "").replace("END:VEVENT", "ORGANIZER:mailto:olivia@example.org\r\nEND:VEVENT"))
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    message = always_mails(setup)
+    check = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", dry=True)
+    assert check.no_organizer and check.chrono  # what a server wrote in by itself decides nothing
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", to="olivia@example.org", mail=False)
+    assert len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:olivia@example.org" in sent[1].replace("\r\n ", "")
+
+
+def test_an_empty_field_on_a_copy_a_server_made_leaves_no_organizer(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    server.add("events", "kerio-copy", NO_ORGANIZER.replace("METHOD:REQUEST\r\n", "").replace("END:VEVENT", "ORGANIZER:mailto:olivia@example.org\r\nEND:VEVENT"))
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    message = always_mails(setup)
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", to="", mail=False)
+    assert "ORGANIZER" not in on_server(server)[0] and "ORGANIZER" not in calendar_items(setup)[0]
+
+
+def test_dont_send_offline_sends_both_saves_in_order_when_the_connection_is_back(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    server.writes_failing = True
+    result = answer_to(setup, message, "sam@example.org", False)
+    assert result.waiting and "mailto:sam@example.org" in calendar_items(setup)[0].replace("\r\n ", "")
+    server.writes_failing = False
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:sam@example.org" in sent[1].replace("\r\n ", "")
+    sent.clear()
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert sent == []  # done: nothing is sent twice
+
+
+def test_dont_send_offline_goes_on_from_where_it_stopped(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    server.writes_failing = False
+    sent = put_texts(server, monkeypatch)
+    original = DavClient.put
+
+    def stops_at_the_second(client: DavClient, href: str, text: str, *rest: object, **options: object) -> str:
+        server.writes_failing = "mailto:sam" in text.replace("\r\n ", "")
+        return original(client, href, text, *rest, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(DavClient, "put", stops_at_the_second)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert "ORGANIZER" not in on_server(server)[0] and len(on_server(server)) == 1
+    server.writes_failing = False
+    monkeypatch.setattr(DavClient, "put", original)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert len(on_server(server)) == 1 and "mailto:sam@example.org" in on_server(server)[0].replace("\r\n ", "")
+
+
+def test_the_second_save_refused_keeps_the_organizer_here_with_a_conflict(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    original = DavClient.put
+
+    def refuses_the_second(client: DavClient, href: str, text: str, *rest: object, **options: object) -> str:
+        server.writes_refused = "mailto:sam" in text.replace("\r\n ", "")
+        return original(client, href, text, *rest, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(DavClient, "put", refuses_the_second)
+    with pytest.raises(UsageError, match="Sync conflicts"):
+        answer_to(setup, message, "sam@example.org", False)
+    server.writes_refused = False
+    assert "mailto:sam@example.org" in calendar_items(setup)[0].replace("\r\n ", "")
+
+
+def test_a_server_that_listens_is_told_to_stay_silent_in_one_save(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    sent = put_texts(server, monkeypatch)
+    answer_to(setup, message, "sam@example.org", False)
+    assert len(sent) == 1 and "SCHEDULE-AGENT=CLIENT" in sent[0].replace("\r\n ", "") and "mailto:sam@example.org" in sent[0].replace("\r\n ", "")
+
+
+def test_with_chrono_mail_chosen_send_makes_one_mail_to_the_address(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    settings(setup, invitation_answers="chrono")
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    result = answer_to(setup, message, "sam@example.org", True)
+    assert result.draft_message is not None and len(drafts(setup)) == 1
+    assert "SCHEDULE-AGENT=CLIENT" in on_server(server)[0].replace("\r\n ", "")
+
+
+def test_with_the_box_off_nothing_is_asked_and_nothing_goes_out(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    settings(setup, invitation_answers="none")
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    check = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=calendar_id(setup), dry=True)
+    assert not check.chrono
+    result = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=calendar_id(setup))
+    assert result.draft_message is None and drafts(setup) == []
+
+
+def waiting_bare(setup: Setup) -> set[str]:  # noqa: F811
+    """The items that go without their organizer first."""
+    return DavState(_state_path(setup.engine, setup.account_id), durable=False).get(calendar_id(setup)).organizer_later
+
+
+def test_accept_after_a_decline_with_an_address_keeps_that_address_as_organizer(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = always_mails(setup)
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="DECLINED", to="sam@example.org", mail=False)
+    assert calendar_items(setup) == []
+    answer_to(setup, message, "", True)
+    assert "mailto:sam@example.org" in calendar_items(setup)[0].replace("\r\n ", "")
+
+
+def test_a_later_answer_with_send_while_offline_goes_with_its_organizer_and_is_mailed_by_the_server(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    assert len(waiting_bare(setup)) == 1
+    answer_to(setup, message, "", True)
+    assert waiting_bare(setup) == set()
+    server.writes_failing = False
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert len(sent) == 1 and "mailto:sam@example.org" in sent[0].replace("\r\n ", "")
+
+
+def waiting_then_written_again(setup: Setup, server: FakeDav) -> str:  # noqa: F811
+    """A Don't send that waits, and a later write of it with no mail, offline."""
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="TENTATIVE", mail=False)
+    assert len(waiting_bare(setup)) == 1
+    server.writes_failing = False
+    return message
+
+
+def test_a_later_write_with_no_mail_while_offline_goes_silently_at_the_synchronisation(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    waiting_then_written_again(setup, server)
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:sam@example.org" in sent[1].replace("\r\n ", "") and waiting_bare(setup) == set()
+
+
+def test_a_later_write_with_the_server_back_goes_silently_at_once_and_says_nothing_of_waiting(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    message = waiting_then_written_again(setup, server)
+    sent = put_texts(server, monkeypatch)
+    result = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", mail=False)
+    assert not result.waiting and len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:sam@example.org" in sent[1].replace("\r\n ", "") and waiting_bare(setup) == set()
+
+
+def test_a_copy_moved_while_it_waits_goes_silently_from_its_new_place(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    server.collections["second"] = Collection("Second", "calendar", "VEVENT")
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    other = next(item.collection for item in call(setup.engine, "collection.list") if item.kind == "events" and item.account == setup.account_id and item.collection != calendar_id(setup))
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    with open_pim(setup.engine, setup.account_id) as store:
+        item = next(iter(store.index.item_ids(calendar_id(setup))))
+    call(setup.engine, "event.move", item=item, calendar=other)
+    server.writes_failing = False
+    sent = put_texts(server, monkeypatch)
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert len(sent) == 2 and "ORGANIZER" not in sent[0] and "mailto:sam@example.org" in sent[1].replace("\r\n ", "")
+
+
+def test_a_copy_deleted_while_it_waits_leaves_no_note_behind(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    with open_pim(setup.engine, setup.account_id) as store:
+        store.delete(calendar_id(setup), next(iter(store.index.item_ids(calendar_id(setup)))))
+    server.writes_failing = False
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert waiting_bare(setup) == set() and on_server(server) == []
+
+
+def test_a_copy_that_meets_a_conflict_while_it_waits_leaves_no_note_behind(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    server.add("events", "kerio-copy", NO_ORGANIZER.replace("METHOD:REQUEST\r\n", "").replace("END:VEVENT", "ORGANIZER:mailto:olivia@example.org\r\nEND:VEVENT"))
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    message = always_mails(setup)
+    server.writes_failing = True
+    answer_to(setup, message, "sam@example.org", False)
+    assert len(waiting_bare(setup)) == 1
+    server.writes_failing = False
+    server.writes_refused = True
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    server.writes_refused = False
+    assert waiting_bare(setup) == set()

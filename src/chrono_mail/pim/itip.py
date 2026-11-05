@@ -5,22 +5,23 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from functools import lru_cache
-from itertools import groupby
+from itertools import groupby, islice
 from typing import Any, Literal  # icalendar hands out untyped property objects
 
 import icalendar
 from dateutil.rrule import rrulestr
 
 from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: one reading of iCalendar
-    MAXIMUM_ATTENDEES, MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, calendars_in, new_uid, zones_used,
-    occurrences,
+    COLOUR_ID_PROPERTY, MAXIMUM_ATTENDEES, MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, calendars_in, new_uid, zones_used,
+    occurrences, occurrences_from,
 )
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.554"
+__version__ = "itip.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: An update is copied into the event you keep, also at Accept; a date it writes itself keeps its time; removed dates are capped and compared as sets; your deleted dates are no change of time; a cancellation sets Cancelled, cancelled_in as it leaves it; Accept of a copy a server reset takes its free mark off; with_organizer (D-310)
 # v4.4.554: A declined event stays in its copy: merged_answer answers every date on all of it, what you declined and now attend blocks your time again; with_kept_mail (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -239,11 +240,16 @@ def _busy_again(component: icalendar.Component) -> None:
     component.add("TRANSP", "OPAQUE")
 
 
-def _answer_item(component: icalendar.Component, address: str, answer: str, name: str, before: icalendar.Component | None) -> None:
-    """Your answer on an item; `before` holds what you answered until now: what you declined and now attend blocks your time again."""
-    declined = before is not None and _your_answer(before, address) == "DECLINED"
+def _meant_free(calendar: icalendar.Calendar) -> bool:
+    return any(_first(each, "TRANSP").upper() == "TRANSPARENT" for each in _items_of(calendar))
+
+
+def _answer_item(component: icalendar.Component, address: str, answer: str, name: str, before: str, meant_free: bool = True) -> None:
+    """Your answer on an item; `before` is what you answered until now: what you declined and now attend blocks your time again. So does a copy a server
+    reset to unanswered with its own free mark of your Decline still on it (measured on Kerio): meant_free False, the organizer's message says nothing of free."""
+    free_mark = before == "NEEDS-ACTION" and not meant_free and _first(component, _SERVER_FREE).upper() == "FREE"
     _set_answer(component, address, answer, name)
-    if declined and answer in ("ACCEPTED", "TENTATIVE"):
+    if (before == "DECLINED" or free_mark) and answer in ("ACCEPTED", "TENTATIVE"):
         _busy_again(component)
 
 
@@ -318,45 +324,30 @@ def asked_again(stored: str, occurrence: Moment | None) -> str | None:
 
 
 def merged_answer(stored: str, message_text: str, address: str, answer: str, occurrence: Moment | None, take_message: bool, name: str = "") -> str | None:
-    """Your copy after answering, when one is kept already. take_message: the message is a newer version, so its items replace the kept
-    ones (for one occurrence: only that occurrence); else the kept copy stays as it is (its own changes, reminders, colour) with your answer set
-    in it (for one occurrence: in that occurrence, taken from the message when the copy has no changed version of it). An answer on all of it is on
-    every date, whatever you answered on one (D-310); only a delegation leaves a date you answered otherwise."""
+    """Your copy after answering, when one is kept already. take_message: the message is a newer version, so what it changed is copied into the
+    copy (_follow; for one occurrence: into that occurrence); else the kept copy stays as it is with your answer set in it (for one occurrence: in
+    that occurrence, taken from the message when the copy has no changed version of it). An answer on all of it is on every date, whatever you
+    answered on one (D-310); only a delegation leaves a date you answered otherwise."""
     kept = _parse(stored)
     message = _parse(message_text)
     if kept is None or message is None:
         return None
     kept.pop("METHOD", None)
     lower = address.strip().lower()
-    series = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    series = _main_of(kept)
+    free = _meant_free(message)
     if occurrence is not None and series is not None and answer != "DECLINED":
         _without_moment(series, "EXDATE", occurrence)  # a date taken out by Change my answer comes back with its answer
 
-    every_date = answer != "DELEGATED"
-    if occurrence is None and take_message:
-        if not every_date:
-            _keep_own_answers(kept, message, lower)
-        old_main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
-        series_answer = _your_answer(old_main, lower) if old_main is not None else ""
-        before = {str(_moment(each, "RECURRENCE-ID")): each for each in _items_of(kept) if each.get("RECURRENCE-ID") is not None}
-        for component in _items_of(message):
-            if component.get("RECURRENCE-ID") is None or every_date:
-                _set_answer(component, lower, answer, name)  # your answer to the series
-                continue
-            old = before.get(str(_moment(component, "RECURRENCE-ID")))
-            own = _your_answer(old, lower) if old is not None else ""
-            if old is not None and own and own != series_answer and _when(old) == _when(component):
-                _set_answer(component, lower, own)  # a date you answered otherwise, resent at the same time, keeps that (as updated_copy)
-            else:
-                _set_answer(component, lower, answer, name)  # a date that followed the series takes your new answer, whatever the organizer recorded
-        message.pop("METHOD", None)
-        return message.to_ical().decode("utf-8")
     if occurrence is None:
-        main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
-        series_answer = _your_answer(main, lower) if main is not None else ""
+        every_date = answer != "DELEGATED"
+        series_answer = _your_answer(series, lower) if series is not None else ""
+        before = {id(each): _your_answer(each, lower) for each in _items_of(kept)}
+        if take_message:
+            _follow(kept, message, lower)
         for component in _items_of(kept):  # (a delegation: the series and the occurrences that followed it; one you answered otherwise keeps that)
             if every_date or component.get("RECURRENCE-ID") is None or _your_answer(component, lower) in ("", "NEEDS-ACTION", series_answer):
-                _answer_item(component, lower, answer, name, component)
+                _answer_item(component, lower, answer, name, before.get(id(component), ""), free)
         return kept.to_ical().decode("utf-8")
     # A message about occurrences only (one or several): each of them into the copy, with your answer.
     incoming = [each for each in _items_of(message) if each.get("RECURRENCE-ID") is not None]
@@ -365,14 +356,15 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     for component in incoming:
         moment = _moment(component, "RECURRENCE-ID")
         present = [each for each in _items_of(kept) if _same_moment(_moment(each, "RECURRENCE-ID"), moment)]
-        before = present[0] if present else series
         if present and not take_message:
             for each in present:
-                _answer_item(each, lower, answer, name, each)
+                _answer_item(each, lower, answer, name, _your_answer(each, lower), free)
             continue
-        kept.subcomponents = [each for each in kept.subcomponents if not (each.name in ("VEVENT", "VTODO") and _same_moment(_moment(each, "RECURRENCE-ID"), moment))]
-        _answer_item(component, lower, answer, name, before)
-        kept.add_component(component)
+        was = present[0] if present else series
+        before_answer = _your_answer(was, lower) if was is not None else ""
+        if present:
+            _take_fields(present[0], component)
+        _answer_item(present[0] if present else _new_date(kept, series, component), lower, answer, name, before_answer, free)
     _copy_zones(message, kept)
     return kept.to_ical().decode("utf-8")
 
@@ -475,7 +467,10 @@ def ready_to_delete(text: str, before: str) -> str | None:
 
 # --- following the organizer (D-310) -----------------------------------------------------------------------------------------------------
 
-_TIME_KEYS: tuple[str, ...] = ("DTSTART", "DTEND", "DURATION", "DUE", "RRULE", "RDATE", "EXDATE")  # a change of these asks a new answer (RFC 5546 2.1.4)
+_YOUR_FIELDS: frozenset[str] = frozenset({"UID", "RECURRENCE-ID", "EXDATE", "CATEGORIES", "COLOR", COLOUR_ID_PROPERTY})  # yours: an update never writes these (D-310)
+_SERIES_TIME: frozenset[str] = frozenset({"DTSTART", "DTEND", "DURATION", "DUE", "RRULE", "RDATE"})  # the time of a series: it reaches a changed date by moving it
+_ORGANIZER_FIELDS: frozenset[str] = _SERIES_TIME | frozenset({"SUMMARY", "DESCRIPTION", "LOCATION", "ATTENDEE", "STATUS", "URL", "ATTACH", "CLASS", "PRIORITY", "GEO", "RESOURCES", "CONTACT", "COMMENT", "CONFERENCE"})
+# (what a new version takes away by no longer writing it; anything else it does not write stays. Also the organizer: a mail that names none does not take back who it was)
 
 
 def _moment_key(value: object) -> str:
@@ -495,20 +490,15 @@ def _rule_text(component: icalendar.Component) -> str:
 
 def _when(component: icalendar.Component) -> tuple[str, ...]:
     """The item's time as moments, not as written: the same moment in another zone or another way of writing is the same time; the same clock
-    time in another zone is another moment. Lists of dates (RDATE, EXDATE) compare as sets, however they are spread over lines."""
+    time in another zone is another moment. Extra dates (RDATE) compare as a set, however they are spread over lines. The list of removed dates
+    (EXDATE) is no part of it: your own deleted dates are no change of time (D-310)."""
     found: list[str] = []
     for key in ("DTSTART", "DTEND", "DUE"):
         found.append(_moment_key(_moment(component, key)))
     duration: Any = component.get("DURATION")
     found.append(str(getattr(duration, "dt", "")) if duration is not None and not isinstance(duration, list) else "")
     found.append(_rule_text(component))
-    for key in ("RDATE", "EXDATE"):
-        props: Any = component.get(key)
-        moments: set[str] = set()
-        for prop in props if isinstance(props, list) else ([props] if props is not None else []):
-            for value in getattr(prop, "dts", []):
-                moments.add(_moment_key(getattr(value, "dt", value)))
-        found.append(",".join(sorted(moments)))
+    found.append(",".join(sorted(_moment_key(each) for each in _moments(component, "RDATE"))))
     return tuple(found)
 
 
@@ -518,40 +508,228 @@ def _your_answer(component: icalendar.Component, address: str) -> str:
     return next((str(person.params.get("PARTSTAT", "NEEDS-ACTION")).upper() for person in people if _address_of(person) == address), "")
 
 
+def _main_of(calendar: icalendar.Calendar) -> icalendar.Component | None:
+    return next((each for each in _items_of(calendar) if each.get("RECURRENCE-ID") is None), None)
+
+
+def _copy_field(target: icalendar.Component, source: icalendar.Component, key: str) -> None:
+    """One field as the organizer's new version has it."""
+    if key in source:
+        target[key] = copy.deepcopy(source[key])
+    elif key in _ORGANIZER_FIELDS:
+        target.pop(key, None)
+
+
+def _take_fields(target: icalendar.Component, source: icalendar.Component) -> None:
+    """The organizer's fields of a new version into an item you keep; yours stay, its reminders with them (D-310)."""
+    for key in (set(source.keys()) | _ORGANIZER_FIELDS) - _YOUR_FIELDS:
+        _copy_field(target, source, key)
+
+
+def _field_text(component: icalendar.Component, key: str) -> list[bytes]:
+    value: Any = component.get(key)
+    return [each.to_ical() if hasattr(each, "to_ical") else str(each).encode("utf-8") for each in (value if isinstance(value, list) else [value])]
+
+
+def _changed_fields(old: icalendar.Component, new: icalendar.Component) -> list[str]:
+    """What a new version of a series changes, besides its time: what a changed date of it gets as well."""
+    return [key for key in (set(old.keys()) | set(new.keys())) - _YOUR_FIELDS - _SERIES_TIME if _field_text(old, key) != _field_text(new, key)]
+
+
+def _new_date(kept: icalendar.Calendar, main: icalendar.Component | None, component: icalendar.Component) -> icalendar.Component:
+    """A date the organizer gives an item of its own, added to the copy: until now the series was your reminders and tags for that date, so it keeps them."""
+    target = copy.deepcopy(component)
+    if main is not None:
+        target.subcomponents = copy.deepcopy([each for each in main.subcomponents if each.name == "VALARM"])
+        for key in _YOUR_FIELDS & set(main.keys()) - {"UID", "RECURRENCE-ID", "EXDATE"}:
+            target[key] = copy.deepcopy(main[key])
+    kept.add_component(target)
+    return target
+
+
+def _on_date(override: icalendar.Component, moment: Moment) -> None:
+    override.pop("RECURRENCE-ID", None)
+    override.add("RECURRENCE-ID", moment)
+
+
+def _moved_date(override: icalendar.Component, main: icalendar.Component, moment: Moment) -> None:
+    """A changed date at the time of its series now, on its new date; it keeps what else is its own (D-310)."""
+    fresh = _occurrence_of(main, moment)
+    _on_date(override, moment)
+    for key in ("DTSTART", "DTEND", "DURATION", "DUE"):
+        _copy_field(override, fresh, key)
+
+
+def _series_only(kept: icalendar.Calendar, main: icalendar.Component) -> str:
+    """The copy as the series alone, to ask which dates it really has."""
+    alone = copy.deepcopy(kept)
+    alone.subcomponents = [each for each in alone.subcomponents if each.name not in ("VEVENT", "VTODO")]
+    alone.add_component(copy.deepcopy(main))
+    return alone.to_ical().decode("utf-8")
+
+
+def _dates_of_series(series: str, main: icalendar.Component, dates: list[Moment]) -> set[str]:
+    """Of these dates the ones the series really has, as in_meeting asks it of one date: the series is walked once, however many dates are asked."""
+    near = [each for each in dates if _within_reach(main, each)]
+    wanted = {_moment_key(each) for each in near}
+    if main.name == "VTODO":
+        return wanted - {_moment_key(each) for each in _excluded(main)}
+    margin = timedelta(days=2)  # (the same moment read in any other zone)
+    clocks = [clock for clock in map(wall_clock, near) if datetime.min + margin < clock < datetime.max - margin]  # the edge of the years: no date, as in in_meeting
+    found: set[str] = set()
+    if not clocks:
+        return found
+    first, last = min(clocks).replace(tzinfo=UTC) - margin, max(clocks) + margin
+    for each in islice(occurrences_from(series, first), _MOST_STEPS):
+        if wall_clock(each.start) > last:
+            break
+        if _moment_key(each.start) in wanted:
+            found.add(_moment_key(each.start))
+    return found
+
+
+def _follow(kept: icalendar.Calendar, message: icalendar.Calendar, address: str) -> None:
+    """What a newer version from the organizer changes, copied into the record you keep: a series is one record and a deleted date a note on it, so a
+    date you deleted stays deleted, also when the series moves, and everything else that is yours stays (D-310). Your answer stands, unless the time
+    changed, then it is asked again (RFC 5546 section 2.1.4). A new date or time also reaches a changed date, which keeps what else is its own; a
+    changed date that is no date of the series any more goes."""
+    main, new = _main_of(kept), _main_of(message)
+    overrides = [each for each in _items_of(kept) if _moment(each, "RECURRENCE-ID") is not None]
+    incoming = {_moment_key(_moment(each, "RECURRENCE-ID")): each for each in _items_of(message) if each.get("RECURRENCE-ID") is not None}
+    _copy_zones(message, kept)
+    moved = False
+    changed: list[str] = []
+    before: Moment | None = None
+    if new is not None and main is None:
+        main = copy.deepcopy(new)
+        kept.add_component(main)
+    elif new is not None and main is not None:
+        yours = {_moment_key(each) for each in _excluded(main)}
+        moved = _when(main) != _when(new) or any(_moment_key(each) not in yours for each in _excluded(new))
+        changed = _changed_fields(main, new)
+        answer, before = _your_answer(main, address), _moment(main, "DTSTART")
+        _take_fields(main, new)
+        if answer:
+            _set_answer(main, address, "NEEDS-ACTION" if moved else answer)
+    after = _moment(main, "DTSTART") if main is not None else None
+    named = {_moment_key(each) for each in _moments(main, "RDATE")} if main is not None else set[str]()
+
+    def follows(moment: Moment) -> Moment:
+        return moment if not moved or before is None or after is None or _moment_key(moment) in named else moved_like_the_start(moment, before, after)
+
+    if new is not None and main is not None:
+        skipped = {_moment_key(each): each for each in [*map(follows, _excluded(main)), *_excluded(new)]}
+        main.pop("EXDATE", None)
+        for moment in skipped.values():
+            main.add("EXDATE", moment)
+    plain: icalendar.Component | None = None  # the series to move a date by: without its removed dates, which would be copied for every date
+    dates_left: set[str] = set()
+    if moved and overrides and main is not None:
+        dates_left = _dates_of_series(_series_only(kept, main), main, [follows(moment) for each in overrides if (moment := _moment(each, "RECURRENCE-ID")) is not None])
+        plain = copy.deepcopy(main)
+        plain.pop("EXDATE", None)
+    gone: set[int] = set()
+    for override in overrides:
+        moment = _moment(override, "RECURRENCE-ID")
+        assert moment is not None  # (only those are in the list)
+        date = follows(moment)
+        theirs = incoming.pop(_moment_key(date), None)
+        if theirs is None and plain is not None and _moment_key(date) not in dates_left:
+            gone.add(id(override))
+            continue
+        answer = _your_answer(override, address)
+        again = moved or (theirs is not None and _when(override) != _when(theirs))
+        if theirs is not None:
+            _take_fields(override, theirs)
+        elif new is not None:
+            for key in changed:
+                _copy_field(override, new, key)
+        if plain is not None and theirs is None:
+            _moved_date(override, plain, date)
+        elif moved:  # the message wrote this date itself: its time stands
+            _on_date(override, date)
+        if answer:
+            _set_answer(override, address, "NEEDS-ACTION" if again else answer)
+    kept.subcomponents = [each for each in kept.subcomponents if id(each) not in gone]
+    series_answer = _your_answer(main, address) if main is not None else ""
+    deleted = {_moment_key(each) for each in _excluded(main)} if main is not None else set[str]()
+    for component in incoming.values():
+        moment, start = _moment(component, "RECURRENCE-ID"), _moment(component, "DTSTART")
+        if moment is not None and _moment_key(moment) in deleted:
+            continue  # a date you deleted stays deleted
+        target = _new_date(kept, main, component)
+        if series_answer:  # an occurrence the copy has not changed: it takes the series' answer, unless the organizer moved it
+            _set_answer(target, address, "NEEDS-ACTION" if moment is not None and start is not None and _moment_key(moment) != _moment_key(start) else series_answer)
+
+
 def updated_copy(stored: str, message_text: str, address: str) -> str | None:
-    """The copy after a newer version from the organizer: the message's items replace the kept ones (one occurrence: only that one); your
-    answer stays, unless its time changed, then it is asked again (NEEDS-ACTION, RFC 5546 section 2.1.4)."""
+    """The copy after you took a newer version from the organizer: what it changed copied in (_follow)."""
     kept = _parse(stored)
     message = _parse(message_text)
     if kept is None or message is None or not _items_of(message):
         return None
-    lower = address.strip().lower()
-    before = {str(_moment(each, "RECURRENCE-ID")): each for each in _items_of(kept)}
-    for component in _items_of(message):
-        same = before.get(str(_moment(component, "RECURRENCE-ID")))
-        if same is not None:  # the same item (or occurrence) kept: a new time asks the answer again (RFC 5546 section 2.1.4)
-            answer = _your_answer(same, lower)
-            if answer and _when(same) != _when(component):
-                answer = "NEEDS-ACTION"
-        else:  # an occurrence the copy has not changed: it takes the series' answer, unless the organizer moved it (a new time asks again)
-            series = before.get("None")
-            answer = _your_answer(series, lower) if series is not None else ""
-            occurrence, start = _moment(component, "RECURRENCE-ID"), _moment(component, "DTSTART")
-            if answer and occurrence is not None and start is not None and _moment_key(occurrence) != _moment_key(start):
-                answer = "NEEDS-ACTION"
-        if answer:
-            _set_answer(component, lower, answer)
-    if any(_moment(each, "RECURRENCE-ID") is None for each in _items_of(message)):  # the whole series (with its changed occurrences): it replaces the copy
-        _keep_own_answers(kept, message, lower)
-        message.pop("METHOD", None)
-        return message.to_ical().decode("utf-8")
-    for component in _items_of(message):
-        moment = _moment(component, "RECURRENCE-ID")
-        kept.subcomponents = [each for each in kept.subcomponents if not (each.name in ("VEVENT", "VTODO") and _same_moment(_moment(each, "RECURRENCE-ID"), moment))]
-        kept.add_component(component)
-    _copy_zones(message, kept)
+    _follow(kept, message, address.strip().lower())
     kept.pop("METHOD", None)
     return kept.to_ical().decode("utf-8")
+
+
+def cancelled_copy(stored: str, moments: Iterable[Moment] = (), sequence: int | None = None) -> str | None:
+    """The copy Cancelled, and nothing else about it changed (D-316: it still exists): those dates, or with none all of it: then also a changed date with no
+    status of its own, a date with its own status keeps it. sequence: the version the cancellation has. None: not readable."""
+    kept = _parse(stored)
+    if kept is None:
+        return None
+    main = _main_of(kept)
+    dates = list(moments)
+    found = [item for moment in dates if (item := _date_item(kept, main, stored, moment)) is not None] if dates else _items_of(kept)
+    for item in found:
+        if dates or item is main or item.get("STATUS") is None:
+            item.pop("STATUS", None)
+            item.add("STATUS", "CANCELLED")
+        if sequence is not None:
+            item.pop("SEQUENCE", None)
+            item.add("SEQUENCE", sequence)
+    return kept.to_ical().decode("utf-8")
+
+
+def cancelled_in(text: str, moments: Iterable[Moment] = ()) -> bool:
+    """Whether the copy is Cancelled: those dates (each by its own status, else by the series'), or with none all of it: as cancelled_copy leaves it,
+    the series and every changed date with no status of its own."""
+    calendar = _parse(text)
+    if calendar is None:
+        return False
+    items = _items_of(calendar)
+    main = _main_of(calendar)
+    dates = list(moments)
+    if not dates:
+        found = items if main is None else [each for each in items if each is main or not _first(each, "STATUS")]
+        return bool(found) and all(_first(each, "STATUS").upper() == "CANCELLED" for each in found)
+
+    def status(moment: Moment) -> str:
+        own = next((_first(each, "STATUS") for each in items if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), "")
+        return (own or (_first(main, "STATUS") if main is not None else "")).upper()
+
+    return all(status(moment) == "CANCELLED" for moment in dates)
+
+
+def with_organizer(text: str, address: str) -> str | None:
+    """The copy with this address as its organizer; with none, no organizer: an invitation that names none gets what the person says (D-310). None: not readable."""
+    calendar = _parse(text)
+    if calendar is None:
+        return None
+    for item in _items_of(calendar):
+        item.pop("ORGANIZER", None)
+        if address:
+            item.add("ORGANIZER", icalendar.vCalAddress(f"mailto:{address}"))
+    return calendar.to_ical().decode("utf-8")
+
+
+def organizer_of(text: str) -> str:
+    """The address of the copy's organizer; "": it names none."""
+    calendar = _parse(text)
+    item = next(iter(_items_of(calendar)), None) if calendar is not None else None
+    organizer: Any = item.get("ORGANIZER") if item is not None else None
+    return _address_of(organizer) if organizer is not None and not isinstance(organizer, list) else ""
 
 
 def _copy_zones(source: icalendar.Calendar, target: icalendar.Calendar) -> None:
@@ -559,25 +737,6 @@ def _copy_zones(source: icalendar.Calendar, target: icalendar.Calendar) -> None:
     for zone in source.walk("VTIMEZONE"):
         if not any(_text(each, "TZID") == _text(zone, "TZID") for each in target.walk("VTIMEZONE")):
             target.subcomponents.insert(0, zone)
-
-
-def without_occurrence(stored: str, occurrence: Moment) -> str | None:
-    """The copy without one occurrence (a cancellation of it): an EXDATE on the main item, its changed version gone. "" when that occurrence was
-    all the copy held (the item goes); None when it cannot be read or holds other occurrences only."""
-    kept = _parse(stored)
-    if kept is None:
-        return None
-    main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
-    if main is None and not any(_same_moment(_moment(each, "RECURRENCE-ID"), occurrence) for each in _items_of(kept)):
-        return None  # a copy of other occurrences only: this one is not in it
-    kept.subcomponents = [each for each in kept.subcomponents if not (each.name in ("VEVENT", "VTODO") and _same_moment(_moment(each, "RECURRENCE-ID"), occurrence))]
-    if main is not None and not holds_occurrence(stored, occurrence, main_only=True):
-        pass  # excluded already: never written twice
-    elif main is not None:
-        main.add("EXDATE", occurrence)
-    elif not _items_of(kept):
-        return ""  # that occurrence was all the copy held: the item goes
-    return kept.to_ical().decode("utf-8")
 
 
 def _without_moment(item: icalendar.Component, key: str, moment: Moment) -> None:
@@ -775,7 +934,7 @@ def _excluded(component: icalendar.Component) -> list[Moment]:
             moment = getattr(value, "dt", None)
             if isinstance(moment, (date, datetime)):
                 found.append(moment)
-    return found
+    return found[:MAXIMUM_DATES]
 
 
 def holds_occurrence(text: str, occurrence: Moment, main_only: bool = False) -> bool:
@@ -797,37 +956,6 @@ def added_already(text: str, message_text: str) -> bool:
         return False
     present = {str(_moment(each, "RECURRENCE-ID")) for each in _items_of(kept)}
     return all(str(_moment(each, "DTSTART")) in present for each in _items_of(message))
-
-
-def _keep_own_answers(kept: icalendar.Calendar, message: icalendar.Calendar, address: str) -> None:
-    """A new version of the whole series keeps the occurrences you answered otherwise than the series (a declined date): each becomes a changed
-    occurrence of the new version with your answer, unless the series' time changed (then every answer is asked again, RFC 5546 2.1.4)."""
-    old_main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
-    new_main = next((each for each in _items_of(message) if each.get("RECURRENCE-ID") is None), None)
-    if old_main is None or new_main is None or _when(old_main) != _when(new_main):
-        return
-    series_answer = _your_answer(old_main, address)
-    present = {str(_moment(each, "RECURRENCE-ID")) for each in _items_of(message)}
-    start, end = _moment(new_main, "DTSTART"), _moment(new_main, "DTEND")
-    for old in _items_of(kept):
-        moment = _moment(old, "RECURRENCE-ID")
-        answer = _your_answer(old, address)
-        if moment is None or str(moment) in present or not answer or answer == series_answer:
-            continue
-        occurrence = copy.deepcopy(new_main)
-        due = _moment(new_main, "DUE")
-        for key in ("RRULE", "RDATE", "EXDATE", "DTSTART", "DTEND", "DUE", "RECURRENCE-ID"):
-            occurrence.pop(key, None)
-        occurrence.add("RECURRENCE-ID", moment)
-        occurrence.add("DTSTART", moment)
-        for key, until in (("DTEND", end), ("DUE", due)):  # the end, or a task's due moment, the same length after the occurrence's start
-            if start is not None and until is not None and type(start) is type(moment):
-                try:
-                    occurrence.add(key, moment + (until - start))  # type: ignore[operator]
-                except (TypeError, OverflowError):  # also the edge of the years: it ends at its start
-                    pass
-        _set_answer(occurrence, address, answer)
-        message.add_component(occurrence)
 
 
 def occurrences_of(text: str) -> list[Moment]:

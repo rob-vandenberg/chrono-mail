@@ -1008,7 +1008,7 @@ class ReaderWidget(QWidget):
     link_hovered = Signal(str, bool)  # the address of the link under the pointer ("" when it leaves one), and whether it leads elsewhere (D-215)
     sender_allowed = Signal(str)  # the person chose to always show remote content from this address
     invitation_answer_requested = Signal(str)  # Accept, Tentative, Decline or Add to calendar on the invitation card (D-310)
-    invitation_apply_requested = Signal()  # Update calendar, Remove from calendar, Request (D-310)
+    invitation_apply_requested = Signal()  # Update calendar, Cancel in calendar, Request (D-310)
     invitation_delegate_requested = Signal()  # Delegate… on the invitation card
     invitation_change_requested = Signal()  # Change my answer on the invitation card
     invitation_organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest (D-310 step 3)

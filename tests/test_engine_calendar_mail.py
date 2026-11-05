@@ -1,6 +1,9 @@
 from email import message_from_bytes
 
+import pytest
+
 from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.registry import UsageError
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.itip import read_calendar_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
@@ -9,9 +12,10 @@ from tests.test_engine_invitations import calendar_text, deliver, invitation_mai
 from tests.test_engine_meetings import calendar_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar_mail.py 4.4.533"
+__version__ = "test_engine_calendar_mail.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: An invitation with no organizer stores what the person says at Send and at Don't send (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: Initial tests: a calendar mail goes without the composer, asked before anything changes, an organizer named by the person, a cancellation for an attendee taken off (D-310)
 
@@ -63,6 +67,39 @@ def test_without_an_address_an_invitation_with_no_organizer_is_only_added(setup:
     message = deliver(setup, invitation_mail(NO_ORGANIZER))
     result = answer(setup, message, "ACCEPTED", local_calendar(setup), mail=False)
     assert len(kept(setup)) == 1 and result.draft_message is None and not drafts(setup)
+    assert "ORGANIZER" not in kept(setup)[0]
+
+
+def test_dont_send_stores_the_address_as_the_organizer_and_mails_nothing(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    result = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=local_calendar(setup), to="sam@example.org", mail=False)
+    assert result.draft_message is None and not drafts(setup)
+    assert "ORGANIZER:mailto:sam@example.org" in kept(setup)[0].replace("\r\n ", "")
+
+
+def test_a_decline_with_nowhere_to_go_stores_the_address_too(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="DECLINED", to="sam@example.org", mail=False)
+    assert "ORGANIZER:mailto:sam@example.org" in kept(setup)[0].replace("\r\n ", "") and not drafts(setup)
+
+
+def test_once_answered_the_organizer_you_stored_is_used_and_nothing_is_asked_again(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=local_calendar(setup), to="sam@example.org", mail=False)
+    check = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="TENTATIVE", dry=True)
+    assert check.chrono and not check.no_organizer
+    result = call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="TENTATIVE")
+    assert result.draft_message is not None
+    (raw,) = drafts(setup)
+    assert "sam@example.org" in message_from_bytes(raw)["To"]
+    assert "ORGANIZER:mailto:sam@example.org" in kept(setup)[0].replace("\r\n ", "")
+
+
+def test_sending_with_no_address_is_refused_and_changes_nothing(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(NO_ORGANIZER))
+    with pytest.raises(UsageError, match="names no organizer"):
+        call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="ACCEPTED", calendar=local_calendar(setup))
+    assert not kept(setup)
 
 
 def test_delegating_without_a_mail_makes_none_and_is_remembered(setup: Setup) -> None:

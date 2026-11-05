@@ -14,12 +14,13 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment, parse_message
 from chrono_mail.pim.ical import Attendee
 from chrono_mail.pimstore import PimStore
-from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
+from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, cancelled_in, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.554"
+__version__ = "invitations.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: kept_cancelled: a cancellation knows it is Cancelled already; asks_nothing: a file with no organizer (D-310)
 # v4.4.554: copy_holds; a card remembers Change my answer on a declined event; a copy in a server calendar needs no mark (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
@@ -77,7 +78,7 @@ class InvitationInfo:
     version: Version
     your_answer: str  # your answer in the copy in your calendar ("" when there is none)
     text_shows_nothing: bool = False  # the mail's own text is empty (only layout): the card is all there is to show
-    occurrence_kept: bool = False  # the item, or for one occurrence that occurrence, is in the copy (Remove from calendar can remove it)
+    occurrence_kept: bool = False  # the item, or for one occurrence that occurrence, is in the copy (Cancel in calendar can cancel it)
     organized_by_you: bool = True  # the copy in your calendar names one of your addresses as organizer (a message to you as organizer)
     proposal_usable: bool = True  # a proposal changes something and its times can be used (Accept proposal)
     busy: tuple[BusyPeriod, ...] = ()  # busy times: the periods someone is busy
@@ -103,6 +104,7 @@ class InvitationInfo:
     more_attendees: int = 0  # attendees past those listed: they are counted
     left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
     asked_again: bool = False  # Change my answer on a declined event: the four answers are back, the copy is as it was (the window's own state)
+    kept_cancelled: bool = False  # a cancellation: what it is about is Cancelled in your copy already, by you or by a server
 
 
 class _VisibleText(HTMLParser):
@@ -211,6 +213,7 @@ class _Kept:
     answer_again: bool = False
     start: date | datetime | None = None
     end: date | datetime | None = None
+    cancelled: bool = False
 
 
 def _times_now(item: CalendarMessage | None, occurrence: date | datetime | None) -> tuple[date | datetime | None, date | datetime | None]:
@@ -225,6 +228,11 @@ def _times_now(item: CalendarMessage | None, occurrence: date | datetime | None)
         return occurrence, occurrence + span
     except (OverflowError, TypeError):  # a time at the edge of the years, or times of two kinds
         return None, None
+
+
+def asks_nothing(message: CalendarMessage, file: bool) -> bool:
+    """A calendar text that asks nothing: it has no METHOD, or it is a file that names no organizer, so nobody can be answered: it is only added to a calendar (D-310)."""
+    return not message.method or (file and message.method in ("REQUEST", "ADD") and (message.organizer is None or not message.organizer.address))
 
 
 def is_yours(info: CollectionInfo) -> bool:
@@ -295,7 +303,8 @@ def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], 
         update = message.method == "REQUEST" and version == "newer"
         start, end = _times_now(kept or main, message.occurrence if kept is None else None) if message.method == "COUNTER" or update else (None, None)
         again = update and _asks_again(text, message_text, message.occurrence, base, addresses)
-        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, again, start, end)
+        cancelled = message.method == "CANCEL" and cancelled_in(text, occurrences_of(message_text) if message.occurrence is not None else ())
+        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, again, start, end, cancelled)
     return _Kept()
 
 
@@ -385,8 +394,8 @@ def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iter
     return replace(card, your_answer=answer, answered_on_mail=True, attendees=tuple(_yours_as_kept(person, answer) for person in card.attendees))
 
 
-def blocks_of(engine: Engine, position: int, text: str, first: int, count: int) -> tuple[InvitationInfo, ...]:
-    """The cards of `count` items of a text, from the place `first` on; fewer at its end."""
+def blocks_of(engine: Engine, position: int, text: str, first: int, count: int, file: bool = False) -> tuple[InvitationInfo, ...]:
+    """The cards of `count` items of a text, from the place `first` on; fewer at its end. file: the text is a file on this computer."""
     addresses = your_addresses(engine)
     found = text_items(text)
     cards: list[InvitationInfo] = []
@@ -396,7 +405,7 @@ def blocks_of(engine: Engine, position: int, text: str, first: int, count: int) 
                 break
             message = read_calendar_message(found.texts[place])
             if message is not None:
-                card = _card_of_item(engine, task_lists if message.kind == "task" else calendars, position, message, found.texts[place], addresses)
+                card = _card_of_item(engine, task_lists if message.kind == "task" else calendars, position, message, found.texts[place], addresses, file)
                 cards.append(replace(card, item=place if len(found.texts) > 1 else -1))
     return tuple(cards)
 
@@ -420,11 +429,11 @@ def items_left(engine: Engine, text: str) -> int:
     return found.kinds.count("event") + found.kinds.count("task") - len(kept_items(engine, text))
 
 
-def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
+def card_of(engine: Engine, position: int, text: str, file: bool = False) -> InvitationInfo | None:
     """The card of a calendar text, or None when it holds nothing to show. Several items: the first ones' cards in `parts`, the first one's
     details in the card itself, and what the text holds; blocks_of gives the rest."""
     found = text_items(text)
-    cards = blocks_of(engine, position, text, 0, BLOCKS_AT_ONCE)
+    cards = blocks_of(engine, position, text, 0, BLOCKS_AT_ONCE, file)
     if not cards:
         return None
     return replace(cards[0], item=-1, parts=cards if len(found.texts) > 1 else (), items=len(found.texts), events=found.kinds.count("event"),
@@ -432,9 +441,9 @@ def card_of(engine: Engine, position: int, text: str) -> InvitationInfo | None:
                    left=items_left(engine, text) if len(found.texts) > 1 and cards[0].method == "PUBLISH" else 0)
 
 
-def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> InvitationInfo:
-    """The card of one item. A text that asks nothing (no METHOD) is offered as a shared item."""
-    plain = not message.method
+def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], position: int, message: CalendarMessage, message_text: str, addresses: frozenset[str], file: bool = False) -> InvitationInfo:
+    """The card of one item. A text that asks nothing is offered as a shared item."""
+    plain = asks_nothing(message, file)
     message = replace(message, method="PUBLISH") if plain else message
     kept = _stored(engine, places, message, message_text, addresses) if message.uid and message.kind != "freebusy" else _Kept()
     event, task = message.event, message.task
@@ -446,5 +455,5 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, more_attendees=message.more_attendees, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
-        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again, description=message.description, comment=message.comment,
+        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again, description=message.description, comment=message.comment, kept_cancelled=kept.cancelled,
     )

@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.554"
+__version__ = "readingpane.py 4.4.555"
 
 # --- Version history ----------------------------------------------------
+# v4.4.555: Cancel in calendar sets Cancelled; the organizer's address is stored at Send and Don't send, and the window closes with it (D-310)
 # v4.4.554: Change my answer leaves a declined event where it is; Delegate on a copy in Local Folders picks a calendar first (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -685,7 +686,7 @@ class ReadingPane(QObject):
         note = ""
 
         def applied(result: ApplyResult) -> None:
-            words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is on its way."}
+            words = {"updated": f"Your {home} has the new version.", "cancelled": f"Cancelled in your {home}.", "asked": "Your request to resend the original invite is on its way."}
             self._tell(reader, words.get(result.done, "Done."))
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
@@ -731,8 +732,8 @@ class ReadingPane(QObject):
         self._backend.ask(MESSAGE_SHOW, MessageParameters(*where), again, lambda error: None, owner=self)
 
     def _show_again(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
-        """The message shown again in its reader, when it still shows it: the card says what your calendar holds now. A window stays open: it is
-        always the person who closes it (D-310)."""
+        """The message shown again in its reader, when it still shows it: the card says what your calendar holds now. A window stays open: only the
+        person closes it, or Send and Don't send of the organizer's address (D-310)."""
         account, folder, message_id = place.account, place.folder, place.message
         self._refresh_others(reader, place)
         if not isValid(reader):
@@ -809,6 +810,7 @@ class ReadingPane(QObject):
         home = home_word(info) if info is not None else "calendar"
 
         note = ""
+        organizer_asked = False
 
         def answered(result: AnswerResult) -> None:
             words = {"ACCEPTED": "accepted", "TENTATIVE": "accepted tentatively", "DECLINED": "declined"}[result.answer]
@@ -818,27 +820,30 @@ class ReadingPane(QObject):
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)  # the card says what your calendar holds now
+            if organizer_asked and isValid(reader) and isinstance(reader, InvitationWindow):
+                reader.close()  # Send and Don't send of the organizer's address end the matter: the window closes with the dialog (D-310)
 
         def refused(error: ChronoMailError) -> None:
             self._tell(reader, "Could not answer the invitation", error)
 
         def checked(check: AnswerResult) -> None:
-            nonlocal note
+            nonlocal note, organizer_asked
             chosen_parameters = parameters
             if check.chrono:
-                dialog = self._mail_dialog("Missing organizer", MISSING_ORGANIZER, check.sender) if check.no_organizer else self._mail_dialog("Send your answer", _ANSWER_QUESTIONS[chosen])
+                dialog = self._mail_dialog("Missing organizer", MISSING_ORGANIZER, check.sender, check.server_answers) if check.no_organizer else self._mail_dialog("Send your answer", _ANSWER_QUESTIONS[chosen])
                 choice = dialog.ask()
                 if choice is Choice.BACK:
                     return
                 note = dialog.note
-                chosen_parameters = changed(parameters, mail=choice is Choice.SEND, to=dialog.address if check.no_organizer and choice is Choice.SEND else "")
+                organizer_asked = check.no_organizer
+                chosen_parameters = changed(parameters, mail=choice is Choice.SEND, to=dialog.address if check.no_organizer else "")
             self._backend.ask(INVITATION_ANSWER, chosen_parameters, answered, refused, owner=self)
 
         self._backend.ask(INVITATION_ANSWER, changed(parameters, dry=True), checked, refused, owner=self)
 
-    def _mail_dialog(self, title: str, question: str, address: str | None = None) -> CalendarMailDialog:
+    def _mail_dialog(self, title: str, question: str, address: str | None = None, server_mails: bool = False) -> CalendarMailDialog:
         """The one question of every calendar mail; as every dialog of an invitation it belongs to the main window (the action outlives the message window)."""
-        return CalendarMailDialog(title, question, EXPLANATION, self._parent, address)
+        return CalendarMailDialog(title, question, EXPLANATION, self._parent, address, server_mails)
 
     def _add_all_in_pane(self) -> None:
         self.add_all_invitation(self.reader, self._in_pane())
