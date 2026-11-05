@@ -4042,3 +4042,9 @@ What landed: Event.inert; a cancelled event or date gives no reminder, Notificat
 Busy: unchanged. A cancelled and a declined event both do not block time (itip.py); the row's busy field still follows only Show as.
 Proof: 28 tests fail on 4.4.549; all pass now. Real window on a generated profile, local calendar only, dark and light: Week, all-day bar, Month and Agenda, real pointer hover, colour back after the change back. Pyrefly 0 errors on src, Linux and win32; layer check passes. Review: one round, nothing real found.
 Open: a changed date of a series counts by its own status, so a cancelled series with a changed date that is not cancelled still fires and keeps its colour there. Not tried against a real server.
+
+## 2026-11-05 4.4.551 The test of the calendar titles no longer depends on what ran before it
+
+Cause: the first Qt application of a process sets LC_TIME to the system's (measured: C and October before, the system's language after). The program always runs with Qt, so its titles rightly follow the system; test_titles in tests/test_calendar_layout.py expected English and passed only when no window test had run first.
+Fix (tests only): a fixture sets LC_TIME to C for that test and puts it back. The program is unchanged.
+Proof: test_ui_unanswered.py then test_calendar_layout.py failed before and passes now; the other order, each file alone and --run-order reverse pass. No Pyrefly error on the new lines (the 8 of that file are older). Review: one round, nothing real found.

@@ -1,14 +1,19 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import locale
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Entry
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_calendar_layout.py 0.0.64"
+__version__ = "test_calendar_layout.py 4.4.551"
 
 # --- Version history ----------------------------------------------------
+# v4.4.551: test_titles sets the language of the names itself, so it no longer depends on a Qt application having run before it (AGENTS.md 4.5.5)
 # v0.0.64: Initial tests of the layout of events in the calendar views
 
 AMS = ZoneInfo("Europe/Amsterdam")
@@ -51,6 +56,16 @@ def test_next_and_previous_follow_the_view_and_a_month_end_is_clamped() -> None:
     assert layout.step(layout.AGENDA, anchor, 1) == anchor + timedelta(days=layout.AGENDA_DAYS)
 
 
+@pytest.fixture
+def english_names() -> Iterator[None]:
+    """Month and day names follow LC_TIME, and the first Qt application of a process sets it to the system's: what ran before must not decide the names."""
+    before = locale.setlocale(locale.LC_TIME)
+    locale.setlocale(locale.LC_TIME, "C")
+    yield
+    locale.setlocale(locale.LC_TIME, before)
+
+
+@pytest.mark.usefixtures("english_names")
 def test_titles() -> None:
     anchor = date(2026, 10, 14)
     assert layout.title_for(layout.MONTH, anchor, []) == "October 2026"
