@@ -3,9 +3,9 @@ import dataclasses
 from datetime import date, timedelta
 
 import pytest
-from PySide6.QtCore import QDate, QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QFrame, QMenu, QScrollArea, QWidget
+from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QHelpEvent, QWheelEvent
+from PySide6.QtWidgets import QApplication, QFrame, QMenu, QScrollArea, QToolTip, QWidget
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.537"
+__version__ = "test_ui_calendar.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: A cancelled event or date is grey with a hover text in every view, and takes its colour again (D-316)
 # v4.4.537: a placeholder alarm shows no row; a normal reminder shows as type, number and unit
 # v4.4.536: Reminder rows (round 4)
 # v4.4.535: The window's new fields (round 4)
@@ -613,3 +614,86 @@ def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qt
     menu.actions()[0].trigger()
     assert asked[-1] == (row.item, "2026-10-14T12:30:00+00:00", "ACCEPTED")
 
+
+def cancelled(page: CalendarPage, world: World, qtbot: QtBot, summary: str) -> str:
+    """Cancels one event and waits until the view has it; gives the name of its calendar."""
+    entry = next(entry for entry in page.entries if entry.summary == summary)
+    world.call("event.edit", item=entry.row.item, status="cancelled")
+    page.reload()
+    wait(qtbot, lambda: any(one.summary == summary and one.row.cancelled for one in page.entries))
+    return entry.row.calendar
+
+
+def hover_text(widget: QWidget, position: QPoint, monkeypatch: pytest.MonkeyPatch) -> str:
+    shown: list[str] = []
+
+    def show_text(_where: QPoint, text: str, _widget: QWidget) -> None:
+        shown.append(text)
+
+    monkeypatch.setattr(QToolTip, "showText", show_text)
+    QApplication.sendEvent(widget, QHelpEvent(QEvent.Type.ToolTip, position, widget.mapToGlobal(position)))
+    return shown[-1] if shown else ""
+
+
+def test_a_cancelled_event_is_grey_and_takes_its_own_colour_again(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot)
+    lunch = next(entry for entry in page.entries if entry.summary == "Lunch")
+    own = lunch.colour
+    assert own != theme().task_grey
+    cancelled(page, world, qtbot, "Lunch")
+    assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == theme().task_grey
+    assert next(entry for entry in page.entries if entry.summary == "Dentist").colour == own
+    world.call("event.edit", item=lunch.row.item, status="confirmed")
+    page.reload()
+    wait(qtbot, lambda: any(entry.summary == "Lunch" and entry.colour == own for entry in page.entries))
+
+
+def test_a_cancelled_date_of_a_series_alone_is_grey(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot)
+    standup = next(entry for entry in page.entries if entry.summary == "Standup" and entry.row.start.startswith("2026-10-14"))
+    world.call("event.edit", item=standup.row.item, occurrence=standup.row.occurrence, status="cancelled")
+    page.reload()
+    wait(qtbot, lambda: any(entry.row.cancelled for entry in page.entries))
+    greys = [entry.row.start[:10] for entry in page.entries if entry.summary == "Standup" and entry.colour == theme().task_grey]
+    assert greys == ["2026-10-14"] and len([entry for entry in page.entries if entry.summary == "Standup"]) == 5
+
+
+def test_hovering_a_cancelled_event_in_the_week_names_it_and_its_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page = open_calendar(world, qtbot)
+    calendar = cancelled(page, world, qtbot, "Lunch")
+    canvas = page.grid.canvas
+    canvas.repaint()
+    wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in canvas.hits))
+    rect = next(rect for rect, entry in canvas.hits if entry.row.cancelled)
+    assert hover_text(canvas, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+    other = next(rect for rect, entry in canvas.hits if entry.summary == "Standup")
+    assert hover_text(canvas, other.center().toPoint(), monkeypatch) == ""
+
+
+def test_hovering_a_cancelled_all_day_event_names_it_and_its_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page = open_calendar(world, qtbot)
+    calendar = cancelled(page, world, qtbot, "Holiday")
+    header = page.grid.header
+    header.repaint()
+    wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in header.hits))
+    rect = next(rect for rect, entry in header.hits if entry.row.cancelled)
+    assert hover_text(header, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+
+
+def test_hovering_a_cancelled_event_in_the_month_names_it_and_its_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page = open_calendar(world, qtbot, layout.MONTH)
+    calendar = cancelled(page, world, qtbot, "Next month")
+    month = page.month
+    month.repaint()
+    wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in month.hits))
+    rect = next(rect for rect, entry in month.hits if entry.row.cancelled)
+    assert hover_text(month, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+
+
+def test_a_cancelled_event_in_the_agenda_is_grey_with_its_hover_text(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot, layout.AGENDA)
+    calendar = cancelled(page, world, qtbot, "Lunch")
+    agenda = page.agenda
+    wait(qtbot, lambda: any(agenda.item(row).toolTip() != "" for row in range(agenda.count())))
+    item = next(agenda.item(row) for row in range(agenda.count()) if agenda.item(row).toolTip() != "")
+    assert "Lunch" in item.text() and item.toolTip() == f"Cancelled\n{calendar}" and item.foreground().color().name() == theme().task_grey

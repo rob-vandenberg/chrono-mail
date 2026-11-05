@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.4.545"
+__version__ = "schema.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: Schema 6: the due moments of events without what is cancelled (D-316); 3, 4 and 5 are upgraded in place
 # v4.4.545: Schema 5: reminder_due also for tasks (D-316); 3 and 4 are upgraded in place
 # v4.4.544: Schema 4: reminder_due, when the next reminder of an event comes due (D-316); 3 is upgraded in place
 # v1.10.277: Schema 3: contact groups and their members (R-39)
@@ -9,9 +10,10 @@ __version__ = "schema.py 4.4.545"
 # v0.0.60: Schema 2: a second line for lists (organisation, place)
 # v0.0.59: Initial index schema for calendars, tasks and contacts
 
-SCHEMA_VERSION: int = 5
+SCHEMA_VERSION: int = 6
 VERSION_WITHOUT_REMINDERS: int = 3  # upgraded in place, like the next: one transaction, so an interruption leaves the old format whole
 VERSION_WITHOUT_TASK_REMINDERS: int = 4
+VERSION_WITH_CANCELLED_REMINDERS: int = 5
 
 REMINDER_INDEX: str = "CREATE INDEX items_by_reminder ON items (reminder_due) WHERE reminder_due IS NOT NULL"
 

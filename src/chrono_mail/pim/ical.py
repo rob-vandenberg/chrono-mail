@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.545"
+__version__ = "ical.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: Event.inert: a cancelled event gives no reminder (D-316)
 # v4.4.545: task_occurrences_from: the times a task falls due, one by one from a moment on, for its reminders; Task.inert (D-316)
 # v4.4.544: occurrences_from: the occurrences one by one from a moment on, with no end: the walk of occurrences, now also for the next reminder of a series (D-316)
 # v4.4.537: an alarm with ACTION:NONE is no reminder: it is not read as one and stays in the item when the reminders change
@@ -103,6 +104,11 @@ class Event:
     @property
     def repeats(self) -> bool:
         return bool(self.rrule or self.rdates)
+
+    @property
+    def inert(self) -> bool:
+        """It exists and does nothing: cancelled, it gives no reminder (D-316)."""
+        return self.status == "CANCELLED"
 
 
 @dataclass(frozen=True, slots=True)

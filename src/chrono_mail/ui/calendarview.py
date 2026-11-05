@@ -50,9 +50,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.535"
+__version__ = "calendarview.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: A cancelled event or date is grey instead of its colour, in every view (D-316)
 # v4.4.535: A double click opens an appointment read-only; Edit in the list and the menu still go straight to the editor; New starts All day (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -461,11 +462,11 @@ class CalendarPage(PimPage):
     # --- changing -----------------------------------------------------------------------------
 
     def _coloured(self, entries: list[Entry]) -> list[Entry]:
-        """The entries in their colours as the calendars' palettes are now (D-191), and whether Month fills their timed ones (D-297)."""
+        """The entries in their colours as the calendars' palettes are now (D-191), a cancelled one grey (D-316), and whether Month fills their timed ones (D-297)."""
         coloured: list[Entry] = []
         for entry in entries:
             calendar = self.panel.info(entry.row.collection)
-            colour = theme().task_grey if entry.row.hidden else colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
+            colour = theme().task_grey if entry.row.hidden or entry.row.cancelled else colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
             coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background))
         return coloured
 

@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.547"
+__version__ = "commands_calendar.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: OccurrenceInfo.cancelled: a cancelled event or date, drawn grey (D-316)
 # v4.4.547: An e-mail reminder can be at a fixed time; a task uses the address and the info of a reminder too (D-316)
 # v4.4.536: Reminders by e-mail, at most 5 given, and keep: for one that stays as it is (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -84,6 +85,10 @@ class OccurrenceInfo:
     answerable: bool = False  # hidden, with an organizer other than you: it can be answered again; else it can only be restored
     whole: bool = False  # hidden as a whole (a declined meeting): it can be deleted; one date of a series cannot
     hidden: bool = False  # a date of a series that was deleted or declined: shown greyed only when asked for, it can only be looked at
+
+    @property
+    def cancelled(self) -> bool:
+        return self.status == "CANCELLED"
 
 
 @dataclass(frozen=True, slots=True)

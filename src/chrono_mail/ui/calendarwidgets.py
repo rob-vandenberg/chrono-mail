@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.535"
+__version__ = "calendarwidgets.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: Hovering a cancelled event says Cancelled and its calendar, in every view (D-316)
 # v4.4.535: A location of several lines is drawn on one line (round 4)
 # v4.2.438: Month draws a filled timed event as an all-day one, its dot in the text's colour; paint_block draws the dot (UR-02, D-297)
 # v3.5.346: Every view takes the keyboard focus from its first click (it did only after a turn of the wheel), so Delete deletes the event, not the calendar (RV-22)
@@ -43,6 +44,11 @@ SNAP_MINUTES: int = 30
 def one_line(text: str) -> str:
     """A location of several lines, as the calendar draws it."""
     return ", ".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def cancelled_tip(entry: Entry) -> str:
+    """The hover text of a cancelled event: it replaces the calendar's colour, so its calendar is named (D-316)."""
+    return f"Cancelled\n{entry.row.calendar}" if entry.row.cancelled else ""
 
 
 def fill_colour(entry: Entry) -> QColor:
@@ -161,9 +167,12 @@ class EntryHits(QWidget):
     @override
     def event(self, event: QEvent) -> bool:
         if event.type() == QEvent.Type.ToolTip and isinstance(event, QHelpEvent):
-            marked = self.mark_at(QPointF(event.pos()))
-            if marked is not None:
-                QToolTip.showText(event.globalPos(), MARK_TIPS.get(self.mark_of(item_of(marked)), ""), self)
+            position = QPointF(event.pos())
+            marked = self.mark_at(position)
+            entry = self.entry_at(position)
+            tip = MARK_TIPS.get(self.mark_of(item_of(marked)), "") if marked is not None else cancelled_tip(entry) if entry is not None else ""
+            if tip:
+                QToolTip.showText(event.globalPos(), tip, self)
             else:
                 QToolTip.hideText()
                 event.ignore()
@@ -606,7 +615,7 @@ class AgendaView(QListWidget):
                 item.setData(Qt.ItemDataRole.UserRole, entry)
                 item.setForeground(fill_colour(entry))
                 item.setIcon(mark_icon(self.mark_of(item_of(entry))))
-                item.setToolTip(MARK_TIPS.get(self.mark_of(item_of(entry)), ""))
+                item.setToolTip("\n".join(tip for tip in (cancelled_tip(entry), MARK_TIPS.get(self.mark_of(item_of(entry)), "")) if tip))
                 self.addItem(item)
         if not groups:
             placeholder = QListWidgetItem("No events")

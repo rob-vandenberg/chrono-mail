@@ -8,12 +8,13 @@ from typing import override
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.index import IndexDatabase
 from chrono_mail.pimstore.extract import Extract, tag_text
-from chrono_mail.pimstore.schema import REMINDER_INDEX, SCHEMA_VERSION, STATEMENTS, VERSION_WITHOUT_REMINDERS, VERSION_WITHOUT_TASK_REMINDERS
+from chrono_mail.pimstore.schema import REMINDER_INDEX, SCHEMA_VERSION, STATEMENTS, VERSION_WITHOUT_REMINDERS, VERSION_WITH_CANCELLED_REMINDERS, VERSION_WITHOUT_TASK_REMINDERS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.545"
+__version__ = "index.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: format 6: formats 3, 4 and 5 are upgraded in place, every event with a due moment to be worked out at the next look, so a cancelled one has none (D-316)
 # v4.4.545: format 5: tasks have a due moment too; formats 3 and 4 are upgraded in place, every task to be worked out at the next look (D-316)
 # v4.4.544: format 4: each event holds when its next reminder comes due, so the reminder check reads only what is due (D-316);
 #           format 3 is upgraded in place, every event to be worked out at the next look
@@ -130,12 +131,15 @@ class PimIndex(IndexDatabase):
                 for statement in STATEMENTS:
                     self._connection.execute(statement)
                 self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
-            elif found in (str(VERSION_WITHOUT_REMINDERS), str(VERSION_WITHOUT_TASK_REMINDERS)):
+            elif found in (str(VERSION_WITHOUT_REMINDERS), str(VERSION_WITHOUT_TASK_REMINDERS), str(VERSION_WITH_CANCELLED_REMINDERS)):
                 if found == str(VERSION_WITHOUT_REMINDERS):
                     self._connection.execute("ALTER TABLE items ADD COLUMN reminder_due INTEGER")
                     self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.EVENTS.value,))
                     self._connection.execute(REMINDER_INDEX)
-                self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.TASKS.value,))
+                if found != str(VERSION_WITH_CANCELLED_REMINDERS):
+                    self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.TASKS.value,))
+                # every event with a moment, not only the cancelled ones: a cancelled date of a series is not in the index, only in the text
+                self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ? AND reminder_due IS NOT NULL", (CollectionKind.EVENTS.value,))
                 self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")

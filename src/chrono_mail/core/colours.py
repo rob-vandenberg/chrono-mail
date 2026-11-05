@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.4.534"
+__version__ = "colours.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: task_grey is also the grey of a cancelled event (D-316)
 # v4.4.534: the four answer buttons of an invitation are gradients, top to bottom: Accept green, Tentative orange, Delegate blue, Decline red (the owner, D-310)
 # v4.4.505: accept_button and decline_button: Accept green and Decline red on the invitation card, with on_answer_button for their text (D-310)
 # v4.2.476: The message list and other lists #151c1c (dark theme, the owner; was #181e1f)
@@ -64,7 +65,7 @@ class Theme:
     red: str  # errors and warnings in text
     green: str  # "it worked" marks
     amber: str  # a task to do
-    task_grey: str  # a cancelled task
+    task_grey: str  # what does nothing: a cancelled task, a cancelled event, a hidden event
     now_line: str  # the line of the present moment in the calendar
     on_colour: str  # marks and initials on a coloured circle (avatars, tasks, calendar swatches)
     swatch_selected: str  # the ring around a calendar colour swatch while it is selected

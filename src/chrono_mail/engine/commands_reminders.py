@@ -21,9 +21,10 @@ from chrono_mail.pimstore import DueReminder
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_reminders.py 4.4.545"
+__version__ = "commands_reminders.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: a cancelled event or a cancelled date of a series gives no reminder, the rest of the series does (D-316)
 # v4.4.545: a task reminds too, through the same look: minutes before its due time or at a fixed time; a finished or cancelled task does not (D-316)
 # v4.4.544: the look asks the index which reminders are due and reads only those; no limit in days remains, an event of any age reminds (D-316); a floating time west of Greenwich no longer falls before the period looked at
 # v4.4.537: the look reads no event that ended over a month ago: the start of the query counted only with an end, so it read every event ever at every look
@@ -80,7 +81,7 @@ class _Time:
 
 
 def _event_part(event: Event, yours: Collection[str]) -> _Part:
-    return _Part(event.summary, event.location, event.start, event.reminders, _declined(event, yours))
+    return _Part(event.summary, event.location, event.start, () if event.inert else event.reminders, _declined(event, yours))
 
 
 def _task_part(task: Task) -> _Part:

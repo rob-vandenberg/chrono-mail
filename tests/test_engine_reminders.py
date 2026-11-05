@@ -21,9 +21,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.545"
+__version__ = "test_engine_reminders.py 4.4.550"
 
 # --- Version history ----------------------------------------------------
+# v4.4.550: a cancelled event or date gives no reminder, counts again when it changes back; the upgrade of the index to format 6 (D-316)
 # v4.4.545: a task reminds through the same look; the upgrade of the index to format 5 (D-316)
 # v4.4.544: the index knows which reminders are due: no limit in days, the look reads only those, the upgrade of the index (D-316)
 # v4.4.537: a placeholder alarm is no reminder and stays; old events are not read; account.edit takes none for invitation_answers
@@ -497,7 +498,7 @@ def test_the_upgrade_gives_existing_events_their_moment_and_keeps_the_items(setu
     back_to_format_3(setup)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("5", True)
+    assert file_format(setup) == ("6", True)
     assert due_in_index(setup, far_ahead()) == []  # the one reminder fired, the other event has none: nothing is left to read
     assert check(setup).notes == ()
 
@@ -506,7 +507,7 @@ class Stop(BaseException):
     """The program ends here."""
 
 
-@pytest.mark.parametrize("step", range(1, 6))
+@pytest.mark.parametrize("step", range(1, 7))
 def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     event_in(setup, 10, "Dentist", ("15",))
     back_to_format_3(setup)
@@ -533,7 +534,7 @@ def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_a
     assert file_format(setup) == ("3", False)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("5", True)
+    assert file_format(setup) == ("6", True)
 
 
 def test_a_look_that_stops_before_the_last_look_is_written_finds_it_all_again(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,22 +826,22 @@ def test_the_upgrade_gives_existing_tasks_their_moment_and_leaves_events_as_they
     back_to_format_4(setup)
     assert file_format(setup) == ("4", True)
     assert summaries(setup) == ["Pay rent"]
-    assert file_format(setup) == ("5", True)
+    assert file_format(setup) == ("6", True)
     assert [one for one in due_in_index(setup, far_ahead()) if one.kind is CollectionKind.TASKS] == []  # the one fired, the other has none
     assert due_in_index(setup, far_ahead()) == [one for one in events_before if one.kind is CollectionKind.EVENTS]
     assert check(setup).notes == ()
 
 
-def test_format_3_comes_to_format_5_with_events_and_tasks(setup: Setup) -> None:
+def test_format_3_comes_to_format_6_with_events_and_tasks(setup: Setup) -> None:
     task_in(setup, 10, "Pay rent", ("15",))
     event_in(setup, 10, "Dentist", ("15",))
     back_to_format_3(setup)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert sorted(summaries(setup)) == ["Dentist", "Pay rent"]
-    assert file_format(setup) == ("5", True)
+    assert file_format(setup) == ("6", True)
 
 
-@pytest.mark.parametrize("step", range(1, 3))
+@pytest.mark.parametrize("step", range(1, 4))
 def test_the_upgrade_for_tasks_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     task_in(setup, 10, "Pay rent", ("15",))
     back_to_format_4(setup)
@@ -870,5 +871,128 @@ def test_the_upgrade_for_tasks_interrupted_at_any_step_leaves_the_old_format_and
     connection.close()
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert summaries(setup) == ["Pay rent"]
-    assert file_format(setup) == ("5", True)
+    assert file_format(setup) == ("6", True)
 
+
+def cancelled_date_of_a_series(first: datetime) -> str:
+    """A daily series with a reminder, whose second date was cancelled on its own."""
+    moment = first + timedelta(days=1)
+    return calendar_of(
+        vevent(first, "Standup", "RRULE:FREQ=DAILY;COUNT=3\r\n" + alarm(":-PT15M")),
+        vevent(moment, "Standup", f"RECURRENCE-ID:{moment.strftime(STAMP)}\r\nSTATUS:CANCELLED\r\n" + alarm(":-PT15M")),
+    )
+
+
+def test_a_cancelled_event_gives_no_notification_and_no_moment(setup: Setup) -> None:
+    put(setup, calendar_of(vevent(minute() + timedelta(minutes=10), "Dentist", "STATUS:CANCELLED\r\n" + alarm(":-PT15M"))))
+    assert due_in_index(setup, far_ahead()) == []  # stored: nothing to read, ever
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_a_status_written_in_small_letters_by_another_program_counts_too(setup: Setup) -> None:
+    put(setup, calendar_of(vevent(minute() + timedelta(minutes=10), "Dentist", "STATUS:cancelled\r\n" + alarm(":-PT15M"))))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_a_cancelled_event_gives_no_email(setup: Setup) -> None:
+    item = event_in(setup, 10, "Dentist", ("email:15",))
+    call(setup.engine, "event.edit", item=item, status="cancelled")
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup) == ReminderCheck() and setup.smtp.received == []
+
+
+def test_a_cancelled_event_with_a_reminder_at_a_fixed_time_gives_nothing(setup: Setup) -> None:
+    fixed = (minute() - timedelta(minutes=2)).strftime(STAMP)
+    put(setup, calendar_of(vevent(minute() + timedelta(minutes=30), "Dentist", "STATUS:CANCELLED\r\n" + alarm(f";VALUE=DATE-TIME:{fixed}"))))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+
+
+def test_a_cancelled_date_of_a_series_is_silent_and_the_rest_still_reminds() -> None:
+    now = minute()
+    first = now + timedelta(minutes=10) - timedelta(days=1)  # the date that was cancelled comes up now, the one after it tomorrow
+    text = cancelled_date_of_a_series(first)
+    assert _due_in(text, "account", now - timedelta(minutes=6), now, UTC, ()) == []
+    assert _next_moment(text, now, UTC) == first + timedelta(days=2) - timedelta(minutes=15)
+    tomorrow = now + timedelta(days=1)
+    assert [one.note.summary for one in _due_in(text, "account", tomorrow - timedelta(minutes=6), tomorrow, UTC, ())] == ["Standup"]
+
+
+def test_a_cancelled_date_of_a_series_is_skipped_in_a_real_look(setup: Setup) -> None:
+    put(setup, cancelled_date_of_a_series(minute() + timedelta(minutes=10) - timedelta(days=1)))
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert check(setup).notes == ()
+    assert len(due_in_index(setup, far_ahead())) == 1  # the date after it is still to come
+
+
+def test_a_cancelled_event_counts_again_when_its_status_changes_back_here(setup: Setup) -> None:
+    item = event_in(setup, 10, "Dentist", ("15",))
+    call(setup.engine, "event.edit", item=item, status="cancelled")
+    assert due_in_index(setup, far_ahead()) == []
+    call(setup.engine, "event.edit", item=item, status="confirmed")
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def test_a_cancelled_event_counts_again_when_a_synchronisation_changes_it_back(setup: Setup) -> None:
+    start = minute() + timedelta(minutes=10)
+    item = put(setup, calendar_of(vevent(start, "Dentist", "STATUS:CANCELLED\r\n" + alarm(":-PT15M"))))
+    put(setup, calendar_of(vevent(start, "Dentist", "STATUS:CONFIRMED\r\n" + alarm(":-PT15M"))), item)
+    looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
+    assert [note.summary for note in check(setup).notes] == ["Dentist"]
+
+
+def worked_out_as_format_5(setup: Setup, cancelled: str, moment: datetime) -> None:
+    """An index of before this version: the cancelled event holds the moment it was given then."""
+    looked_at(setup, datetime.now(UTC) - timedelta(seconds=1))
+    check(setup)  # every moment worked out
+    connection = sqlite3.connect(index_file(setup))
+    connection.execute("UPDATE items SET reminder_due = ? WHERE item_id = ?", (int(moment.timestamp()), cancelled))
+    connection.execute("UPDATE meta SET value = '5' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+
+
+def test_the_upgrade_takes_the_moment_of_an_existing_cancelled_event_and_keeps_the_others(setup: Setup) -> None:
+    start = minute() + timedelta(hours=5)
+    cancelled = put(setup, calendar_of(vevent(start, "Dentist", "STATUS:CANCELLED\r\n" + alarm(":-PT15M"), uid="cancelled")))
+    event_in(setup, 300, "Lunch", ("15",))
+    event_in(setup, 400, "Nothing to remind", ())
+    worked_out_as_format_5(setup, cancelled, start - timedelta(minutes=15))
+    assert file_format(setup) == ("5", True)
+    assert check(setup).notes == ()
+    assert file_format(setup) == ("6", True)
+    assert [one.item_id for one in due_in_index(setup, far_ahead())] != [cancelled]
+    assert len(due_in_index(setup, far_ahead())) == 1  # Lunch: its moment came back, the cancelled event has none
+
+
+@pytest.mark.parametrize("step", range(1, 3))
+def test_the_upgrade_of_format_5_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
+    start = minute() + timedelta(hours=5)
+    cancelled = put(setup, calendar_of(vevent(start, "Dentist", "STATUS:CANCELLED\r\n" + alarm(":-PT15M"), uid="cancelled")))
+    worked_out_as_format_5(setup, cancelled, start - timedelta(minutes=15))
+    made: list[int] = []
+
+    class Stopping(sqlite3.Connection):
+        @override
+        def execute(self, sql: str, parameters: Sequence[str | int] = ()) -> sqlite3.Cursor:  # pyrefly: ignore[bad-override]
+            if sql.startswith("UPDATE"):
+                made.append(1)
+                if len(made) == step:
+                    raise Stop
+            return super().execute(sql, parameters)
+
+    real = sqlite3.connect
+
+    def connect(path: Path, isolation_level: None, timeout: float) -> sqlite3.Connection:
+        return real(path, isolation_level=isolation_level, timeout=timeout, factory=Stopping)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    with pytest.raises(Stop):
+        PimIndex(index_file(setup))
+    monkeypatch.undo()
+    assert file_format(setup) == ("5", True)
+    assert check(setup).notes == ()
+    assert file_format(setup) == ("6", True) and due_in_index(setup, far_ahead()) == []
