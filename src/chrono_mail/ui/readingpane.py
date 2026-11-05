@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.556"
+__version__ = "readingpane.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: Decline from the calendar goes as on a card, with no choice of calendar
 # v4.4.556: An answer from the calendar refreshes every open card of that item (D-310)
 # v4.4.555: Cancel in calendar sets Cancelled; the organizer's address is stored at Send and Don't send, and the window closes with it (D-310)
 # v4.4.554: Change my answer leaves a declined event where it is; Delegate on a copy in Local Folders picks a calendar first (D-310)
@@ -791,8 +792,12 @@ class ReadingPane(QObject):
         self._choose_and_answer(reader, place, answer, info)
 
     def answer_event(self, event: str, occurrence: str, answer: str) -> None:
-        """Accept or Tentative on a hidden event in the calendar: as on a card, and it shows in the calendar when it is done (D-310)."""
-        self._choose_and_answer(self.reader, CalendarSource(event=event, occurrence=occurrence), answer, None)
+        """An answer from the menu of an event in the calendar: as on a card, so Decline asks for no calendar (D-310)."""
+        place = CalendarSource(event=event, occurrence=occurrence)
+        if answer == "DECLINED":
+            self._send_answer(self.reader, place, answer, "")
+            return
+        self._choose_and_answer(self.reader, place, answer, None)
 
     def delegate_event(self, event: str, occurrence: str) -> None:
         self.delegate_invitation(self.reader, CalendarSource(event=event, occurrence=occurrence))

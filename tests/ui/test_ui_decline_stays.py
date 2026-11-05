@@ -23,9 +23,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_decline_stays.py 4.4.554"
+__version__ = "test_ui_decline_stays.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: Delete of a declined series asks this occurrence or all occurrences, as every repeating event (D-318)
 # v4.4.554: Initial tests: the sentence of a declined event, Change my answer leaves it in its calendar, Delegate asks a calendar, a declined event opens with a double click (D-310)
 
 DECLINED = replace(CARD, stored_in="Calendar (Work)", version="same", your_answer="DECLINED", occurrence_kept=True)
@@ -183,10 +184,15 @@ def test_delete_from_the_toolbar_asks_one_question_for_a_declined_series(world: 
         asked.append(text)
         return yes(_parent, _title, text)
 
+    def which(verb: str) -> str:
+        asked.append(verb)
+        return "series"
+
     monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(page, "_ask_scope", which)
     page.delete_selected()
     wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
-    assert len(asked) == 1
+    assert asked == ["Delete"]  # the question of this occurrence or all occurrences is the one question
 
 
 def test_change_my_answer_leaves_the_card_of_another_message_chosen_meanwhile(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

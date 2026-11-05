@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.550"
+__version__ = "calendarwidgets.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: The agenda has the right-click menus of the other views
 # v4.4.550: Hovering a cancelled event says Cancelled and its calendar, in every view (D-316)
 # v4.4.535: A location of several lines is drawn on one line (round 4)
 # v4.2.438: Month draws a filled timed event as an all-day one, its dot in the text's colour; paint_block draws the dot (UR-02, D-297)
@@ -588,6 +589,7 @@ class AgendaView(QListWidget):
 
     entry_clicked = Signal(object)
     entry_activated = Signal(object)
+    context_requested = Signal(object, object, QPoint)  # the Entry or None, no place on a day, where
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -641,6 +643,14 @@ class AgendaView(QListWidget):
         entry = self._entry(item)
         if entry is not None:
             self.entry_activated.emit(entry)
+
+    @override
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        item = self.itemAt(event.pos())
+        entry = self._entry(item)
+        if item is not None and entry is not None:
+            self.setCurrentItem(item)
+        self.context_requested.emit(entry, None, event.globalPos())
 
     def selected_entry(self) -> Entry | None:
         return self._entry(self.currentItem())

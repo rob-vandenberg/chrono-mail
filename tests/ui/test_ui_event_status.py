@@ -18,9 +18,10 @@ from tests.ui.test_ui_reader import reader  # noqa: F401 - reader is a fixture
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_event_status.py 4.4.557"
+__version__ = "test_ui_event_status.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: Edit is off the event menu (D-318)
 # v4.4.557: Initial tests: Cancel and Restore on the right-click menu, what greys on a Cancelled event, the mail question, the card (D-310)
 
 
@@ -80,7 +81,7 @@ def commands_sent(page: CalendarPage, monkeypatch: pytest.MonkeyPatch) -> list[s
 def test_the_menu_of_an_event_offers_cancel_and_greys_restore(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
     actions = menu_of(page, entry_of(page, "Lunch"), monkeypatch)
-    assert actions["Cancel"].isEnabled() and not actions["Restore"].isEnabled() and actions["Edit"].isEnabled() and actions["Delete"].isEnabled()
+    assert actions["Cancel"].isEnabled() and not actions["Restore"].isEnabled() and actions["Delete"].isEnabled()
 
 
 def test_cancel_from_the_menu_cancels_and_restore_brings_it_back(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,7 +89,7 @@ def test_cancel_from_the_menu_cancels_and_restore_brings_it_back(world: World, q
     menu_of(page, entry_of(page, "Lunch"), monkeypatch)["Cancel"].trigger()
     entry = cancelled_in_view(page, qtbot, "Lunch")
     actions = menu_of(page, entry, monkeypatch)
-    assert not actions["Cancel"].isEnabled() and actions["Restore"].isEnabled() and not actions["Edit"].isEnabled() and actions["Delete"].isEnabled()
+    assert not actions["Cancel"].isEnabled() and actions["Restore"].isEnabled() and actions["Delete"].isEnabled()
     actions["Restore"].trigger()
     wait(qtbot, lambda: any(entry.summary == "Lunch" and not entry.row.cancelled for entry in page.entries))  # (its blocks go first and come back)
 

@@ -17,9 +17,10 @@ from tests.test_engine_invitation_answers import drafts, local_calendar
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_event_menus.py 4.4.557"
+__version__ = "test_engine_event_menus.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: A row no longer says whole
 # v4.4.557: Delete of a date stays final with event.restore here for Cancelled; a changed date with no status counts as the calendar shows it (D-310)
 # v4.4.553: A date in an object of only changed dates is deleted as that date (D-310)
 # v4.4.552: Initial tests: what a row of the list knows, what Show declined shows, and Delete: silent on someone else's meeting, one date for good, no mail on a Cancelled meeting (D-310)
@@ -352,7 +353,7 @@ def test_a_deleted_date_cannot_be_restored(setup: Setup) -> None:  # noqa: F811
 def test_a_declined_date_is_deleted_as_that_one_date_and_the_series_stays(setup: Setup) -> None:  # noqa: F811
     item = added(setup, local_calendar(setup), series(OLIVIA, me("ACCEPTED"), dates=(["20300305T100000Z", OLIVIA, me("DECLINED")],)))
     declined = next(row for row in rows(setup, hidden=True) if row.hidden)
-    assert not declined.whole and declined.occurrence
+    assert declined.occurrence
     call(setup.engine, "event.delete", item=item, occurrence=declined.occurrence)
     assert [row.start[:10] for row in rows(setup, hidden=True)] == ["2030-03-04", "2030-03-06"]
     shown = call(setup.engine, "event.show", item=item)
@@ -371,7 +372,7 @@ def only_dates(first: str = "ACCEPTED", second: str = "ACCEPTED", *lines: str) -
 def test_each_date_of_an_object_of_only_changed_dates_has_its_own_row_date(setup: Setup) -> None:  # noqa: F811
     added(setup, local_calendar(setup), only_dates("DECLINED"))
     first, second = rows(setup, hidden=True)
-    assert first.hidden and not first.whole and first.occurrence.startswith("2030-03-05")
+    assert first.hidden and first.occurrence.startswith("2030-03-05")
     assert not second.hidden and second.occurrence.startswith("2030-03-06")
 
 

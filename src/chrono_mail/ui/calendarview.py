@@ -49,9 +49,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.557"
+__version__ = "calendarview.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: The two final event menus in every view: invited and self-created, greyed by the date right-clicked; New only on an empty space, Edit off the menu; every action asks this occurrence or all occurrences after the click
 # v4.4.557: Cancel and Restore on the right-click menu, with the mail question on your own meeting; a Cancelled event does not open and its Edit is greyed until Restore (D-310)
 # v4.4.554: A declined event can be selected and opens with a double click; Delete from the toolbar asks as its menu (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates deletes that date (D-310)
@@ -96,7 +97,7 @@ CUT_WARNING: str = "not every event of these days is shown (a calendar has more 
 WORK_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4)
 FIRST_HOUR: int = 7  # the hour the grid is scrolled to
 DAY_MARGIN: int = 6  # room around a day's number in the small month calendar
-
+READ_ONLY_TIP: str = "This calendar is read-only"
 
 
 def _moments(entry: Entry) -> tuple[str, str]:
@@ -105,6 +106,7 @@ def _moments(entry: Entry) -> tuple[str, str]:
     if entry.all_day:
         return entry.start.date().isoformat(), entry.end.date().isoformat()
     return entry.start.isoformat(), entry.end.isoformat()
+
 
 class RangeCalendar(QCalendarWidget):
     """The small calendar of the sidebar: the days that are shown in the main area are tinted."""
@@ -173,7 +175,7 @@ class TimeGridPanel(QWidget):
 
 
 class CalendarPage(PimPage):
-    answer_wanted = Signal(str, str, str)  # a hidden event: its item, its date ("": all of it), the answer
+    answer_wanted = Signal(str, str, str)  # an invited event: its item, its date ("": all of it), the answer
     delegate_wanted = Signal(str, str)
     mail_ready = Signal(str, str, str, str)  # a mail to the attendees to send: account, folder, message, the person's own message
     """Calendars (with ticks) and a small month on the left; the days, the weeks, the month or the agenda on the right."""
@@ -306,6 +308,7 @@ class CalendarPage(PimPage):
         self.month.day_activated.connect(self._day_activated)
         self.agenda.entry_clicked.connect(self._entry_clicked)
         self.agenda.entry_activated.connect(self._entry_activated)
+        self.agenda.context_requested.connect(self._context)
         self.grid.canvas.hour_height_changed.connect(self._zoomed)
         height = str(self._settings.value("calendar_hour_height", ""))
         if digits(height):
@@ -558,21 +561,24 @@ class CalendarPage(PimPage):
 
     @override
     def delete_selected(self) -> None:
-        entry = self.selected
-        if entry is None:
-            return
+        if self.selected is not None:
+            self._delete_wanted(self.selected)
+
+    def _date_meant(self, entry: Entry, verb: str) -> str | None:
+        """The date an action is for, asked after the click for a repeating event: this one, or "" for all of it. (Not repeating: a date in an object of only
+        changed dates has one, a single event none.) None: the person closed the question."""
         row = entry.row
-        if row.hidden:
-            self._delete_asked(entry, EventDelete(row.item, "" if row.whole else row.occurrence))  # as its menu: what you declined is that date, or all of it
-            return
-        values = EventDelete(row.item, row.occurrence)  # (not repeating: a date in an object of only changed dates has one, a single event none)
-        if row.repeats:
-            scope = self._ask_scope("Delete")
-            if not scope:
-                return
-            if scope != "occurrence":
-                values = EventDelete(values.item)
-        self._delete_asked(entry, values)
+        if not row.repeats:
+            return row.occurrence
+        scope = self._ask_scope(verb)
+        if not scope:
+            return None
+        return row.occurrence if scope == "occurrence" else ""
+
+    def _delete_wanted(self, entry: Entry) -> None:
+        occurrence = self._date_meant(entry, "Delete")
+        if occurrence is not None:
+            self._delete_asked(entry, EventDelete(entry.row.item, occurrence))
 
     def _delete_asked(self, entry: Entry, values: EventDelete) -> None:
         def asked(result: EventInfo) -> None:
@@ -589,7 +595,7 @@ class CalendarPage(PimPage):
 
     def _delete_confirmed(self, entry: Entry, values: EventDelete) -> None:
         """Asks only when no choice of this occurrence or all occurrences came first."""
-        if not entry.row.repeats or entry.row.hidden:
+        if not entry.row.repeats:
             text = f"Delete this date of “{entry.summary}”?" if values.occurrence else f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days."
             if QMessageBox.question(self.content, "Delete", text) != QMessageBox.StandardButton.Yes:
                 return
@@ -622,16 +628,11 @@ class CalendarPage(PimPage):
         self._backend.ask(EVENT_DELETE, values, deleted, self._failed, owner=self)
 
     def _status_wanted(self, entry: Entry, verb: str) -> None:
-        """Cancel or Restore: what you declined is that date or all of it, as Delete; a repeating event asks which."""
+        """Cancel or Restore: a repeating event asks which."""
         row = entry.row
-        occurrence = row.occurrence
-        if row.hidden:
-            occurrence = "" if row.whole else row.occurrence
-        elif row.repeats:
-            scope = self._ask_scope(verb)
-            if not scope:
-                return
-            occurrence = row.occurrence if scope == "occurrence" else ""
+        occurrence = self._date_meant(entry, verb)
+        if occurrence is None:
+            return
         values = StatusParameters(row.item, occurrence)
 
         def asked(result: EventInfo) -> None:
@@ -662,12 +663,6 @@ class CalendarPage(PimPage):
                 self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message, note)
 
         self._backend.ask(EVENT_CANCEL if verb == "Cancel" else EVENT_RESTORE, values, done, self._failed, owner=self)
-
-    def _status_actions(self, menu: QMenu, entry: Entry) -> None:
-        """Cancel and Restore, greyed as they cannot be done: Cancel when Cancelled or hidden, Restore unless Cancelled, both in a read-only calendar (D-310)."""
-        row = entry.row
-        menu.addAction("Cancel", lambda: self._status_wanted(entry, "Cancel")).setEnabled(not row.cancelled and not row.hidden and not row.read_only)
-        menu.addAction("Restore", lambda: self._status_wanted(entry, "Restore")).setEnabled(row.cancelled and not row.read_only)
 
     def _saved(self, item: str) -> None:
         """An event was saved or deleted: its blocks followed the fact (D-146)."""
@@ -700,29 +695,41 @@ class CalendarPage(PimPage):
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted, hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
 
-    def _hidden_actions(self, menu: QMenu, entry: Entry) -> None:
-        """What can be done with what you declined (D-310): answer it again, or delete it for good. A declined date of a series is that one date: the series stays."""
+    def _answer_wanted(self, entry: Entry, verb: str, answer: str) -> None:
+        occurrence = self._date_meant(entry, verb)
+        if occurrence is not None:
+            self.answer_wanted.emit(entry.row.item, occurrence, answer)
+
+    def _delegate_wanted(self, entry: Entry) -> None:
+        occurrence = self._date_meant(entry, "Delegate")
+        if occurrence is not None:
+            self.delegate_wanted.emit(entry.row.item, occurrence)
+
+    def _event_actions(self, menu: QMenu, entry: Entry) -> None:
+        """The two menus of an event, invited and self-created, greyed by the date right-clicked (D-318). The commands refuse the same (OR-4)."""
         row = entry.row
-        occurrence = "" if row.whole else row.occurrence
-        if row.answerable:
-            menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED")).setEnabled(not row.cancelled)
-            menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE")).setEnabled(not row.cancelled)
-            menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence)).setEnabled(not row.cancelled)
-        self._status_actions(menu, entry)
-        menu.addAction("Delete", lambda: self._delete_asked(entry, EventDelete(row.item, occurrence)))
+        writable = not row.read_only
+        if row.invited:
+            open_to_answers = writable and not row.cancelled
+            menu.addAction("Accept", lambda: self._answer_wanted(entry, "Accept", "ACCEPTED")).setEnabled(open_to_answers and row.answer != "ACCEPTED")
+            menu.addAction("Tentative", lambda: self._answer_wanted(entry, "Tentative", "TENTATIVE")).setEnabled(open_to_answers and row.answer != "TENTATIVE")
+            menu.addAction("Delegate…", lambda: self._delegate_wanted(entry)).setEnabled(open_to_answers and row.answer != "DELEGATED")
+            menu.addAction("Decline", lambda: self._answer_wanted(entry, "Decline", "DECLINED")).setEnabled(open_to_answers and row.answer != "DECLINED")
+            menu.addSeparator()
+        menu.addAction("Cancel", lambda: self._status_wanted(entry, "Cancel")).setEnabled(writable and not row.cancelled and not row.hidden)
+        menu.addAction("Restore", lambda: self._status_wanted(entry, "Restore")).setEnabled(writable and row.cancelled)
+        menu.addSeparator()
+        menu.addAction("Delete", lambda: self._delete_wanted(entry)).setEnabled(writable)
+        if row.read_only:
+            menu.setToolTipsVisible(True)
+            for action in menu.actions():
+                action.setToolTip(READ_ONLY_TIP)
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)
-        if isinstance(entry, Entry) and entry.row.hidden:
-            self._hidden_actions(menu, entry)
-            menu.exec(position)
-            return
-        if isinstance(entry, Entry) and not entry.row.hidden:
-            menu.addAction("Edit", self.edit_selected).setEnabled(not entry.row.cancelled)
-            self._status_actions(menu, entry)
-            menu.addAction("Delete", self.delete_selected)
-            menu.addSeparator()
-        if isinstance(slot, tuple) and len(slot) == 2:
+        if isinstance(entry, Entry):
+            self._event_actions(menu, entry)
+        elif isinstance(slot, tuple) and len(slot) == 2:
             day, minute = slot
             menu.addAction("New event here", lambda: self._slot_activated(day, int(minute)))
         else:

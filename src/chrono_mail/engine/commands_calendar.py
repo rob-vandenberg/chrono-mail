@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.557"
+__version__ = "commands_calendar.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: A row no longer says answerable and whole: the menus go by invited, and an invitation with no organizer you declined counts as invited
 # v4.4.557: event.cancel and event.restore, server first, with a real cancellation or a new version for your meeting and silent on someone else's; a Cancelled event takes no edit or move until it is Restored (D-310)
 # v4.4.553: A date in an object of only changed dates has its own row date and is deleted as that date; its last date takes the object along (D-310)
 # v4.4.552: Every row says invited, your answer and read-only; hidden means declined, in a ticked calendar; a deleted date shows nowhere and has no way back (event.restore gone);
@@ -86,10 +87,8 @@ class OccurrenceInfo:
     tags: tuple[str, ...]
     colour_id: str = ""  # the colour of its calendar's palette it has (empty: the calendar's own); `colour` is what that is now
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
-    answerable: bool = False  # hidden, with an organizer other than you: it can be answered again
-    whole: bool = False  # hidden as a whole (a declined meeting): the actions on it are for all of it; else for this one date
     hidden: bool = False  # a meeting or a date you declined: shown greyed only when asked for
-    invited: bool = False  # someone else organizes it and lists you; anything else is self-created
+    invited: bool = False  # someone else organizes it and lists you, or an invitation with no organizer you declined; anything else is self-created
     answer: str = ""  # invited: your answer on this occurrence (NEEDS-ACTION: none yet); it says nothing of `status`, a fact of its own
     read_only: bool = False  # its calendar takes no changes
 
@@ -250,8 +249,9 @@ def _others_meeting(event: Event, yours: Collection[str]) -> bool:
 
 
 def _invited(event: Event, yours: Collection[str]) -> bool:
-    """Someone else organizes it and lists you. An event that names another organizer without listing you is self-created."""
-    return _others_meeting(event, yours) and bool(_your_lines(event, yours))
+    """Someone else organizes it and lists you. An event that names another organizer without listing you is self-created. An invitation with no organizer
+    that you declined is still one: it can be answered again."""
+    return bool(_your_lines(event, yours)) and (_others_meeting(event, yours) or (event.organizer is None and _declined(event, yours)))
 
 
 def _your_answer(event: Event, yours: Collection[str]) -> str:
@@ -309,15 +309,12 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     hidden = _declined(e, yours)
                     if hidden and not parameters.hidden:
                         continue
-                    whole = hidden and (you_declined(text, yours) or not (item.repeats or occurrence.changed))
-                    organizer = e.organizer.address.strip().lower() if e.organizer is not None else ""
-                    answerable = hidden and (organizer not in yours if organizer else whole)  # an invitation with no organizer, declined: it can only be answered again
                     other = css_colour(e.css_colour) if not e.colour_id else ""
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats or occurrence.changed else "", e.status,
-                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, answerable, whole, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
+                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
     if parameters.limit and len(found) > parameters.limit:

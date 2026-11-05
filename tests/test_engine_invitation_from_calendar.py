@@ -17,9 +17,10 @@ from tests.test_engine_invitation_mailing import calendar_id, settings
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_from_calendar.py 4.4.556"
+__version__ = "test_engine_invitation_from_calendar.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: The answer you gave is refused from the calendar: the tests give another one (D-318)
 # v4.4.556: Initial tests (D-310)
 
 SERIES = calendar_text().replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
@@ -37,10 +38,10 @@ def server(setup: Setup) -> Iterator[FakeDav]:  # noqa: F811 - the fixture
         yield fake
 
 
-def edited(setup: Setup, text: str = SERIES) -> tuple[str, str]:  # noqa: F811 - the fixture
-    """An accepted meeting you changed for yourself: the mail, and the event."""
+def edited(setup: Setup, text: str = SERIES, given: str = "ACCEPTED") -> tuple[str, str]:  # noqa: F811 - the fixture
+    """A meeting you answered and changed for yourself: the mail, and the event."""
     message = deliver(setup, invitation_mail(text))
-    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    answer(setup, message, given, calendar_id(setup))
     item = call(setup.engine, "event.list", from_date="2026-10-29", to_date="2026-11-30").events[0].item
     call(setup.engine, "event.edit", item=item, summary="My private title", start="2026-10-29T12:00", end="2026-10-29T12:30", reminder=("15", "email:60"), add_tag=("Private tag",))
     return message, item
@@ -79,7 +80,7 @@ def flags_of(setup: Setup, message: str) -> frozenset[MessageFlag]:  # noqa: F81
 
 @pytest.mark.parametrize("what", ["ACCEPTED", "TENTATIVE", "DECLINED"])
 def test_an_answer_says_what_the_organizer_wrote_and_nothing_you_changed(setup: Setup, server: FakeDav, what: str) -> None:  # noqa: F811 - the fixture
-    _, item = edited(setup)
+    _, item = edited(setup, given="TENTATIVE" if what == "ACCEPTED" else "ACCEPTED")
     before = drafts(setup)
     from_calendar(setup, item, what)
     ((to, subject, text),) = new_drafts(setup, before)
@@ -150,9 +151,9 @@ def test_a_mail_of_another_version_says_nothing_and_gets_no_mark(setup: Setup, s
     gone(setup, message)
     newer = deliver(setup, invitation_mail(calendar_text(sequence=1, title="Newer")))
     before = drafts(setup)
-    from_calendar(setup, item, "ACCEPTED")
+    from_calendar(setup, item, "TENTATIVE")
     ((_, subject, text),) = new_drafts(setup, before)
-    assert subject == "Accepted" and "SUMMARY" not in text
+    assert subject == "Tentative" and "SUMMARY" not in text
     assert MessageFlag.REPLIED not in flags_of(setup, newer)
 
 
@@ -162,8 +163,8 @@ def test_a_mail_that_names_another_organizer_is_not_the_invitation(setup: Setup,
     other = invitation_mail(SERIES.replace("mailto:olivia@example.org", "mailto:mallory@example.net"))
     forged = deliver(setup, other)
     before = drafts(setup)
-    from_calendar(setup, item, "ACCEPTED")
-    assert new_drafts(setup, before)[0][1] == "Accepted" and MessageFlag.REPLIED not in flags_of(setup, forged)
+    from_calendar(setup, item, "TENTATIVE")
+    assert new_drafts(setup, before)[0][1] == "Tentative" and MessageFlag.REPLIED not in flags_of(setup, forged)
 
 
 def test_a_copy_of_two_dates_answered_as_a_whole_answers_both_also_with_the_mail_of_one(setup: Setup, server: FakeDav) -> None:  # noqa: F811 - the fixture
@@ -193,8 +194,8 @@ def test_only_the_newest_mails_of_the_organizer_are_read(setup: Setup, server: F
         mailbox.deliver(mailbox.folder("Inbox"), b"From: Olivia <OLIVIA@example.org>\r\nTo: me@example.com\r\nDate: Mon, 1 Nov 2027 10:00:00 +0000\r\nSubject: Lunch\r\n\r\nNoon?\r\n", frozenset())
     monkeypatch.setattr(commands_invitations, "MAILS_LOOKED_AT", 1)
     before = drafts(setup)
-    from_calendar(setup, item, "ACCEPTED")
-    assert new_drafts(setup, before)[0][1] == "Accepted"
+    from_calendar(setup, item, "TENTATIVE")
+    assert new_drafts(setup, before)[0][1] == "Tentative"
 
 
 def test_the_mail_gets_its_replied_mark_when_the_answer_is_sent(setup: Setup, server: FakeDav) -> None:  # noqa: F811 - the fixture
@@ -220,7 +221,7 @@ def test_a_mark_of_your_decline_goes_from_the_mail_when_you_answer_from_the_cale
     with open_mailbox(setup.engine, setup.account_id) as mailbox:
         reference = mailbox.reference(mailbox.folder("Inbox"), message)
         mailbox.set_flags(reference, mailbox.current_flags(reference) | {MessageFlag.INVITE_DECLINED})
-    from_calendar(setup, item, "ACCEPTED")
+    from_calendar(setup, item, "TENTATIVE")
     assert MessageFlag.INVITE_DECLINED not in flags_of(setup, message)
 
 

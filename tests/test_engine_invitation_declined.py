@@ -9,9 +9,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_declined.py 4.4.552"
+__version__ = "test_engine_invitation_declined.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: A row says invited, no longer answerable and whole
 # v4.4.552: What is declined follows the ticked calendars; a deleted date has no way back and shows nowhere (D-310)
 # v4.4.528: Initial tests: a declined invitation stays as a hidden event of this computer, can be answered again from the calendar or deleted (D-310)
 
@@ -55,7 +56,7 @@ def test_a_declined_invitation_stays_hidden_on_this_computer_and_the_mark_stays_
     decline(setup, message)
     assert rows(setup) == () and marks(setup, message) == {MessageFlag.INVITE_DECLINED}
     (row,) = rows(setup, hidden=True)
-    assert row.hidden and row.answerable and row.whole and row.account == LOCAL_ACCOUNT_ID
+    assert row.hidden and row.invited and row.account == LOCAL_ACCOUNT_ID
     shown = card(setup, message)
     assert shown.your_answer == "DECLINED"
     choices = call(setup.engine, "invitation.choices", account=setup.account_id, folder="Inbox", message=message)
@@ -67,7 +68,7 @@ def test_a_declined_invitation_with_no_organizer_can_be_answered_again_never_res
     message = deliver(setup, invitation_mail(text))
     call(setup.engine, "invitation.answer", account=setup.account_id, folder="Inbox", message=message, answer="DECLINED", mail=False)
     (row,) = rows(setup, hidden=True)
-    assert row.answerable and row.whole
+    assert row.invited
 
 
 def test_what_is_declined_shows_only_when_its_calendar_is_ticked(setup: Setup) -> None:

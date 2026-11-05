@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QHelpEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QFrame, QMenu, QScrollArea, QToolTip, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QScrollArea, QToolTip, QWidget
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.557"
+__version__ = "test_ui_calendar.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: The menus are in tests/ui/test_ui_event_menus.py; Delete of a declined date asks which, as every repeating event (D-318)
 # v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates (D-310)
 # v4.4.552: A deleted date shows nowhere, a declined date can be deleted as that date, a Cancelled meeting asks nothing about a mail (D-310)
@@ -584,31 +585,6 @@ def test_a_deleted_date_of_a_series_shows_nowhere_also_with_show_declined_on(wor
     page.hidden_button.setChecked(False)
 
 
-def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qtbot: QtBot) -> None:
-    """D-310: with an organizer: Accept, Tentative, Delegate, Delete. Each goes on as on a card."""
-    page = open_calendar(world, qtbot)
-    entry = next(entry for entry in page.entries if entry.summary == "Lunch")
-    row = entry.row
-    whole = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, whole=True))
-    asked: list[tuple[str, str, str]] = []
-
-    def wanted(item: str, moment: str, answer: str) -> None:
-        asked.append((item, moment, answer))
-
-    page.answer_wanted.connect(wanted)
-    menu = QMenu()
-    page._hidden_actions(menu, whole)  # noqa: SLF001
-    assert [action.text() for action in menu.actions()] == ["Accept", "Tentative", "Delegate…", "Cancel", "Restore", "Delete"] and menu.actions()[5].isEnabled()
-    menu.actions()[1].trigger()
-    assert asked == [(row.item, "", "TENTATIVE")]
-    one_date = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, occurrence="2026-10-14T12:30:00+00:00"))
-    menu = QMenu()
-    page._hidden_actions(menu, one_date)  # noqa: SLF001
-    assert menu.actions()[5].isEnabled()
-    menu.actions()[0].trigger()
-    assert asked[-1] == (row.item, "2026-10-14T12:30:00+00:00", "ACCEPTED")
-
-
 def test_delete_of_a_declined_date_deletes_that_date_and_the_series_stays(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
     page = open_calendar(world, qtbot)
     common = ["UID:weekly@example.org", "DTSTAMP:20261001T000000Z", "SUMMARY:Daily", "ORGANIZER:mailto:olivia@example.org"]
@@ -620,9 +596,8 @@ def test_delete_of_a_declined_date_deletes_that_date_and_the_series_stays(world:
     wait(qtbot, lambda: any(entry.row.hidden for entry in page.entries))
     declined = next(entry for entry in page.entries if entry.row.hidden)
     monkeypatch.setattr(QMessageBox, "question", yes)
-    menu = QMenu()
-    page._hidden_actions(menu, declined)  # noqa: SLF001
-    next(action for action in menu.actions() if action.text() == "Delete").trigger()
+    monkeypatch.setattr(page, "_ask_scope", lambda _: "occurrence")
+    page._delete_wanted(declined)  # noqa: SLF001
     wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
     wait(qtbot, lambda: summaries(page).count("Daily") == 2)
 

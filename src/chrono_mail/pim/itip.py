@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.557"
+__version__ = "itip.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: moved_answer (one date of a series declined in Local Folders: the whole series as one record), answer_given
 # v4.4.557: restored_copy takes Cancelled off, with your own meeting's attendees asked again; cancelled_in: a changed date goes by what it says itself (D-310)
 # v4.4.556: What goes out of an answer from the calendar: meeting_in_mail, the organizer's own text from the mail; shared_text; reply_text can leave out title and time; no server mark in a mail (D-310)
 # v4.4.555: An update is copied into the event you keep, also at Accept; a date it writes itself keeps its time; removed dates are capped and compared as sets; your deleted dates are no change of time; a cancellation sets Cancelled, cancelled_in as it leaves it; Accept of a copy a server reset takes its free mark off; with_organizer (D-310)
@@ -281,6 +282,38 @@ def declined_copy(text: str, address: str, name: str, account: str, message_id: 
     """The copy of an invitation you declined with no copy anywhere, for Local Folders (D-310)."""
     copy_text = answered_copy(text, address, "DECLINED", name)
     return with_kept_mail(copy_text, account, message_id) if copy_text is not None else None
+
+
+def moved_answer(stored: str, message_text: str, address: str, answer: str, occurrence: Moment, take_message: bool, name: str = "") -> str | None:
+    """A series you declined as a whole in Local Folders, for the calendar picked for an answer on one date (D-310): one record, that date has the answer and
+    the rest stays declined. The mail it came in stays behind: only a copy in Local Folders knows it."""
+    merged = merged_answer(stored, message_text, address, answer, occurrence, take_message, name)
+    calendar = _parse(merged) if merged is not None else None
+    if calendar is None:
+        return None
+    calendar.pop(_KEPT_MAIL, None)
+    return calendar.to_ical().decode("utf-8")
+
+
+def answer_given(text: str, addresses: Collection[str], answer: str, moments: Iterable[Moment] = ()) -> bool:
+    """Whether the copy has this answer of yours already: on those dates (each by its own item, else by the series), or with none on every date of it."""
+    calendar = _parse(text)
+    if calendar is None:
+        return False
+    main = _main_of(calendar)
+    items = _items_of(calendar)
+    dates = list(moments)
+    found = [next((each for each in items if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), main) for moment in dates] if dates else items
+    lower = {address.strip().lower() for address in addresses}
+    return bool(found) and all(each is not None and _answer_of_you(each, lower) == answer for each in found)
+
+
+def _answer_of_you(component: icalendar.Component, addresses: Collection[str]) -> str:
+    """Your answer with two of your addresses listed, as a row of the calendar says it: DECLINED when one declined, else the first line."""
+    props: Any = component.get("ATTENDEE")
+    people: list[Any] = props if isinstance(props, list) else ([props] if props is not None else [])
+    answers = [str(person.params.get("PARTSTAT", "NEEDS-ACTION")).upper() for person in people if _address_of(person) in addresses]
+    return "DECLINED" if "DECLINED" in answers else next(iter(answers), "")
 
 
 def kept_mail(text: str) -> tuple[str, str] | None:

@@ -4091,3 +4091,10 @@ What landed: `event.cancel` and `event.restore` (whole event or one date), `rest
 Changed in passing: `cancelled_on` and `cancelled_in`: a changed date goes by what it says itself, needed for a date restored in a Cancelled series. The old test that said it follows its series follows the design. The old `event.restore` of worker 1's test was the removed-date one; a test now proves a deleted date cannot be restored.
 Open: whether Kerio mails when the attendees' answers are reset in the organizer's copy at Restore is not measured.
 Not tried: on screen, only through window tests; live on Kerio (the task said only if a fault demands it).
+
+## 2026-11-05 4.4.558 The two event menus (event menus, worker 5b, items 32 to 36)
+
+What landed: `_event_actions` in `ui/calendarview.py`: one menu for invited, one for self-created, also in the Agenda (`context_requested`); New only on an empty space, Edit off the menu; greyed by the row, with a hover text in a read-only calendar. `_date_meant`: the question of this occurrence or all occurrences after the click, for every action, a declined series too. `answerable` and `whole` left the rows; an invitation with no organizer you declined counts as invited. `_answerable_there`: from the calendar an answer is refused in a read-only calendar, on a Cancelled event and when given already. `moved_answer`: an answer on one date of a series declined in Local Folders moves the whole series as one record. Decline from the calendar goes as on a card, with no choice of calendar.
+Live, Kerio test account: Restore of your own meeting, also with the attendee's answer reset: 0 mails from Kerio, whole and one date, so the attendee gets one mail, from Chrono Mail; no fix needed. Left on Kerio, nothing deleted: `CM-EM r5wb4e7a8`, `CM-EM r5db4e7a8`.
+Proof: the new tests fail on 4.4.557, but for the guards that held already (a shared calendar: Accept, Cancel, Restore, Delete; a refused move; an empty space; another date's answer).
+Not tried: on screen, only through window tests; the move of a series on Kerio itself.

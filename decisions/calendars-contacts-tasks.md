@@ -44,3 +44,4 @@ See also: [[sync-conflicts]]
 - [[D-313]] Reminders fire from Chrono Mail
 - [[D-316]] The index knows which reminders are due
 - [[D-317]] Cancel and Restore of a calendar event
+- [[D-318]] The right-click menus of a calendar event

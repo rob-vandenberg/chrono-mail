@@ -24,7 +24,7 @@ from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, Occurrence, _as_aware, occurrences, parse_events
 from chrono_mail.pim.itip import (
     keeps_busy,
-    asked_again, cancelled_copy, cancelled_in, declined_copy, organizer_of, with_kept_mail, with_organizer, you_declined,
+    answer_given, asked_again, cancelled_copy, cancelled_in, declined_copy, moved_answer, organizer_of, with_kept_mail, with_organizer, you_declined,
     BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, meeting_in_mail, proposal_usable, request_of, shared_text, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone, parse_moment
@@ -32,9 +32,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.557"
+__version__ = "commands_invitations.py 4.4.558"
 
 # --- Version history ----------------------------------------------------
+# v4.4.558: From the calendar an answer is refused in a read-only calendar, on a Cancelled event and when given already; an answer on one date of a series declined in Local Folders moves the whole series as one record (D-310)
 # v4.4.557: A Cancelled event takes no answer and no delegate until it is Restored, a newer version of the organizer does (D-310)
 # v4.4.556: An answer from the calendar changes the event right-clicked, says only what the organizer's mail says, and marks that mail (D-310)
 # v4.4.555: A cancellation sets Cancelled; an invitation with no organizer stores what the person says, silently when told so, also at Accept after a Decline; a later answer the server mails goes as it is; a file with no organizer asks nothing (D-310)
@@ -504,8 +505,37 @@ def _not_cancelled(opened: _Opened, stored: _Stored | None) -> None:
         raise UsageError("This event is cancelled: restore it first")
 
 
+def _answerable_there(engine: Engine, parameters: SourceParameters, opened: _Opened, answer: str) -> None:
+    """What the menu of an event greys, the command refuses too (OR-4, D-310): any answer in a read-only calendar or on a Cancelled event, and the answer it
+    has already, on that date or on all of it."""
+    if not parameters.event:
+        return
+    with located(engine, parameters.event, CollectionKind.EVENTS) as found:
+        if found.collection.read_only:
+            raise UsageError("This calendar is read-only")
+        text = found.store.get(found.item.collection, parameters.event)
+    moments = occurrences_of(opened.text) if opened.message.occurrence is not None else ()
+    if cancelled_in(text, moments):
+        raise UsageError("This event is cancelled: restore it first")
+    if answer_given(text, your_addresses(engine), answer, moments):
+        raise UsageError("You gave this answer already")
+
+
+def _one_date_moved(stored: _Stored, opened: _Opened, you: _You, answer: str) -> str | None:
+    """An answer on one date of a series declined as a whole in Local Folders: the whole series, as one record, for the calendar picked (D-310)."""
+    message = opened.message
+    if message.occurrence is None:
+        return None
+    kept = read_calendar_message(stored.text, message.occurrence)
+    text = moved_answer(stored.text, opened.text, you.address, answer, message.occurrence, kept is None or bool(is_newer(message, kept.sequence, None)), you.name)
+    if text is None:
+        raise UsageError("The invitation could not be read")  # the declined copy stays: the rest of the series is never lost
+    return text
+
+
 def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerResult:
     opened = _opened(engine, parameters)
+    _answerable_there(engine, parameters, opened, parameters.answer)
     message = opened.message
     if message.method not in _ANSWERABLE:
         raise UsageError("This calendar message asks for no answer")
@@ -566,7 +596,8 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             target, item = (stored.account, stored.info), stored.item
         else:
             shared = message.method == "PUBLISH"  # kept as sent: no attendee line of yours is made up
-            text = published_copy(opened.text) if shared else answered_copy(opened.text, you.address, parameters.answer, you.name)
+            moved = _one_date_moved(declined, opened, you, parameters.answer) if declined is not None else None
+            text = moved or (published_copy(opened.text) if shared else answered_copy(opened.text, you.address, parameters.answer, you.name))
             target, item = _collection(engine, kind, parameters.calendar), None
             if declined is not None and declined.info.collection_id == target[1].collection_id:
                 item = declined.item  # the person chose the calendar it is in: it becomes an appointment there
@@ -813,6 +844,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     """Someone else goes in your place (RFC 5546 section 3.2.2.3): two drafts to send, and your answer DELEGATED in your copy, server first.
     Everything is checked before anything is written."""
     opened = _opened(engine, parameters)
+    _answerable_there(engine, parameters, opened, "DELEGATED")
     message = opened.message
     if message.method not in ("REQUEST", "ADD"):
         raise UsageError("Only an invitation can be passed on")
@@ -857,7 +889,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
             item = declined.item  # the person chose the calendar it is in: it becomes an appointment there
         elif _holds(engine, target, message.uid):
             raise UsageError(f"This {_item(message)} is in that {_home(_kind(message))} already")
-        text = answered_copy(opened.text, you.address, "DELEGATED", you.name)
+        text = _one_date_moved(declined, opened, you, "DELEGATED") or answered_copy(opened.text, you.address, "DELEGATED", you.name)
     moments = added_dates(opened.text) if adding else occurrences_of(opened.text) if message.occurrence is not None else []  # a whole series (also with changed dates): all of it
     if adding and stored is not None:  # only the new dates, and as with Decline they are not added: one that is there already is marked
         text = answered_added(stored.text, opened.text, you.address, "DELEGATED", you.name)
