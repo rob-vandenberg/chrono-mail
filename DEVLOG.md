@@ -4084,3 +4084,10 @@ What landed: `_copy_meant`: the event right-clicked, when it is in a calendar of
 Proof: the new tests fail on the code without the change, but for guards that hold on both (the first of two copies, and the three added after the review). 551 related tests pass. Pyrefly 0 errors on src and the new tests, Linux and win32; layer check passes. T7 again: all 8 cases show only the organizer's title and time, no reminder, tag or mark.
 Open: with the mail gone a delegate still gets a title and time you changed.
 Not tried: on screen, only through window tests; live on Kerio (the task said not needed).
+
+## 2026-11-05 4.4.557 Cancel and Restore of an event (event menus, worker 5a, items 13 to 18)
+
+What landed: `event.cancel` and `event.restore` (whole event or one date), `restored_copy`, `news_of_status`, `event.mailing` with `status`. Your own meeting: a real cancellation of a higher version, or a new version with the attendees asked again; on Kerio Chrono Mail mails it (T5). Someone else's meeting: your copy only, same version, no mail. On a Cancelled event `event.edit`, `event.move`, `invitation.answer` and `invitation.delegate` refuse, a newer version from the organizer excepted; `event.edit` no longer sets Cancelled. Both actions on today's right-click menus; Edit greyed, a double click opens nothing, the card greys its answers.
+Changed in passing: `cancelled_on` and `cancelled_in`: a changed date goes by what it says itself, needed for a date restored in a Cancelled series. The old test that said it follows its series follows the design. The old `event.restore` of worker 1's test was the removed-date one; a test now proves a deleted date cannot be restored.
+Open: whether Kerio mails when the attendees' answers are reset in the organizer's copy at Restore is not measured.
+Not tried: on screen, only through window tests; live on Kerio (the task said only if a fault demands it).

@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.553"
+__version__ = "test_ui_calendar.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates (D-310)
 # v4.4.552: A deleted date shows nowhere, a declined date can be deleted as that date, a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey with a hover text in every view, and takes its colour again (D-316)
@@ -597,13 +598,13 @@ def test_a_declined_meeting_can_be_answered_again_from_its_menu(world: World, qt
     page.answer_wanted.connect(wanted)
     menu = QMenu()
     page._hidden_actions(menu, whole)  # noqa: SLF001
-    assert [action.text() for action in menu.actions()] == ["Accept", "Tentative", "Delegate…", "Delete"] and menu.actions()[3].isEnabled()
+    assert [action.text() for action in menu.actions()] == ["Accept", "Tentative", "Delegate…", "Cancel", "Restore", "Delete"] and menu.actions()[5].isEnabled()
     menu.actions()[1].trigger()
     assert asked == [(row.item, "", "TENTATIVE")]
     one_date = dataclasses.replace(entry, row=dataclasses.replace(row, hidden=True, answerable=True, occurrence="2026-10-14T12:30:00+00:00"))
     menu = QMenu()
     page._hidden_actions(menu, one_date)  # noqa: SLF001
-    assert menu.actions()[3].isEnabled()
+    assert menu.actions()[5].isEnabled()
     menu.actions()[0].trigger()
     assert asked[-1] == (row.item, "2026-10-14T12:30:00+00:00", "ACCEPTED")
 
@@ -662,7 +663,7 @@ def test_delete_of_a_cancelled_meeting_asks_nothing_about_a_mail(world: World, q
 def cancelled(page: CalendarPage, world: World, qtbot: QtBot, summary: str) -> str:
     """Cancels one event and waits until the view has it; gives the name of its calendar."""
     entry = next(entry for entry in page.entries if entry.summary == summary)
-    world.call("event.edit", item=entry.row.item, status="cancelled")
+    world.call("event.cancel", item=entry.row.item)
     page.reload()
     wait(qtbot, lambda: any(one.summary == summary and one.row.cancelled for one in page.entries))
     return entry.row.calendar
@@ -687,7 +688,7 @@ def test_a_cancelled_event_is_grey_and_takes_its_own_colour_again(world: World, 
     cancelled(page, world, qtbot, "Lunch")
     assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == theme().task_grey
     assert next(entry for entry in page.entries if entry.summary == "Dentist").colour == own
-    world.call("event.edit", item=lunch.row.item, status="confirmed")
+    world.call("event.restore", item=lunch.row.item)
     page.reload()
     wait(qtbot, lambda: any(entry.summary == "Lunch" and entry.colour == own for entry in page.entries))
 
@@ -695,7 +696,7 @@ def test_a_cancelled_event_is_grey_and_takes_its_own_colour_again(world: World, 
 def test_a_cancelled_date_of_a_series_alone_is_grey(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot)
     standup = next(entry for entry in page.entries if entry.summary == "Standup" and entry.row.start.startswith("2026-10-14"))
-    world.call("event.edit", item=standup.row.item, occurrence=standup.row.occurrence, status="cancelled")
+    world.call("event.cancel", item=standup.row.item, occurrence=standup.row.occurrence)
     page.reload()
     wait(qtbot, lambda: any(entry.row.cancelled for entry in page.entries))
     greys = [entry.row.start[:10] for entry in page.entries if entry.summary == "Standup" and entry.colour == theme().task_grey]

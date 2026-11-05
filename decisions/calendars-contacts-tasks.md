@@ -43,3 +43,4 @@ See also: [[sync-conflicts]]
 - [[D-312]] The appointment window
 - [[D-313]] Reminders fire from Chrono Mail
 - [[D-316]] The index knows which reminders are due
+- [[D-317]] Cancel and Restore of a calendar event

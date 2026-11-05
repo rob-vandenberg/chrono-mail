@@ -4,7 +4,7 @@ from chrono_mail.core import CollectionInfo, CollectionKind
 from chrono_mail.engine.commands_calendar import in_event_zone
 from chrono_mail.engine.commands_drafts import DraftOpenParameters, draft_open
 from chrono_mail.engine.commands_mail import SendParameters, SendResult, mail_send
-from chrono_mail.engine.meetingmail import organizing_account, who_mails
+from chrono_mail.engine.meetingmail import news_of_status, organizing_account, who_mails
 from chrono_mail.engine.pimaccess import Located, located, open_collection
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
@@ -12,9 +12,10 @@ from chrono_mail.pim.ical import cancelled_on, parse_events
 from chrono_mail.pim.times import parse_moment
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendarmail.py 4.4.552"
+__version__ = "commands_calendarmail.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: event.mailing also answers for Cancel and Restore, which a server that mails whatever it is told leaves to Chrono Mail (D-310)
 # v4.4.552: event.mailing says when a meeting about to be deleted is Cancelled: nobody is asked about a mail then (D-310)
 # v4.4.532: Initial: a calendar mail goes without the composer, with the person's message, and the window can ask who would mail (D-310)
 
@@ -48,6 +49,7 @@ class MailingParameters:
     item: str = field(default="", metadata=option("A meeting that exists: its event id"))
     deleting: bool = field(default=False, metadata=option("The meeting is about to be deleted"))
     occurrence: str = field(default="", metadata=option("Deleting: only this date of it"))
+    status: bool = field(default=False, metadata=option("The meeting is about to be Cancelled or Restored"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,10 +58,11 @@ class MailingResult:
     cancelled: bool = False  # about to be deleted and Cancelled: Chrono Mail mails nothing, so nobody is asked (D-310)
 
 
-def _chrono_mails(engine: Engine, account: str, info: CollectionInfo, gone: str) -> MailingResult:
+def _chrono_mails(engine: Engine, account: str, info: CollectionInfo, gone: str, status: bool = False) -> MailingResult:
     you = organizing_account(engine, account)
     address = you.account.email_address.strip().lower() if you is not None else ""
-    return MailingResult(you is not None and who_mails(engine, (account, info), account, address, gone, answers=False).chrono)
+    mails = who_mails(engine, (account, info), account, address, gone, answers=False)
+    return MailingResult(you is not None and (news_of_status(mails, True) if status else mails).chrono)
 
 
 def _deleting_cancelled(found: Located, parameters: MailingParameters) -> bool:
@@ -80,7 +83,7 @@ def event_mailing(engine: Engine, parameters: MailingParameters) -> MailingResul
         with located(engine, parameters.item, CollectionKind.EVENTS) as found:
             if _deleting_cancelled(found, parameters):
                 return MailingResult(False, True)
-            return _chrono_mails(engine, found.account, found.collection, parameters.item if parameters.deleting and not parameters.occurrence else "")
+            return _chrono_mails(engine, found.account, found.collection, parameters.item if parameters.deleting and not parameters.occurrence else "", parameters.status)
     with open_collection(engine, parameters.calendar, CollectionKind.EVENTS) as (account, _, info):
         return _chrono_mails(engine, account, info, "")
 

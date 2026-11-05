@@ -8,21 +8,22 @@ from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
 from chrono_mail.engine.invitations import take_mark_off
-from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
+from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, cancelled_on, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
-from chrono_mail.pim.itip import attendee_addresses, you_declined
+from chrono_mail.pim.itip import attendee_addresses, cancelled_copy, cancelled_in, holds_occurrence, restored_copy, with_organizer, you_declined
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.553"
+__version__ = "commands_calendar.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: event.cancel and event.restore, server first, with a real cancellation or a new version for your meeting and silent on someone else's; a Cancelled event takes no edit or move until it is Restored (D-310)
 # v4.4.553: A date in an object of only changed dates has its own row date and is deleted as that date; its last date takes the object along (D-310)
 # v4.4.552: Every row says invited, your answer and read-only; hidden means declined, in a ticked calendar; a deleted date shows nowhere and has no way back (event.restore gone);
 #           Delete of someone else's meeting never mails from here and goes the silent way; Delete of a Cancelled meeting mails nothing (D-310)
@@ -660,6 +661,19 @@ def _occurrence_event(series: EventSeries, moment: Moment) -> Event:
     return replace(master, start=moment, end=moment + _duration(master.start, master.end), rrule="", exdates=(), rdates=(), recurrence_id=moment)
 
 
+def _moment_of(text: str, series: EventSeries) -> Moment:
+    try:
+        return in_event_zone(parse_moment(text), series.master.start)
+    except ValueError as error:
+        raise UsageError(f"occurrence: {error}") from None
+
+
+def _not_cancelled(series: EventSeries, moment: Moment | None) -> None:
+    """A Cancelled event takes no change until it is Restored; only Restore and Delete act on it (OR-4, D-310)."""
+    if cancelled_on(series, moment):
+        raise UsageError("This event is cancelled: restore it first")
+
+
 def _taken_off_mail(engine: Engine, you: AccountSettings, before: EventSeries, original: str, text: str, dates: tuple[Moment, ...]) -> MeetingDraft:
     """The cancellation for the attendees taken off your meeting (RFC 5546 section 3.2.5): the meeting as they knew it, one version on, so their programs take it."""
     gone = frozenset(address.lower() for address in attendee_addresses(original)) - frozenset(address.lower() for address in attendee_addresses(text))
@@ -679,11 +693,11 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
             series = _series(original)
             before = series
             moment: Moment | None = None
+            if parameters.status == "cancelled":
+                raise UsageError("Cancelled is set with event.cancel, which tells the attendees the right thing")
             if parameters.occurrence:
-                try:
-                    moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
-                except ValueError as error:
-                    raise UsageError(f"occurrence: {error}") from None
+                moment = _moment_of(parameters.occurrence, series)
+                _not_cancelled(series, moment)
                 base = _occurrence_event(series, moment)
                 if parameters.rrule:
                     raise UsageError("One occurrence cannot have its own rule")
@@ -696,6 +710,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if not series.own_master and overrides[0].recurrence_id == moment:
                     series = replace(series, master=replace(changed, recurrence_id=None))  # the occurrence that stands for the event changed
             else:
+                _not_cancelled(series, None)
                 master = _addressed(engine, found.account, _apply(_clear(series.master, parameters.clear), parameters, creating=False))
                 if parameters.add_tag or parameters.remove_tag:
                     master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
@@ -794,10 +809,7 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
                 return _delete_whole(engine, parameters, found)
             original = found.store.get(found.item.collection, parameters.item)
             series = _series(original)
-            try:
-                moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
-            except ValueError as error:
-                raise UsageError(f"occurrence: {error}") from None
+            moment = _moment_of(parameters.occurrence, series)
             if series.own_master and not series.master.repeats:
                 raise UsageError("This event does not repeat")
             overrides = tuple(o for o in series.overrides if o.recurrence_id != moment)
@@ -842,6 +854,9 @@ def event_move(engine: Engine, parameters: MoveParameters) -> EventInfo:
                     raise UsageError("An event can only be moved inside one account (copy it with export and import)")
                 if target.read_only or found.collection.read_only:
                     raise UsageError("A read-only calendar cannot take part in a move")
+                parsed = parse_events(found.store.get(found.item.collection, parameters.item))
+                if parsed:  # (a damaged event can still be moved)
+                    _not_cancelled(parsed[0], None)
                 with item_writer(engine, account, found.store) as writer:
                     new_id = writer.move(found.collection, parameters.item, target)
                 return _info(new_id, account, target.collection_id, _series(found.store.get(target.collection_id, new_id)))
@@ -925,12 +940,110 @@ EVENT_EDIT: TypedCommand[EditParameters, EventInfo] = TypedCommand("event.edit",
 EVENT_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("event.delete", DeleteParameters, DeleteResult)
 
 
+@dataclass(frozen=True, slots=True)
+class StatusParameters:
+    item: str = field(metadata=option("The event id"))
+    occurrence: str = field(default="", metadata=option("For a repeating event: only this occurrence (the 'occurrence' of event.list); empty is the whole event"))
+    tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees"))
+
+
+def _dates_for_status(parameters: StatusParameters, series: EventSeries, text: str) -> tuple[Moment, ...]:
+    if not parameters.occurrence:
+        return ()
+    moment = _moment_of(parameters.occurrence, series)
+    _occurrence_event(series, moment)  # (a single event has no dates to act on)
+    if not holds_occurrence(text, moment):
+        raise UsageError("This date is not in this event")
+    return (moment,)
+
+
+def _next_version(series: EventSeries, dates: tuple[Moment, ...]) -> int:
+    """One above what the attendees know of what changes (RFC 5546): their programs then take it as the newer version."""
+    changing = tuple(_occurrence_event(series, moment) for moment in dates) or (series.master, *series.overrides)
+    return max(each.sequence for each in changing) + 1
+
+
+def _status_written(engine: Engine, parameters: StatusParameters, found: Located, original: str, dates: tuple[Moment, ...], cancelling: bool) -> EventInfo:
+    """Server first: the status is written, and only then a mail is made. Your own meeting: the attendees hear of it as the person said. Someone else's
+    meeting: your own copy only, same version, nothing is mailed and the server stays silent; the organizer's next version replaces it (D-310)."""
+    series = _series(original)
+    changed = cancelled_copy if cancelling else restored_copy
+    you = organizing_account(engine, found.account) if _organizes(engine, series.master) else None
+    if you is None:
+        text = changed(original, dates)
+        if text is None:
+            raise UsageError("This event could not be read")
+        mails = _silent(engine, found) if _others_meeting(series.master, your_addresses_lower(engine)) else Mailing()
+        with item_writer(engine, found.account, found.store) as writer:
+            writer.put(found.collection, copy_for(text, mails), parameters.item)
+        return _info(parameters.item, found.account, found.item.collection, _series(text))
+    address = you.account.email_address.strip().lower()
+    mails = news_of_status(who_mails(engine, (found.account, found.collection), found.account, address, answers=False), parameters.tell)
+    named = original if series.master.organizer is not None else with_organizer(original, address) or original
+    version = _next_version(series, dates) if parameters.tell else None
+    text = cancelled_copy(named, dates, version) if cancelling else restored_copy(named, dates, version, your_addresses_lower(engine))
+    if text is None:
+        raise UsageError("This event could not be read")
+    with item_writer(engine, found.account, found.store) as writer:
+        writer.put(found.collection, copy_for(text, mails), parameters.item)
+    draft = MeetingDraft()
+    if mails.chrono:
+        title = series.master.summary
+        about = f"One date of {title or 'the meeting'}" if dates else title or "The meeting"
+        draft = meeting_mail(engine, you, text, title, "CANCEL", "Cancelled", f"{about} is cancelled.\n", dates) if cancelling else meeting_mail(engine, you, text, title, "REQUEST", "Restored", f"{about} is on again.\n", dates)
+    return replace(_info(parameters.item, found.account, found.item.collection, _series(text)), draft=draft)
+
+
+def event_cancel(engine: Engine, parameters: StatusParameters) -> EventInfo:
+    """Cancelled, on the whole event or one date: it still exists, inert (D-316). All of it also covers a changed date with no status of its own; a date with
+    its own status keeps it."""
+    try:
+        with located(engine, parameters.item, CollectionKind.EVENTS) as found:
+            if found.collection.read_only:
+                raise UsageError("This calendar is read-only")
+            original = found.store.get(found.item.collection, parameters.item)
+            series = _series(original)
+            dates = _dates_for_status(parameters, series, original)
+            if cancelled_in(original, dates):
+                raise UsageError("This event is cancelled already")
+            yours = your_addresses_lower(engine)
+            if _declined(_occurrence_event(series, dates[0]), yours) if dates else you_declined(original, yours):
+                raise UsageError("A declined event cannot be cancelled")
+            return _status_written(engine, parameters, found, original, dates, cancelling=True)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+
+
+def event_restore(engine: Engine, parameters: StatusParameters) -> EventInfo:
+    """Cancelled taken off, leaving no status, on the whole event or one date. All of it takes it off every date that has it. Your own meeting told of it: a
+    new version, and the attendees answer again (D-310)."""
+    try:
+        with located(engine, parameters.item, CollectionKind.EVENTS) as found:
+            if found.collection.read_only:
+                raise UsageError("This calendar is read-only")
+            original = found.store.get(found.item.collection, parameters.item)
+            series = _series(original)
+            dates = _dates_for_status(parameters, series, original)
+            cancelled = cancelled_in(original, dates) if dates else any(each.status == "CANCELLED" for each in (series.master, *series.overrides))
+            if not cancelled:
+                raise UsageError("This event is not cancelled")
+            return _status_written(engine, parameters, found, original, dates, cancelling=False)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+
+
+EVENT_CANCEL: TypedCommand[StatusParameters, EventInfo] = TypedCommand("event.cancel", StatusParameters, EventInfo)
+EVENT_RESTORE: TypedCommand[StatusParameters, EventInfo] = TypedCommand("event.restore", StatusParameters, EventInfo)
+
+
 def register(registry: CommandRegistry) -> None:
     registry.register(EVENT_LIST.id, "List the events of some days, repeating ones expanded", ListParameters, event_list, doing="Loading the calendar")
     registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
     registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
     registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit, doing="Saving an event")
     registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True, doing="Deleting an event")
+    registry.register(EVENT_CANCEL.id, "Cancel an event, or one occurrence of a repeating event: it stays, greyed", StatusParameters, event_cancel, doing="Cancelling an event")
+    registry.register(EVENT_RESTORE.id, "Take Cancelled off an event, or one occurrence of a repeating event", StatusParameters, event_restore, doing="Restoring an event")
     registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move, doing="Moving an event")
     registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import), doing="Importing events")
     registry.register("event.export", "Export an event or a calendar as iCalendar text", ExportParameters, event_export, doing="Exporting events")

@@ -27,7 +27,7 @@ from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
-from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, DeleteResult, EventInfo, EventList
+from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
@@ -49,9 +49,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.554"
+__version__ = "calendarview.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: Cancel and Restore on the right-click menu, with the mail question on your own meeting; a Cancelled event does not open and its Edit is greyed until Restore (D-310)
 # v4.4.554: A declined event can be selected and opens with a double click; Delete from the toolbar asks as its menu (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates deletes that date (D-310)
 # v4.4.552: A deleted date has no way back; Delete of a declined date deletes that date, never the series; Delete of a Cancelled meeting asks nothing about a mail (D-310)
@@ -458,7 +459,7 @@ class CalendarPage(PimPage):
 
     def _selection_changed(self) -> None:
         self.selected = self._same(self.selected)
-        self.act_edit.setEnabled(self.selected is not None)
+        self.act_edit.setEnabled(self.selected is not None and not self.selected.row.cancelled)  # a Cancelled event is Restored first (D-310)
         self.act_delete.setEnabled(self.selected is not None)
 
     # --- changing -----------------------------------------------------------------------------
@@ -519,15 +520,16 @@ class CalendarPage(PimPage):
         box.setText(f"This event repeats. {verb} only this occurrence, or all of them?")
         only = box.addButton("This occurrence", QMessageBox.ButtonRole.AcceptRole)
         everything = box.addButton("All occurrences", QMessageBox.ButtonRole.DestructiveRole if verb == "Delete" else QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.addButton(QMessageBox.StandardButton.Close if verb == "Cancel" else QMessageBox.StandardButton.Cancel)  # (a button Cancel beside the question to Cancel says two things)
         box.exec()
         clicked = box.clickedButton()
         return "occurrence" if clicked is only else ("series" if clicked is everything else "")
 
     def read_selected(self) -> None:
-        """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for."""
+        """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for. A Cancelled event does not open
+        until it is Restored (D-310)."""
         entry = self.selected
-        if entry is None:
+        if entry is None or entry.row.cancelled:
             return
         row = entry.row
 
@@ -541,7 +543,7 @@ class CalendarPage(PimPage):
 
     def edit_selected(self) -> None:
         entry = self.selected
-        if entry is None:
+        if entry is None or entry.row.cancelled:
             return
         row = entry.row
         scope = self._ask_scope("Change") if row.repeats else "series"
@@ -619,6 +621,54 @@ class CalendarPage(PimPage):
 
         self._backend.ask(EVENT_DELETE, values, deleted, self._failed, owner=self)
 
+    def _status_wanted(self, entry: Entry, verb: str) -> None:
+        """Cancel or Restore: what you declined is that date or all of it, as Delete; a repeating event asks which."""
+        row = entry.row
+        occurrence = row.occurrence
+        if row.hidden:
+            occurrence = "" if row.whole else row.occurrence
+        elif row.repeats:
+            scope = self._ask_scope(verb)
+            if not scope:
+                return
+            occurrence = row.occurrence if scope == "occurrence" else ""
+        values = StatusParameters(row.item, occurrence)
+
+        def asked(result: EventInfo) -> None:
+            if result.yours:
+                self._backend.ask(EVENT_MAILING, MailingParameters(item=row.item, status=True), lambda mailing: self._status_meeting(entry, verb, values, mailing), self._failed, owner=self)
+            else:
+                self._status(verb, values, "")
+
+        self._backend.ask(EVENT_SHOW, EventItem(row.item), asked, self._failed, owner=self)
+
+    def _status_meeting(self, entry: Entry, verb: str, values: StatusParameters, mailing: MailingResult) -> None:
+        """Chrono Mail would mail the attendees: the person says so first; closing the question keeps the meeting as it was. The server mails: it is told to."""
+        note = ""
+        tell = True
+        if mailing.chrono:
+            question = f"Send the attendees a mail that “{entry.summary}” is cancelled?" if verb == "Cancel" else f"Send the attendees a mail that “{entry.summary}” is on again, so they answer again?"
+            dialog = CalendarMailDialog(verb, question, EXPLANATION, self.content)
+            choice = dialog.ask()
+            if choice is Choice.BACK:
+                return
+            tell, note = choice is Choice.SEND, dialog.note
+        self._status(verb, dataclasses.replace(values, tell=tell), note)
+
+    def _status(self, verb: str, values: StatusParameters, note: str) -> None:
+        def done(result: EventInfo) -> None:
+            self._saved("")
+            if result.draft.message:
+                self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message, note)
+
+        self._backend.ask(EVENT_CANCEL if verb == "Cancel" else EVENT_RESTORE, values, done, self._failed, owner=self)
+
+    def _status_actions(self, menu: QMenu, entry: Entry) -> None:
+        """Cancel and Restore, greyed as they cannot be done: Cancel when Cancelled or hidden, Restore unless Cancelled, both in a read-only calendar (D-310)."""
+        row = entry.row
+        menu.addAction("Cancel", lambda: self._status_wanted(entry, "Cancel")).setEnabled(not row.cancelled and not row.hidden and not row.read_only)
+        menu.addAction("Restore", lambda: self._status_wanted(entry, "Restore")).setEnabled(row.cancelled and not row.read_only)
+
     def _saved(self, item: str) -> None:
         """An event was saved or deleted: its blocks followed the fact (D-146)."""
 
@@ -655,9 +705,10 @@ class CalendarPage(PimPage):
         row = entry.row
         occurrence = "" if row.whole else row.occurrence
         if row.answerable:
-            menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED"))
-            menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE"))
-            menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence))
+            menu.addAction("Accept", lambda: self.answer_wanted.emit(row.item, occurrence, "ACCEPTED")).setEnabled(not row.cancelled)
+            menu.addAction("Tentative", lambda: self.answer_wanted.emit(row.item, occurrence, "TENTATIVE")).setEnabled(not row.cancelled)
+            menu.addAction("Delegate…", lambda: self.delegate_wanted.emit(row.item, occurrence)).setEnabled(not row.cancelled)
+        self._status_actions(menu, entry)
         menu.addAction("Delete", lambda: self._delete_asked(entry, EventDelete(row.item, occurrence)))
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
@@ -667,7 +718,8 @@ class CalendarPage(PimPage):
             menu.exec(position)
             return
         if isinstance(entry, Entry) and not entry.row.hidden:
-            menu.addAction("Edit", self.edit_selected)
+            menu.addAction("Edit", self.edit_selected).setEnabled(not entry.row.cancelled)
+            self._status_actions(menu, entry)
             menu.addAction("Delete", self.delete_selected)
             menu.addSeparator()
         if isinstance(slot, tuple) and len(slot) == 2:

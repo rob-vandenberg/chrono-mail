@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 4.4.553"
+__version__ = "ical.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: cancelled_on: a changed date goes by what it says itself, so a date restored in a Cancelled series is not Cancelled (D-310)
 # v4.4.553: cancelled_on: an object of only changed dates goes by those dates (D-310)
 # v4.4.552: cancelled_on: whether a whole event or one date is Cancelled (D-310)
 # v4.4.550: Event.inert: a cancelled event gives no reminder (D-316)
@@ -165,11 +166,14 @@ class Occurrence:
 
 
 def cancelled_on(series: EventSeries, moment: Moment | None) -> bool:
-    """Whether the whole event (moment None) or that date is Cancelled: a date with a status of its own keeps it, any other date follows the series."""
+    """Whether the whole event (moment None) or that date is Cancelled, as the calendar shows it: a changed date goes by what it says itself, also by saying
+    nothing (a date restored in a Cancelled series), any other date by the series."""
     if not series.own_master and moment is None:
         return all(each.status == "CANCELLED" for each in series.overrides)
-    own = next((each.status for each in series.overrides if each.recurrence_id == moment), "") if moment is not None else ""
-    return (own if not series.own_master else own or series.master.status) == "CANCELLED"  # (the master of such an object only stands in for its first date)
+    own = next((each for each in series.overrides if each.recurrence_id == moment), None) if moment is not None else None
+    if own is not None:
+        return own.status == "CANCELLED"
+    return series.own_master and series.master.status == "CANCELLED"  # (the master of an object of only changed dates only stands in for its first date)
 
 
 def new_uid() -> str:

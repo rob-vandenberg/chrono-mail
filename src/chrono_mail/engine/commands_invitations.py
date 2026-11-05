@@ -32,9 +32,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.556"
+__version__ = "commands_invitations.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: A Cancelled event takes no answer and no delegate until it is Restored, a newer version of the organizer does (D-310)
 # v4.4.556: An answer from the calendar changes the event right-clicked, says only what the organizer's mail says, and marks that mail (D-310)
 # v4.4.555: A cancellation sets Cancelled; an invitation with no organizer stores what the person says, silently when told so, also at Accept after a Decline; a later answer the server mails goes as it is; a file with no organizer asks nothing (D-310)
 # v4.4.554: A declined event stays hidden in the calendar it is in, Change my answer leaves it there, the mark only where no copy tells it, Delegate from Local Folders picks a calendar, Accept on a declined copy warns of clashes (D-310)
@@ -492,6 +493,17 @@ def _leave_local_folders(engine: Engine, declined: _Stored, item: str | None) ->
     take_mark_off(engine, declined.text)
 
 
+def _not_cancelled(opened: _Opened, stored: _Stored | None) -> None:
+    """A Cancelled event takes no answer until it is Restored (OR-4, D-310); a newer version from the organizer replaces it, so that can be answered."""
+    message = opened.message
+    if stored is None or stored.info.kind != CollectionKind.EVENTS or not cancelled_in(stored.text, occurrences_of(opened.text) if message.occurrence is not None else ()):
+        return
+    same = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else None
+    base = same or read_calendar_message(stored.text, None) or read_calendar_message(stored.text)
+    if base is None or not is_newer(message, base.sequence, None):
+        raise UsageError("This event is cancelled: restore it first")
+
+
 def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerResult:
     opened = _opened(engine, parameters)
     message = opened.message
@@ -505,6 +517,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     kind = _kind(message)
     item_word, home = _item(message), _home(kind)
     stored = _copy_meant(engine, kind, parameters, message.uid)
+    _not_cancelled(opened, stored)
     opened = opened if parameters.dry else _with_its_mail(engine, opened, you, stored, bool(parameters.occurrence))
     declined = _kept_declined(engine, stored) if parameters.answer != "DECLINED" else None
     stored = None if declined is not None else stored
@@ -813,6 +826,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     if organizer is None or not organizer.address:
         raise UsageError("This invitation names no organizer to answer")
     stored = _copy_meant(engine, _kind(message), parameters, message.uid)
+    _not_cancelled(opened, stored)
     opened = _with_its_mail(engine, opened, you, stored, bool(parameters.occurrence))
     meeting = opened.meeting or (shared_text(opened.text) if opened.kept else opened.text)
     texts = delegated_texts(meeting, you.address, delegate, datetime.now(UTC), you.name, bare=opened.kept and not opened.meeting) if meeting is not None else None

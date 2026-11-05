@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.556"
+__version__ = "itip.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: restored_copy takes Cancelled off, with your own meeting's attendees asked again; cancelled_in: a changed date goes by what it says itself (D-310)
 # v4.4.556: What goes out of an answer from the calendar: meeting_in_mail, the organizer's own text from the mail; shared_text; reply_text can leave out title and time; no server mark in a mail (D-310)
 # v4.4.555: An update is copied into the event you keep, also at Accept; a date it writes itself keeps its time; removed dates are capped and compared as sets; your deleted dates are no change of time; a cancellation sets Cancelled, cancelled_in as it leaves it; Accept of a copy a server reset takes its free mark off; with_organizer (D-310)
 # v4.4.554: A declined event stays in its copy: merged_answer answers every date on all of it, what you declined and now attend blocks your time again; with_kept_mail (D-310)
@@ -741,6 +742,25 @@ def cancelled_copy(stored: str, moments: Iterable[Moment] = (), sequence: int | 
     return kept.to_ical().decode("utf-8")
 
 
+def restored_copy(stored: str, moments: Iterable[Moment] = (), sequence: int | None = None, yours: Collection[str] = ()) -> str | None:
+    """The copy with Cancelled taken off and no status left, whatever it had before (D-310): those dates, or with none every item that is Cancelled. sequence:
+    the version of your own meeting told of it: every other attendee answers again; None: your answers and the version stay. None: not readable."""
+    kept = _parse(stored)
+    if kept is None:
+        return None
+    main = _main_of(kept)
+    dates = list(moments)
+    found = [item for moment in dates if (item := _date_item(kept, main, stored, moment)) is not None] if dates else _items_of(kept)
+    for item in found:
+        if _first(item, "STATUS").upper() == "CANCELLED":
+            item.pop("STATUS", None)
+        if sequence is not None:
+            item.pop("SEQUENCE", None)
+            item.add("SEQUENCE", sequence)
+            _asked_again(item, yours)
+    return kept.to_ical().decode("utf-8")
+
+
 def cancelled_in(text: str, moments: Iterable[Moment] = ()) -> bool:
     """Whether the copy is Cancelled: those dates (each by its own status, else by the series'), or with none all of it: as cancelled_copy leaves it,
     the series and every changed date with no status of its own."""
@@ -755,8 +775,8 @@ def cancelled_in(text: str, moments: Iterable[Moment] = ()) -> bool:
         return bool(found) and all(_first(each, "STATUS").upper() == "CANCELLED" for each in found)
 
     def status(moment: Moment) -> str:
-        own = next((_first(each, "STATUS") for each in items if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), "")
-        return (own or (_first(main, "STATUS") if main is not None else "")).upper()
+        own = next((each for each in items if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), main)  # a changed date goes by what it says itself, as the calendar shows it
+        return _first(own, "STATUS").upper() if own is not None else ""
 
     return all(status(moment) == "CANCELLED" for moment in dates)
 
@@ -1415,6 +1435,15 @@ def countered(stored: str, counter: str, organizer: str) -> str | None:
     return _moved_meeting(stored, counter, organizer) if proposal_usable(stored, counter) else None
 
 
+def _asked_again(target: icalendar.Component, yours: Collection[str]) -> None:
+    """Every attendee of this item but you answers again; someone who passed it on has no answer to give."""
+    props: Any = target.get("ATTENDEE")
+    for person in props if isinstance(props, list) else ([props] if props is not None else []):
+        if _address_of(person) not in yours and str(person.params.get("PARTSTAT", "")).upper() != "DELEGATED":
+            person.params["PARTSTAT"] = "NEEDS-ACTION"
+            person.params["RSVP"] = "TRUE"
+
+
 def _moved_meeting(stored: str, counter: str, organizer: str) -> str | None:
     kept = _parse(stored)
     proposal = _parse(counter)
@@ -1445,11 +1474,7 @@ def _moved_meeting(stored: str, counter: str, organizer: str) -> str | None:
             sequence = 0
         target.pop("SEQUENCE", None)
         target.add("SEQUENCE", sequence + 1)
-        props: Any = target.get("ATTENDEE")
-        for person in props if isinstance(props, list) else ([props] if props is not None else []):
-            if _address_of(person) != lower and str(person.params.get("PARTSTAT", "")).upper() != "DELEGATED":
-                person.params["PARTSTAT"] = "NEEDS-ACTION"
-                person.params["RSVP"] = "TRUE"
+        _asked_again(target, (lower,))
     _copy_zones(proposal, kept)
     return kept.to_ical().decode("utf-8")
 

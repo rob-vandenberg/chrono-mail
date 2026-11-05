@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.554"
+__version__ = "invitationcard.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: The answers are greyed while the event is Cancelled in your calendar, until Restore or a newer version (D-310)
 # v4.4.554: The mail of a declined event says where it is hidden; Change my answer on it brings back the four answers (D-310)
 # v4.4.534: the four answer buttons are gradients (Accept green, Tentative orange, Delegate blue, Decline red) and stand in that order (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
@@ -846,6 +847,8 @@ class InvitationCard(QFrame):
         reason = f"A newer version of this {item_word(info)} is in your {home_word(info)}: this message is out of date." if outdated else (organize_reason(info) if choices else "")
         if not reason and apply and info.method == "CANCEL" and info.kept_cancelled:
             reason = f"This {item_word(info)} is cancelled in your {home_word(info)}."
+        if not reason and asks and info.kept_cancelled and info.version != "newer":
+            reason = f"This {item_word(info)} is cancelled in your {home_word(info)}. Restore it first."
         answering = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.busy_button)
         buttons = (*answering, self.change_button, self.add_button, self.apply_button, *self.organize_buttons)
         for button in buttons:

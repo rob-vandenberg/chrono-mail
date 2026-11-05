@@ -21,9 +21,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.550"
+__version__ = "test_engine_reminders.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
 # v4.4.550: a cancelled event or date gives no reminder, counts again when it changes back; the upgrade of the index to format 6 (D-316)
 # v4.4.545: a task reminds through the same look; the upgrade of the index to format 5 (D-316)
 # v4.4.544: the index knows which reminders are due: no limit in days, the look reads only those, the upgrade of the index (D-316)
@@ -898,7 +899,7 @@ def test_a_status_written_in_small_letters_by_another_program_counts_too(setup: 
 
 def test_a_cancelled_event_gives_no_email(setup: Setup) -> None:
     item = event_in(setup, 10, "Dentist", ("email:15",))
-    call(setup.engine, "event.edit", item=item, status="cancelled")
+    call(setup.engine, "event.cancel", item=item)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert check(setup) == ReminderCheck() and setup.smtp.received == []
 
@@ -929,9 +930,9 @@ def test_a_cancelled_date_of_a_series_is_skipped_in_a_real_look(setup: Setup) ->
 
 def test_a_cancelled_event_counts_again_when_its_status_changes_back_here(setup: Setup) -> None:
     item = event_in(setup, 10, "Dentist", ("15",))
-    call(setup.engine, "event.edit", item=item, status="cancelled")
+    call(setup.engine, "event.cancel", item=item)
     assert due_in_index(setup, far_ahead()) == []
-    call(setup.engine, "event.edit", item=item, status="confirmed")
+    call(setup.engine, "event.restore", item=item)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
 

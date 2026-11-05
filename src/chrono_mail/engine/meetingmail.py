@@ -12,9 +12,10 @@ from chrono_mail.pim.itip import BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, attend
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "meetingmail.py 4.4.532"
+__version__ = "meetingmail.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: news_of_status: who tells the attendees of Cancel and Restore (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.518: Who mails about a meeting, moved here from commands_invitations.py, and the mail about your own meeting (D-310)
 
@@ -96,6 +97,14 @@ def delete_copy(writer: ItemWriter, info: CollectionInfo, item: str, text: str, 
 def quiet(mails: Mailing) -> Mailing:
     """Nobody is told of this change: the server neither, as far as it can be silenced."""
     return replace(mails, server=False, chrono=False, bare=mails.bare or (mails.server and not mails.told))
+
+
+def news_of_status(mails: Mailing, tell: bool) -> Mailing:
+    """Who tells the attendees of your meeting that it is Cancelled or Restored. A server that mails whatever it is told says nothing of a status (measured on
+    Kerio, D-310), so Chrono Mail mails; a server that listens mails as it is told."""
+    if not tell:
+        return quiet(mails)
+    return replace(mails, server=False, chrono=True) if mails.server and not mails.told else mails
 
 
 def your_addresses_lower(engine: Engine) -> frozenset[str]:

@@ -5,7 +5,6 @@ import pytest
 
 from chrono_mail.config import AppConfig
 from chrono_mail.core import MessageFlag
-from chrono_mail.engine.catalog import build_registry
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import UsageError
@@ -18,9 +17,10 @@ from tests.test_engine_invitation_answers import drafts, local_calendar
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_event_menus.py 4.4.553"
+__version__ = "test_engine_event_menus.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: Delete of a date stays final with event.restore here for Cancelled; a changed date with no status counts as the calendar shows it (D-310)
 # v4.4.553: A date in an object of only changed dates is deleted as that date (D-310)
 # v4.4.552: Initial tests: what a row of the list knows, what Show declined shows, and Delete: silent on someone else's meeting, one date for good, no mail on a Cancelled meeting (D-310)
 
@@ -341,8 +341,12 @@ def test_interrupted_between_the_two_steps_online_nothing_is_lost_and_delete_can
 # --- one date for good, declined dates (changelist item 20) -------------------------------------------------------------------------------
 
 
-def test_event_restore_is_gone() -> None:
-    assert "event.restore" not in build_registry().ids()
+def test_a_deleted_date_cannot_be_restored(setup: Setup) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), series())
+    moment = row_on(setup, "2030-03-05").occurrence
+    call(setup.engine, "event.delete", item=item, occurrence=moment)
+    with pytest.raises(UsageError, match="not in this event"):
+        call(setup.engine, "event.restore", item=item, occurrence=moment)
 
 
 def test_a_declined_date_is_deleted_as_that_one_date_and_the_series_stays(setup: Setup) -> None:  # noqa: F811
@@ -460,7 +464,7 @@ def test_a_server_that_listens_is_told_to_stay_silent_at_the_delete_of_a_cancell
     (("STATUS:CANCELLED",), (), True),  # the series is Cancelled, the date follows it
     ((), ("STATUS:CANCELLED",), True),  # only the date
     (("STATUS:CANCELLED",), ("STATUS:CONFIRMED",), False),  # a date with its own status keeps it
-    (("STATUS:CANCELLED",), ("LOCATION:Room 2",), True),  # a changed date with no status of its own follows its series
+    (("STATUS:CANCELLED",), ("LOCATION:Room 2",), False),  # a changed date with no status shows as not Cancelled, as one restored on its own
     ((), (), False),
 ], ids=["series", "date", "own-status", "changed-date", "none"])
 def test_one_date_of_your_meeting_goes_by_the_status_of_that_date(setup: Setup, lines: tuple[str, ...], date_lines: tuple[str, ...], cancelled: bool) -> None:  # noqa: F811

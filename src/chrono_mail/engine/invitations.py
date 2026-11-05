@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, cancelled_in, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.555"
+__version__ = "invitations.py 4.4.557"
 
 # --- Version history ----------------------------------------------------
+# v4.4.557: kept_cancelled: an invitation knows its event is Cancelled too, so its card greys the answers until Restore (D-310)
 # v4.4.555: kept_cancelled: a cancellation knows it is Cancelled already; asks_nothing: a file with no organizer (D-310)
 # v4.4.554: copy_holds; a card remembers Change my answer on a declined event; a copy in a server calendar needs no mark (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -104,7 +105,7 @@ class InvitationInfo:
     more_attendees: int = 0  # attendees past those listed: they are counted
     left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
     asked_again: bool = False  # Change my answer on a declined event: the four answers are back, the copy is as it was (the window's own state)
-    kept_cancelled: bool = False  # a cancellation: what it is about is Cancelled in your copy already, by you or by a server
+    kept_cancelled: bool = False  # a cancellation or an invitation: what it is about is Cancelled in your copy, by you or by a server
 
 
 class _VisibleText(HTMLParser):
@@ -303,7 +304,7 @@ def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], 
         update = message.method == "REQUEST" and version == "newer"
         start, end = _times_now(kept or main, message.occurrence if kept is None else None) if message.method == "COUNTER" or update else (None, None)
         again = update and _asks_again(text, message_text, message.occurrence, base, addresses)
-        cancelled = message.method == "CANCEL" and cancelled_in(text, occurrences_of(message_text) if message.occurrence is not None else ())
+        cancelled = (message.method == "CANCEL" or info.kind == CollectionKind.EVENTS) and cancelled_in(text, occurrences_of(message_text) if message.occurrence is not None else ())
         return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, again, start, end, cancelled)
     return _Kept()
 
