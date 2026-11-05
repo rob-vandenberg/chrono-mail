@@ -1,25 +1,21 @@
 import html
 from datetime import date, datetime
-from typing import Literal, override
+from typing import Literal
 
-from PySide6.QtCore import QDate, QDateTime, Qt, QTime, Signal
-from PySide6.QtGui import QPaintEvent, QPalette, QStandardItemModel
+from PySide6.QtCore import QDate, QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QCompleter,
-    QDateEdit,
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
-    QStyle,
-    QStyleOptionComboBox,
-    QStylePainter,
-    QTimeEdit,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -29,17 +25,18 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_tasklist import TASK_ADD, TASK_EDIT, TaskInfo
 from chrono_mail.engine.commands_tasklist import AddParameters as TaskAdd
 from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
-from chrono_mail.core.words import counted
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.546"
+__version__ = "taskeditor.py 4.4.547"
 
 # --- Version history ----------------------------------------------------
+# v4.4.547: the reminders are the rows of an appointment (eventreminders.py): every reminder of a task is shown and kept, each Notification or Email, a number and a unit or a set time, at most 5 (D-316)
 # v4.4.546: the Reminder list always offers At a set time… with a date and a time; without a due date the choices counted from it are greyed with a hover text, and a task that has one keeps it, shown greyed (D-316)
 # v4.0.378: the task editor and its date fields are built from their Qt Designer forms (ui/forms/task_editor.ui, task_date.ui, D-276); its
 #           sizes follow the size factor
@@ -55,12 +52,6 @@ PRIORITIES: tuple[tuple[int, str], ...] = ((0, "None"), (1, "High"), (5, "Normal
 REPEATS: tuple[tuple[str, str], ...] = (
     ("", "Does not repeat"), ("FREQ=DAILY", "Every day"), ("FREQ=WEEKLY", "Every week"), ("FREQ=MONTHLY", "Every month"), ("FREQ=YEARLY", "Every year"),
 )
-AT_A_SET_TIME: str = "at"
-REMINDERS: tuple[tuple[str, str], ...] = (
-    ("", "No reminder"), ("0", "At the due time"), ("15", "15 minutes before"), ("60", "1 hour before"), ("1440", "1 day before"), ("10080", "1 week before"),
-    (AT_A_SET_TIME, "At a set time…"),
-)
-NEEDS_A_DUE_DATE: str = "This counts from the due date. Give the task a due date to use it."
 TASK_STATUSES: dict[str, Literal["needs-action", "in-process", "completed", "cancelled"]] = {
     "needs-action": "needs-action", "in-process": "in-process", "completed": "completed", "cancelled": "cancelled",
 }
@@ -112,51 +103,6 @@ class DateField(QWidget):
         return self.stamp.date().toString("yyyy-MM-dd") if self.all_day.isChecked() else self.stamp.dateTime().toString("yyyy-MM-dd'T'HH:mm")
 
 
-class ReminderChoice(QComboBox):
-    """The Reminder list. Without a due date the choices counted from it are greyed; one the task already has stays chosen, its text greyed as well."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._items: QStandardItemModel = QStandardItemModel(self)
-        self.setModel(self._items)
-        self._has_due: bool = True
-        self.currentIndexChanged.connect(self._follow_choice)
-
-    def _counts_from_due(self, index: int) -> bool:
-        return str(self.itemData(index)) not in ("", AT_A_SET_TIME)
-
-    def _greyed(self) -> bool:
-        return not self._has_due and self._counts_from_due(self.currentIndex())
-
-    def _follow_choice(self) -> None:
-        self.setToolTip(NEEDS_A_DUE_DATE if self._greyed() else "")
-        self.update()
-
-    def follow_due(self, has_due: bool) -> None:
-        self._has_due = has_due
-        for index in range(self.count()):
-            usable = has_due or not self._counts_from_due(index)
-            row = self._items.item(index)
-            row.setEnabled(usable)
-            row.setToolTip("" if usable else NEEDS_A_DUE_DATE)
-        self._follow_choice()
-
-    @override
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt's name
-        if not self._greyed():
-            super().paintEvent(event)
-            return
-        painter = QStylePainter(self)  # the list itself stays usable: only its text is drawn as greyed
-        option = QStyleOptionComboBox()
-        self.initStyleOption(option)
-        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
-        palette = QPalette(self.palette())
-        palette.setCurrentColorGroup(QPalette.ColorGroup.Disabled)
-        setattr(option, "palette", palette)  # the stubs do not know the field
-        painter.setPen(palette.color(QPalette.ColorRole.ButtonText))
-        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
-
-
 class TaskEditor(QDialog):
     """Makes a task or changes one. The commands do the saving."""
 
@@ -166,12 +112,10 @@ class TaskEditor(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self._original: TaskInfo | None = task
-        self._repeat_before: str = ""  # the repeat and reminder choices as the task had them: sent only when changed (RV-19)
-        self._reminder_before: str = ""
+        self._repeat_before: str = ""  # the repeat choice as the task had it: sent only when changed (RV-19)
         self._item: str | None = None if task is None else task.item
         self.setWindowTitle("New task" if task is None else f"Task: {task.summary}")
-        form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent),
-                                                 "reminder": ReminderChoice})  # D-276
+        form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent)})  # D-276
         self.summary: QLineEdit = part(form, QLineEdit, "summary")
         self.list: QComboBox = part(form, QComboBox, "list")
         for info in lists:
@@ -192,17 +136,7 @@ class TaskEditor(QDialog):
         for value, label in REPEATS:
             self.repeat.addItem(label, value)
         self.repeat.setEditable(False)
-        self.reminder: ReminderChoice = part(form, ReminderChoice, "reminder")
-        for value, label in REMINDERS:
-            self.reminder.addItem(label, value)
-        self.reminder_date: QDateEdit = part(form, QDateEdit, "reminderDate")
-        self.reminder_date.setCalendarPopup(True)
-        self.reminder_date.setDisplayFormat("yyyy-MM-dd")
-        self.reminder_time: QTimeEdit = part(form, QTimeEdit, "reminderTime")
-        self.reminder_time.setDisplayFormat("HH:mm")
-        next_hour = QDateTime.currentDateTime().addSecs(3600)  # what a first set time starts from: a moment still to come
-        self.reminder_date.setDate(next_hour.date())
-        self.reminder_time.setTime(QTime(next_hour.time().hour(), 0))
+        self.reminders = ReminderList(part(form, QVBoxLayout, "reminderRows"), part(form, QPushButton, "addReminder"), of_task=True)
         self.location: QLineEdit = part(form, QLineEdit, "location")
         self.note: QPlainTextEdit = part(form, QPlainTextEdit, "note")
         self.note.setMinimumHeight(wpx(90))
@@ -215,13 +149,14 @@ class TaskEditor(QDialog):
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size, the date and time of the reminder counted
+        self.reminders.follow_due(False)
+        self.reminders.add()  # the widest row, at a set time, there only while the width is measured
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size, the date and time of a reminder counted
+        self.reminders.show_reminders(())
         if task is not None:
             self._fill(task)
-        self.due.enabled.toggled.connect(self.reminder.follow_due)
-        self.reminder.currentIndexChanged.connect(self._follow_reminder)
-        self.reminder.follow_due(self.due.enabled.isChecked())
-        self._follow_reminder()
+        self.due.enabled.toggled.connect(self.reminders.follow_due)
+        self.reminders.follow_due(self.due.enabled.isChecked())
 
     def _fill(self, task: TaskInfo) -> None:
         self.summary.setText(task.summary)
@@ -234,45 +169,18 @@ class TaskEditor(QDialog):
         if task.rrule and self.repeat.findData(task.rrule) < 0:  # a rule from another program: shown and kept as it is (RV-19)
             self.repeat.addItem(f"Custom: {task.rrule}", task.rrule)
         self.repeat.setCurrentIndex(max(0, self.repeat.findData(task.rrule)))
-        reminders = tuple(task.reminders)
-        first = ("at" if reminders[0] is None else str(reminders[0])) if reminders else ""
-        if first == AT_A_SET_TIME:
-            self._show_moment(task.reminder_moments[0])
-        elif first and self.reminder.findData(first) < 0:  # a time the list does not offer: shown and kept (RV-19)
-            self.reminder.addItem(f"{counted(int(first), 'minute')} before", first)
-        self.reminder.setCurrentIndex(max(0, self.reminder.findData(first)))
-        self._repeat_before, self._reminder_before = str(self.repeat.currentData()), self._reminder_value()
+        self.reminders.show_reminders(tuple(task.reminders))
+        self._repeat_before = str(self.repeat.currentData())
         self.note.setPlainText(task.description)
         self.location.setText(task.location)
         self.tags.setText(", ".join(task.tags))
-
-    def _show_moment(self, text: str) -> None:
-        """The fixed time of a reminder, on this computer's clock, as the due date is shown (RV-23)."""
-        moment = datetime.fromisoformat(text)
-        if moment.tzinfo is not None:
-            moment = in_local_zone(moment)
-        self.reminder_date.setDate(QDate(moment.year, moment.month, moment.day))
-        self.reminder_time.setTime(QTime(moment.hour, moment.minute))
-
-    def _follow_reminder(self) -> None:
-        at_a_set_time = self.reminder.currentData() == AT_A_SET_TIME
-        self.reminder_date.setVisible(at_a_set_time)
-        self.reminder_time.setVisible(at_a_set_time)
-
-    def _reminder_value(self) -> str:
-        """The choice as the commands take it: empty for none."""
-        chosen = str(self.reminder.currentData())
-        if chosen != AT_A_SET_TIME:
-            return chosen
-        return f"at:{self.reminder_date.date().toString('yyyy-MM-dd')}T{self.reminder_time.time().toString('HH:mm')}"
 
     def parameters(self) -> TaskEdit:
         """What is in the editor, as task.add and task.edit take it: the fields, and the lists emptied here (clear)."""
         tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
         original = self._original
-        chosen = self._reminder_value()
-        reminder_changed = original is None or chosen != self._reminder_before  # sent only when changed (RV-19)
-        reminder = (chosen,) if chosen and reminder_changed else ()
+        reminder_changed = self.reminders.changed()  # sent only when changed; one left alone is kept whole (keep:, RV-19)
+        reminder = self.reminders.values() if reminder_changed else ()
         repeat = str(self.repeat.currentData())
         clear = tuple(name for name, entries, had in (("tag", tags, original is not None and bool(original.tags)),
                                                       ("reminder", reminder, original is not None and bool(original.reminders) and reminder_changed))

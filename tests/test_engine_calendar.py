@@ -12,9 +12,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 4.4.546"
+__version__ = "test_engine_calendar.py 4.4.547"
 
 # --- Version history ----------------------------------------------------
+# v4.4.547: a task says its reminders whole, keeps one left alone when another changes, by e-mail too, and takes at most 5 (D-316)
 # v4.4.546: a task that gets its due time back counts its reminders from it; a task says the fixed time of its reminder (D-316)
 # v4.4.513: a series that picks its day by position takes its skipped date to another hour (D-310)
 # v4.2.460: removing an account with calendars tells the sections (collection_changed)
@@ -144,7 +145,7 @@ def test_tasks_are_added_listed_by_due_date_changed_completed_and_reopened(engin
     late = call(engine, "task.add", list=tasks, summary="Pay rent", due="2020-01-31", priority=1, tag=("Home",), reminder=("60",))
     soon = call(engine, "task.add", list=tasks, summary="Buy milk", due="2099-01-01T17:00", time_zone="Europe/Amsterdam")
     whenever = call(engine, "task.add", list=tasks, summary="Tidy up")
-    assert (late.due, late.priority, late.tags, late.reminders, late.status, late.done, late.overdue) == ("2020-01-31", 1, ("Home",), (60,), "NEEDS-ACTION", False, True)
+    assert (late.due, late.priority, late.tags, [reminder.minutes_before for reminder in late.reminders], late.status, late.done, late.overdue) == ("2020-01-31", 1, ("Home",), [60], "NEEDS-ACTION", False, True)
     assert not soon.overdue and soon.due == "2099-01-01T17:00:00+01:00"
     listed = call(engine, "task.list")
     assert [t.summary for t in listed.tasks] == ["Pay rent", "Buy milk", "Tidy up"] and (listed.total, listed.active, listed.completed) == (3, 3, 0)  # no due date: last
@@ -547,8 +548,53 @@ def test_a_task_that_gets_its_due_time_back_counts_its_reminders_from_it_again(e
 def test_a_task_says_the_fixed_time_of_its_reminder(engine: Engine) -> None:
     """D-316: the editor shows it, so the task has to say it; a reminder in minutes has none."""
     added = call(engine, "task.add", list=collection(engine, "tasks"), summary="Renew the passport", time_zone="UTC", reminder=("at:2099-03-01T09:30", "15"))
-    assert added.reminders == (None, 15)
-    assert datetime.fromisoformat(added.reminder_moments[0]) == datetime(2099, 3, 1, 9, 30, tzinfo=UTC) and added.reminder_moments[1] == ""
+    assert [reminder.minutes_before for reminder in added.reminders] == [None, 15]
+    assert datetime.fromisoformat(added.reminders[0].at) == datetime(2099, 3, 1, 9, 30, tzinfo=UTC) and added.reminders[1].at == ""
+
+
+TWO_ALARMS = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTODO\r\nUID:two@example.com\r\nDTSTAMP:20261020T100000Z\r\nSUMMARY:Call the bank\r\n"
+    "DUE:20990101T170000Z\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER;RELATED=END:-PT30M\r\nEND:VALARM\r\n"
+    "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Bring the papers\r\nTRIGGER;RELATED=END:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_a_task_keeps_a_reminder_left_alone_when_another_changes(engine: Engine) -> None:
+    """D-316: keep: gives back the reminder of the other program as it was, its kind and text too."""
+    tasks = collection(engine, "tasks")
+    item = call(engine, "task.import", list=tasks, text=TWO_ALARMS).items[0]
+    after = call(engine, "task.edit", item=item, reminder=("15", "keep:1"))
+    assert [(reminder.action, reminder.minutes_before, reminder.relative_to_end) for reminder in after.reminders] == [("DISPLAY", 15, True), ("DISPLAY", 60, True)]
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        assert "Bring the papers" in store.get(tasks, item)
+
+
+def test_a_reminder_left_alone_follows_the_due_time_that_goes_or_comes_in_the_same_edit(engine: Engine) -> None:
+    """D-316: RELATED=END needs a due time (RV-189), also on a reminder that is kept while another changes; a due time that comes counts it from there again."""
+    tasks = collection(engine, "tasks")
+    added = call(engine, "task.add", list=tasks, summary="Call the bank", start="2099-01-01T09:00", due="2099-01-01T17:00", time_zone="UTC", reminder=("15", "30"))
+    gone = call(engine, "task.edit", item=added.item, due="", reminder=("keep:0", "60"))
+    assert [reminder.relative_to_end for reminder in gone.reminders] == [False, False]
+    back = call(engine, "task.edit", item=added.item, due="2099-01-01T17:00", time_zone="UTC", reminder=("keep:0", "90"))
+    assert [reminder.relative_to_end for reminder in back.reminders] == [True, True]
+
+
+def test_a_task_takes_an_email_reminder_in_minutes_and_at_a_set_time(engine: Engine) -> None:
+    """D-316: Notification or Email on every row, a row at a set time too; the e-mail is for your own address, as the standard wants it in the alarm."""
+    added = call(engine, "task.add", list=collection(engine, "tasks"), summary="Call the bank", due="2099-01-01T17:00", time_zone="UTC", reminder=("email:720", "email:at:2099-01-01T09:00"))
+    assert [(reminder.action, reminder.minutes_before, reminder.relative_to_end) for reminder in added.reminders] == [("EMAIL", 720, True), ("EMAIL", None, False)]
+    assert datetime.fromisoformat(added.reminders[1].at) == datetime(2099, 1, 1, 9, 0, tzinfo=UTC)
+
+
+def test_a_task_takes_at_most_five_reminders_but_keeps_more_from_elsewhere(engine: Engine) -> None:
+    """D-316: the owner's number for appointments; a task from another program with more keeps them."""
+    tasks = collection(engine, "tasks")
+    with pytest.raises(UsageError):
+        call(engine, "task.add", list=tasks, summary="Call the bank", reminder=("1", "2", "3", "4", "5", "6"))
+    alarm = "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\nTRIGGER;RELATED=END:-PT{}M\r\nEND:VALARM\r\n"
+    many = TWO_ALARMS.replace("BEGIN:VALARM", "".join(alarm.format(number) for number in range(1, 5)) + "BEGIN:VALARM", 1)
+    item = call(engine, "task.import", list=tasks, text=many).items[0]
+    assert len(call(engine, "task.edit", item=item, reminder=("keep:0", "keep:1", "keep:2", "keep:3", "keep:4", "7")).reminders) == 6
 
 
 def test_a_new_rule_keeps_every_changed_date_and_a_hostile_rule_never_breaks_an_edit(engine: Engine) -> None:

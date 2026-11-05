@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.536"
+__version__ = "commands_calendar.py 4.4.547"
 
 # --- Version history ----------------------------------------------------
+# v4.4.547: An e-mail reminder can be at a fixed time; a task uses the address and the info of a reminder too (D-316)
 # v4.4.536: Reminders by e-mail, at most 5 given, and keep: for one that stays as it is (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -102,6 +103,10 @@ class ReminderInfo:
     relative_to_end: bool
 
 
+def reminder_info(reminder: Reminder) -> ReminderInfo:
+    return ReminderInfo(reminder.minutes_before, format_moment(reminder.at), reminder.action, reminder.relative_to_end)
+
+
 @dataclass(frozen=True, slots=True)
 class ChangedOccurrence:
     occurrence: str
@@ -178,7 +183,7 @@ def _info(item: str, account: str, collection: str, series: EventSeries) -> Even
         item, account, collection, e.uid, e.summary, e.description, e.location, format_moment(e.start), format_moment(e.end), e.all_day, _zone_name(e.start), e.rrule,
         tuple(format_moment(moment) for moment in e.exdates), e.status, e.transparency != "TRANSPARENT", e.classification, e.categories,
         _person(e.organizer) if e.organizer else None, tuple(_person(p) for p in e.attendees),
-        tuple(ReminderInfo(r.minutes_before, format_moment(r.at), r.action, r.relative_to_end) for r in e.reminders), e.url,
+        tuple(reminder_info(r) for r in e.reminders), e.url,
         tuple(ChangedOccurrence(format_moment(o.recurrence_id), format_moment(o.start), format_moment(o.end), o.summary) for o in series.overrides),
         e.colour_id, css_colour(e.css_colour) if not e.colour_id else "",
     )
@@ -332,14 +337,14 @@ def event_show(engine: Engine, parameters: ItemParameters) -> EventInfo:
 
 
 def _reminder(text: str, zone_name: str, before: tuple[Reminder, ...] = ()) -> Reminder:
-    """'15' minutes before; '0' at the start; '-30' after; 'at:2026-10-01T09:00' at a fixed time; 'email:15' an e-mail reminder; 'keep:0' the first
-    reminder the event has, exactly as it is."""
+    """'15' minutes before; '0' at the start; '-30' after; 'at:2026-10-01T09:00' at a fixed time; 'email:15' and 'email:at:2026-10-01T09:00' an e-mail
+    reminder; 'keep:0' the first reminder the event has, exactly as it is."""
     cleaned = text.strip()
     try:
         if cleaned.lower().startswith("keep:"):
             return before[int(cleaned[5:])]
         if cleaned.lower().startswith("email:"):
-            return Reminder(int(cleaned[6:]), action="EMAIL")
+            return replace(_reminder(cleaned[6:], zone_name), action="EMAIL")
         if cleaned.lower().startswith("at:"):
             moment = parse_moment(cleaned[3:], zone_named(zone_name) if zone_name else None)
             if not isinstance(moment, datetime):
@@ -350,13 +355,17 @@ def _reminder(text: str, zone_name: str, before: tuple[Reminder, ...] = ()) -> R
         raise UsageError(f"A reminder is minutes before the start (15), email:15, or at:2026-10-01T09:00 (got '{text}')") from None
 
 
-def _addressed(engine: Engine, account: str, event: Event) -> Event:
+def addressed(engine: Engine, account: str, reminders: tuple[Reminder, ...]) -> tuple[Reminder, ...]:
     """An e-mail reminder made here is for your own address: the one of the account, as the standard wants it in the alarm."""
-    if not any(reminder.action == "EMAIL" and not reminder.to for reminder in event.reminders):
-        return event
+    if not any(reminder.action == "EMAIL" and not reminder.to for reminder in reminders):
+        return reminders
     own = organizing_account(engine, account)
     address = own.account.email_address if own is not None else ""
-    return replace(event, reminders=tuple(replace(reminder, to=address) if reminder.action == "EMAIL" and not reminder.to else reminder for reminder in event.reminders))
+    return tuple(replace(reminder, to=address) if reminder.action == "EMAIL" and not reminder.to else reminder for reminder in reminders)
+
+
+def _addressed(engine: Engine, account: str, event: Event) -> Event:
+    return replace(event, reminders=addressed(engine, account, event.reminders))
 
 
 def _attendee(text: str) -> Attendee:

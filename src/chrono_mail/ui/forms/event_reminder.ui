@@ -25,6 +25,12 @@
     <widget class="QComboBox" name="unit" />
    </item>
    <item>
+    <widget class="QDateEdit" name="date" />
+   </item>
+   <item>
+    <widget class="QTimeEdit" name="time" />
+   </item>
+   <item>
     <widget class="QLabel" name="fixed" />
    </item>
    <item>

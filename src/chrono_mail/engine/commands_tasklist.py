@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 from chrono_mail.core import CollectionKind, StorageError
-from chrono_mail.engine.commands_calendar import _reminder
+from chrono_mail.engine.commands_calendar import MOST_REMINDERS, ReminderInfo, _reminder, addressed, reminder_info
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -14,9 +14,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 4.4.546"
+__version__ = "commands_tasklist.py 4.4.547"
 
 # --- Version history ----------------------------------------------------
+# v4.4.547: a task says its reminders whole, as an event does; at most 5 given, by e-mail too, and keep: for one that stays as it is (D-316)
 # v4.4.546: a task says the fixed time of its reminders (reminder_moments); a task that gets a due time counts its reminders in minutes from it again (D-316)
 # v4.2.385: task.import builds the text afresh as before and keeps from the text given only the time zones the task uses (VTIMEZONE), its
 #           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
@@ -73,8 +74,7 @@ class TaskInfo:
     priority: int
     rrule: str
     tags: tuple[str, ...]
-    reminders: tuple[int | None, ...]  # minutes before the due time (None: at a fixed time)
-    reminder_moments: tuple[str, ...]  # per reminder: its fixed time, empty when it counts in minutes
+    reminders: tuple[ReminderInfo, ...]
     parent: str
     url: str
     done: bool
@@ -93,8 +93,8 @@ def _overdue(task: Task) -> bool:
 def _info(item: str, account: str, collection: str, task: Task) -> TaskInfo:
     return TaskInfo(
         item, account, collection, task.uid, task.summary, task.description, task.location, format_moment(task.start), format_moment(task.due), format_moment(task.completed),
-        task.percent, task.status, task.priority, task.rrule, task.categories, tuple(r.minutes_before for r in task.reminders),
-        tuple(format_moment(r.at) for r in task.reminders), task.parent, task.url, task.done, _overdue(task),
+        task.percent, task.status, task.priority, task.rrule, task.categories, tuple(reminder_info(r) for r in task.reminders),
+        task.parent, task.url, task.done, _overdue(task),
     )
 
 
@@ -291,7 +291,7 @@ class TaskFields:
     percent: int | None = field(default=None, metadata=option("How much is done, 0 to 100"))
     status: Literal["needs-action", "in-process", "completed", "cancelled"] | None = field(default=None, metadata=option("The status"))
     rrule: str | None = field(default=None, metadata=option("How it repeats, like FREQ=WEEKLY (empty: not at all)"))
-    reminder: tuple[str, ...] = field(default=(), metadata=option("Reminders: minutes before the due time (15), or at:2026-10-01T09:00 (repeat)"))
+    reminder: tuple[str, ...] = field(default=(), metadata=option("Reminders: minutes before the due time (15), email:15, at:2026-10-01T09:00, or email:at:2026-10-01T09:00 (repeat)"))
     tag: tuple[str, ...] = field(default=(), metadata=option("Tags (repeat)"))
     parent: str | None = field(default=None, metadata=option("The uid of the task this is part of (empty: none)"))
     url: str | None = field(default=None, metadata=option("A web address"))
@@ -344,12 +344,16 @@ def _apply(task: Task, values: TaskFields) -> Task:
             raise UsageError("A rule starts with FREQ=, like FREQ=WEEKLY")
         result = replace(result, rrule=rule)
     if values.reminder:  # minutes before the due time: RELATED=END, or other programs ring them before the start (RV-99)
-        reminders = (_reminder(text, zone_name) for text in values.reminder)
-        result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None and result.due is not None) for item in reminders))
-    if task.due is not None and result.due is None and result.start is not None and not values.reminder and any(item.relative_to_end for item in result.reminders):  # this edit
+        if len(values.reminder) > max(MOST_REMINDERS, len(result.reminders)):  # a task from elsewhere keeps what it has
+            raise UsageError(f"A task has at most {MOST_REMINDERS} reminders")
+        result = replace(result, reminders=tuple(
+            kept if text.strip().lower().startswith("keep:") else replace(kept, relative_to_end=kept.minutes_before is not None and result.due is not None)
+            for text, kept in ((text, _reminder(text, zone_name, task.reminders)) for text in values.reminder)
+        ))
+    if task.due is not None and result.due is None and result.start is not None and any(item.relative_to_end for item in result.reminders):  # this edit
         # took the due time away: its reminders count from the start (RELATED=END needs a due time, RV-189); any other edit leaves them
         result = replace(result, reminders=tuple(replace(item, relative_to_end=False) for item in result.reminders))
-    if task.due is None and result.due is not None and not values.reminder:  # this edit gave the task a due time: its reminders in minutes count from it again
+    if task.due is None and result.due is not None:  # this edit gave the task a due time: its reminders in minutes count from it again
         result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None) for item in result.reminders))
     if values.tag:
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
@@ -377,6 +381,7 @@ def task_add(engine: Engine, parameters: AddParameters) -> TaskInfo:
         with open_collection(engine, parameters.list, CollectionKind.TASKS) as (account, store, info), item_writer(engine, account, store) as writer:
             if info.read_only:
                 raise UsageError("This task list is read-only")
+            task = replace(task, reminders=addressed(engine, account, task.reminders))
             item = writer.put(info, tasks_to_text(task))
             return _info(item, account, info.collection_id, task)
     except StorageError as error:
@@ -406,6 +411,8 @@ def task_edit(engine: Engine, parameters: EditParameters) -> TaskInfo:
                 else:
                     raise UsageError(f"Only these can be cleared: {', '.join(LIST_FIELDS)}")
             task = _apply(task, parameters)
+            if parameters.reminder:
+                task = replace(task, reminders=addressed(engine, found.account, task.reminders))
             if parameters.add_tag or parameters.remove_tag:
                 task = replace(task, categories=changed_tags(task.categories, parameters.add_tag, parameters.remove_tag))
             writer.put(found.collection, tasks_to_text(task, original), parameters.item)

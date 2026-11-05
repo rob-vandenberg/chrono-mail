@@ -99,20 +99,32 @@
         <string>Reminder</string>
        </property>
        <property name="buddy">
-        <cstring>reminder</cstring>
+        <cstring>addReminder</cstring>
        </property>
       </widget>
      </item>
      <item row="8" column="1">
-      <layout class="QHBoxLayout" name="reminderRow" stretch="1,0,0">
+      <layout class="QVBoxLayout" name="reminderPart">
        <item>
-        <widget class="QComboBox" name="reminder" />
+        <layout class="QVBoxLayout" name="reminderRows" />
        </item>
        <item>
-        <widget class="QDateEdit" name="reminderDate" />
-       </item>
-       <item>
-        <widget class="QTimeEdit" name="reminderTime" />
+        <layout class="QHBoxLayout" name="reminderButtons">
+         <item>
+          <widget class="QPushButton" name="addReminder">
+           <property name="text">
+            <string>Add notification</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="reminderRest">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
       </layout>
      </item>
