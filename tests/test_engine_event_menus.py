@@ -9,6 +9,7 @@ from chrono_mail.engine.catalog import build_registry
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.pim.ical import cancelled_on, parse_events
 from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davitems import ItemGateway, ServerRefused
 from tests.fakedav import FakeDav
@@ -17,9 +18,10 @@ from tests.test_engine_invitation_answers import drafts, local_calendar
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_event_menus.py 4.4.552"
+__version__ = "test_engine_event_menus.py 4.4.553"
 
 # --- Version history ----------------------------------------------------
+# v4.4.553: A date in an object of only changed dates is deleted as that date (D-310)
 # v4.4.552: Initial tests: what a row of the list knows, what Show declined shows, and Delete: silent on someone else's meeting, one date for good, no mail on a Cancelled meeting (D-310)
 
 DAYS = {"from_date": "2030-03-04", "to_date": "2030-03-08"}
@@ -351,6 +353,66 @@ def test_a_declined_date_is_deleted_as_that_one_date_and_the_series_stays(setup:
     assert [row.start[:10] for row in rows(setup, hidden=True)] == ["2030-03-04", "2030-03-06"]
     shown = call(setup.engine, "event.show", item=item)
     assert not shown.changed_occurrences
+
+
+def only_dates(first: str = "ACCEPTED", second: str = "ACCEPTED", *lines: str) -> str:
+    """An invitation to two dates of someone else's series: the object holds no main event."""
+    common = ["UID:dates@example.org", "DTSTAMP:20300101T000000Z", "SUMMARY:Two dates", OLIVIA]
+    return calendar_of(
+        [*common, "RECURRENCE-ID:20300305T100000Z", "DTSTART:20300305T100000Z", "DTEND:20300305T103000Z", me(first), *lines],
+        [*common, "RECURRENCE-ID:20300306T100000Z", "DTSTART:20300306T100000Z", "DTEND:20300306T103000Z", me(second)],
+    )
+
+
+def test_each_date_of_an_object_of_only_changed_dates_has_its_own_row_date(setup: Setup) -> None:  # noqa: F811
+    added(setup, local_calendar(setup), only_dates("DECLINED"))
+    first, second = rows(setup, hidden=True)
+    assert first.hidden and not first.whole and first.occurrence.startswith("2030-03-05")
+    assert not second.hidden and second.occurrence.startswith("2030-03-06")
+
+
+@pytest.mark.parametrize(("day", "left"), [("2030-03-05", "2030-03-06"), ("2030-03-06", "2030-03-05")], ids=["first", "second"])
+def test_a_date_of_an_object_of_only_changed_dates_is_deleted_as_that_one_date(setup: Setup, day: str, left: str) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), only_dates())
+    call(setup.engine, "event.delete", item=item, occurrence=row_on(setup, day).occurrence)
+    assert [row.start[:10] for row in rows(setup, hidden=True)] == [left]
+
+
+def test_a_declined_date_of_such_an_object_is_deleted_as_that_date_and_the_other_stays(setup: Setup) -> None:  # noqa: F811
+    item = added(setup, local_calendar(setup), only_dates("DECLINED"))
+    call(setup.engine, "event.delete", item=item, occurrence=row_on(setup, "2030-03-05", hidden=True).occurrence)
+    assert [(row.start[:10], row.hidden) for row in rows(setup, hidden=True)] == [("2030-03-06", False)]
+
+
+def test_the_last_date_of_such_an_object_takes_the_object_along_the_silent_way(setup: Setup, kerio: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    item = added(setup, server_calendar(setup), only_dates())
+    call(setup.engine, "event.delete", item=item, occurrence=row_on(setup, "2030-03-05").occurrence)
+    sent = puts_from_now_on(kerio, monkeypatch)
+    call(setup.engine, "event.delete", item=item, occurrence=row_on(setup, "2030-03-06").occurrence)
+    assert writes(kerio) == ["PUT", "DELETE"] and "ORGANIZER" not in sent[0] and on_server(kerio) == [] and rows(setup) == ()
+
+
+def test_a_date_not_in_such_an_object_is_refused_and_a_single_event_still_does_not_repeat(setup: Setup) -> None:  # noqa: F811
+    calendar = local_calendar(setup)
+    item = added(setup, calendar, only_dates())
+    with pytest.raises(UsageError, match="not in this event"):
+        call(setup.engine, "event.delete", item=item, occurrence="2030-03-09T10:00:00+00:00")
+    plain = added(setup, calendar, single())
+    with pytest.raises(UsageError, match="does not repeat"):
+        call(setup.engine, "event.delete", item=plain, occurrence="2030-03-04T10:00:00+00:00")
+
+
+def test_an_answer_on_a_declined_date_of_such_an_object_changes_that_date_only(setup: Setup) -> None:  # noqa: F811
+    added(setup, local_calendar(setup), only_dates("DECLINED", "TENTATIVE"))
+    row = row_on(setup, "2030-03-05", hidden=True)
+    call(setup.engine, "invitation.answer", account="", folder="", message="", event=row.item, occurrence=row.occurrence, answer="ACCEPTED", calendar=row.collection, mail=False)
+    assert [row.answer for row in rows(setup)] == ["ACCEPTED", "TENTATIVE"]
+
+
+def test_the_status_of_a_date_in_such_an_object_is_its_own(setup: Setup) -> None:  # noqa: F811
+    series_of = parse_events(only_dates("ACCEPTED", "ACCEPTED", "STATUS:CANCELLED"))[0]
+    first, second = series_of.overrides
+    assert cancelled_on(series_of, first.recurrence_id) and not cancelled_on(series_of, second.recurrence_id) and not cancelled_on(series_of, None)
 
 
 # --- Delete of a Cancelled meeting (changelist item 21) -----------------------------------------------------------------------------------

@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.552"
+__version__ = "commands_calendar.py 4.4.553"
 
 # --- Version history ----------------------------------------------------
+# v4.4.553: A date in an object of only changed dates has its own row date and is deleted as that date; its last date takes the object along (D-310)
 # v4.4.552: Every row says invited, your answer and read-only; hidden means declined, in a ticked calendar; a deleted date shows nowhere and has no way back (event.restore gone);
 #           Delete of someone else's meeting never mails from here and goes the silent way; Delete of a Cancelled meeting mails nothing (D-310)
 # v4.4.550: OccurrenceInfo.cancelled: a cancelled event or date, drawn grey (D-316)
@@ -78,7 +79,7 @@ class OccurrenceInfo:
     location: str
     repeats: bool
     changed: bool  # this occurrence was changed on its own
-    occurrence: str  # the original start of this occurrence of a repeating event: what to give to event.edit and event.delete to act on this one only
+    occurrence: str  # the original start of this occurrence of a repeating event, or of a date in an object of only changed dates: what to give to event.edit and event.delete to act on this one only
     status: str
     busy: bool
     tags: tuple[str, ...]
@@ -307,14 +308,14 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     hidden = _declined(e, yours)
                     if hidden and not parameters.hidden:
                         continue
-                    whole = hidden and (not item.repeats or you_declined(text, yours))
+                    whole = hidden and (you_declined(text, yours) or not (item.repeats or occurrence.changed))
                     organizer = e.organizer.address.strip().lower() if e.organizer is not None else ""
                     answerable = hidden and (organizer not in yours if organizer else whole)  # an invitation with no organizer, declined: it can only be answered again
                     other = css_colour(e.css_colour) if not e.colour_id else ""
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
-                        (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats else "", e.status,
+                        (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats or occurrence.changed else "", e.status,
                         e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, answerable, whole, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
@@ -797,11 +798,18 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
                 moment = in_event_zone(parse_moment(parameters.occurrence), series.master.start)
             except ValueError as error:
                 raise UsageError(f"occurrence: {error}") from None
-            if not series.master.repeats:
+            if series.own_master and not series.master.repeats:
                 raise UsageError("This event does not repeat")
-            master = replace(series.master, exdates=tuple(dict.fromkeys((*series.master.exdates, moment))))
             overrides = tuple(o for o in series.overrides if o.recurrence_id != moment)
-            text = events_to_text(replace(series, master=master, overrides=overrides), original)
+            if series.own_master:
+                changed = replace(series, master=replace(series.master, exdates=tuple(dict.fromkeys((*series.master.exdates, moment)))), overrides=overrides)
+            elif len(overrides) == len(series.overrides):
+                raise UsageError("This date is not in this event")
+            elif not overrides:
+                return _delete_whole(engine, replace(parameters, occurrence=""), found)  # its last date
+            else:
+                changed = replace(series, master=replace(overrides[0], recurrence_id=None), overrides=overrides)  # an object of only changed dates: no list of removed dates (RV-186)
+            text = events_to_text(changed, original)
             you = organizing_account(engine, found.account) if _organizes(engine, series.master) else None
             if you is None:
                 others = _others_meeting(series.master, your_addresses_lower(engine))

@@ -49,9 +49,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.552"
+__version__ = "calendarview.py 4.4.553"
 
 # --- Version history ----------------------------------------------------
+# v4.4.553: Delete of a date in an object of only changed dates deletes that date (D-310)
 # v4.4.552: A deleted date has no way back; Delete of a declined date deletes that date, never the series; Delete of a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey instead of its colour, in every view (D-316)
 # v4.4.535: A double click opens an appointment read-only; Edit in the list and the menu still go straight to the editor; New starts All day (round 4)
@@ -558,13 +559,13 @@ class CalendarPage(PimPage):
         if entry is None:
             return
         row = entry.row
-        values = EventDelete(row.item)
+        values = EventDelete(row.item, row.occurrence)  # (not repeating: a date in an object of only changed dates has one, a single event none)
         if row.repeats:
             scope = self._ask_scope("Delete")
             if not scope:
                 return
-            if scope == "occurrence":
-                values = EventDelete(values.item, row.occurrence)
+            if scope != "occurrence":
+                values = EventDelete(values.item)
         self._delete_asked(entry, values)
 
     def _delete_asked(self, entry: Entry, values: EventDelete) -> None:

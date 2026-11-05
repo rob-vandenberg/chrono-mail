@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.552"
+__version__ = "test_ui_calendar.py 4.4.553"
 
 # --- Version history ----------------------------------------------------
+# v4.4.553: Delete of a date in an object of only changed dates (D-310)
 # v4.4.552: A deleted date shows nowhere, a declined date can be deleted as that date, a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey with a hover text in every view, and takes its colour again (D-316)
 # v4.4.537: a placeholder alarm shows no row; a normal reminder shows as type, number and unit
@@ -623,6 +624,21 @@ def test_delete_of_a_declined_date_deletes_that_date_and_the_series_stays(world:
     next(action for action in menu.actions() if action.text() == "Delete").trigger()
     wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
     wait(qtbot, lambda: summaries(page).count("Daily") == 2)
+
+
+def test_delete_of_a_date_in_an_object_of_only_changed_dates_deletes_that_date(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
+    page = open_calendar(world, qtbot)
+    common = ["UID:dates@example.org", "DTSTAMP:20261001T000000Z", "SUMMARY:Two dates", "ORGANIZER:mailto:olivia@example.org", "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.com"]
+    dates = [["BEGIN:VEVENT", *common, f"RECURRENCE-ID:202610{day}T090000Z", f"DTSTART:202610{day}T090000Z", f"DTEND:202610{day}T093000Z", "END:VEVENT"] for day in ("13", "14")]
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//Example//EN", *dates[0], *dates[1], "END:VCALENDAR"]
+    world.call("event.import", calendar=calendar_id(world), text="\r\n".join(lines) + "\r\n")
+    wait(qtbot, lambda: summaries(page).count("Two dates") == 2)
+    page._entry_clicked(next(e for e in page.entries if e.summary == "Two dates" and e.first_day == date(2026, 10, 13)))  # noqa: SLF001
+    monkeypatch.setattr(QMessageBox, "question", yes)
+    page.delete_selected()
+    wait(qtbot, lambda: summaries(page).count("Two dates") == 1)
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert [e.first_day for e in page.entries if e.summary == "Two dates"] == [date(2026, 10, 14)]
 
 
 def test_delete_of_a_cancelled_meeting_asks_nothing_about_a_mail(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
