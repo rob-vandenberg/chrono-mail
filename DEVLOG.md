@@ -4077,3 +4077,10 @@ Cost on input: EXDATE compared as sets and capped at MAXIMUM_DATES; the series w
 Proof: the new tests fail on the code without the change (a few guards pass on both, among them the two of item 26). 337 related tests pass. Pyrefly 0 errors on src and the new tests, Linux and win32; layer check passes.
 Live, Kerio test account, real commands, nothing deleted: Send 1 REPLY; Don't send 0; empty field 0 and no ORGANIZER on the server; Decline with Don't send 0 and hidden; Accept and Decline 1 REPLY each; an organizer's change resets the answer and keeps the free mark; Cancel mail: Kerio sets Cancelled by itself, for one date on that date's own item, the button is greyed. The free-mark fix itself was not repeated live.
 Not tried on screen: the dialog and buttons, only through window tests.
+
+## 2026-11-05 4.4.556 Answers from the calendar (event menus, worker 4, items 29 to 31)
+
+What landed: `_copy_meant`: the event right-clicked, when it is in a calendar of yours. `_with_its_mail`: the newest 500 mails of the organizer in the answering account are read for the invitation of the same version (`Index.sent_by`, `meeting_in_mail`); its text goes out, and it gets the Replied mark like a mail answered from a card. No such mail: a REPLY without title and time, a delegate gets `shared_text`. `reply_text` and `delegated_texts` drop what is meant for your server. The window refreshes every open card of the UID (`_refresh_cards_of`).
+Proof: the new tests fail on the code without the change, but for guards that hold on both (the first of two copies, and the three added after the review). 551 related tests pass. Pyrefly 0 errors on src and the new tests, Linux and win32; layer check passes. T7 again: all 8 cases show only the organizer's title and time, no reminder, tag or mark.
+Open: with the mail gone a delegate still gets a title and time you changed.
+Not tried: on screen, only through window tests; live on Kerio (the task said not needed).

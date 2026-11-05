@@ -13,27 +13,29 @@ from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS, in_event_zone
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.invitations import InvitationInfo, answering, asks_nothing, writing, calendar_part, calendar_text, blocks_of, card_of, copy_holds, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
-from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import DEFAULT_COLLECTIONS, account_name, ensure_local_pim, located, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.index import IndexedMessage
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, Occurrence, _as_aware, occurrences, parse_events
 from chrono_mail.pim.itip import (
     keeps_busy,
     asked_again, cancelled_copy, cancelled_in, declined_copy, organizer_of, with_kept_mail, with_organizer, you_declined,
-    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
+    BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, meeting_in_mail, proposal_usable, request_of, shared_text, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone, parse_moment
 from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.555"
+__version__ = "commands_invitations.py 4.4.556"
 
 # --- Version history ----------------------------------------------------
+# v4.4.556: An answer from the calendar changes the event right-clicked, says only what the organizer's mail says, and marks that mail (D-310)
 # v4.4.555: A cancellation sets Cancelled; an invitation with no organizer stores what the person says, silently when told so, also at Accept after a Decline; a later answer the server mails goes as it is; a file with no organizer asks nothing (D-310)
 # v4.4.554: A declined event stays hidden in the calendar it is in, Change my answer leaves it there, the mark only where no copy tells it, Delegate from Local Folders picks a calendar, Accept on a declined copy warns of clashes (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -68,6 +70,7 @@ __version__ = "commands_invitations.py 4.4.555"
 # v4.4.505: Initial: invitation.choices (every calendar, the one to start on) and invitation.answer (Accept, Tentative, Decline: the copy
 #           in a calendar server first, the answer mailed by the server or as a draft to send), D-310
 
+MAILS_LOOKED_AT: int = 500  # how many of the organizer's newest mails an answer from the calendar reads to find its invitation, so the wait stays short
 MAXIMUM_INVITATION_BYTES: int = 1024 * 1024  # an invitation or an .ics file: 1 MB, the owner's choice, as the import limit of a large calendar service (the backup copies the stores and has no limit)
 TOO_LARGE: str = "This calendar file is larger than 1 MB, so it cannot be read here"
 
@@ -144,6 +147,7 @@ class AnswerResult:
     chrono: bool = False  # dry: Chrono Mail would mail this answer
     no_organizer: bool = False  # dry: the invitation names nobody to answer
     sender: str = ""  # dry: who sent the mail it came in; "": a file
+    uid: str = ""  # of the item: every open card of it shows what your calendar holds now
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +163,10 @@ class _Opened:
     marks: frozenset[MessageFlag] | None = None  # the marks of the mail this is the one invitation of; None: no mark can speak for it (a file, another attachment, several items)
     source: tuple[str, str] | None = None  # the folder and id of the mail: an answer to it marks it as replied once it is sent; a file has none
     own: str = ""  # the mail lies in your Sent ("sent") or Drafts ("draft"): what it carries is your own and asks nothing
+    account: str = ""  # the account of the mail
+    kept: bool = False  # answered from the calendar: the text is your own copy
+    meeting: str = ""  # kept: the organizer's own text, from the mail it came in; "": no such mail
+    title: str = ""  # kept: the organizer's own title, from that mail
 
 
 def _file_text(path: str) -> bytes:
@@ -172,7 +180,7 @@ def _file_text(path: str) -> bytes:
 
 
 def _kept_request(engine: Engine, parameters: SourceParameters) -> tuple[bytes, str | None]:
-    """A hidden event as the invitation it was, and the account of its calendar (Local Folders receives no mail)."""
+    """An event of the calendar as the invitation it was, and the account of its calendar (Local Folders receives no mail)."""
     with located(engine, parameters.event, CollectionKind.EVENTS) as found:
         text = found.store.get(found.item.collection, parameters.event)
         account = found.account
@@ -239,7 +247,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     plain = asks_nothing(message, bool(parameters.file))
     settings = engine.config().find(receiving) if receiving else None
     marks = flags if own_part and len(items.texts) == 1 else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, own)
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, own, parameters.account, bool(parameters.event))
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -307,6 +315,15 @@ def _stored(engine: Engine, kind: CollectionKind, uid: str) -> _Stored | None:
             except ChronoMailError:
                 continue
     return None
+
+
+def _copy_meant(engine: Engine, kind: CollectionKind, parameters: SourceParameters, uid: str) -> _Stored | None:
+    """The copy an answer changes: the event right-clicked when it is in a calendar of yours, else the one your calendars hold of that item (D-310)."""
+    if parameters.event and uid:
+        with located(engine, parameters.event, CollectionKind.EVENTS) as found:
+            if is_yours(found.collection):
+                return _Stored(found.account, found.collection, found.item.item_id, found.store.get(found.item.collection, parameters.event))
+    return _stored(engine, kind, uid)
 
 
 def _kept_declined(engine: Engine, stored: _Stored | None) -> _Stored | None:
@@ -381,7 +398,7 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
     chosen = ""
     receiving = opened.receiving.account.account_id if opened.receiving is not None else ""
     uid = opened.message.uid if not parameters.kind and opened.message.kind != "freebusy" else ""
-    stored = _stored(engine, kind, uid)
+    stored = _copy_meant(engine, kind, parameters, uid)
     declined = _kept_declined(engine, stored)
     stored = None if declined is not None else stored
     for account in pim_account_ids(engine):
@@ -402,17 +419,57 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
     return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes, series_clashes, declined is not None and opened.message.method != "ADD")
 
 
-def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:
+def _invitation_in(mailbox: Mailbox, row: IndexedMessage, opened: _Opened, stored: str, one_date: bool) -> _Opened | None:
+    """`opened` with this mail, when it is the invitation of the copy answered."""
+    reference = mailbox.reference(row.folder, row.store_id)
+    parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
+    found = calendar_part(parsed.attachments)
+    data = calendar_text(parsed.attachments[found[0]]) if found is not None else ""
+    if not data or len(data) > MAXIMUM_INVITATION_BYTES:
+        return None
+    items = text_items(data)
+    for uid, text in zip(items.uids, items.texts, strict=True):
+        meeting = meeting_in_mail(text, stored, opened.message, one_date) if uid == opened.message.uid else None
+        said = read_calendar_message(meeting) if meeting is not None else None
+        if meeting is not None and said is not None:
+            senders = tuple(address.address for address in parsed.from_addresses)
+            marks = mailbox.current_flags(reference) if len(items.texts) == 1 else None
+            return replace(opened, message_id=parsed.message_id, senders=senders, marks=marks, source=("/".join(row.folder), row.store_id), account=mailbox.settings.account.account_id, meeting=meeting, title=said.title)
+    return None
+
+
+def _with_its_mail(engine: Engine, opened: _Opened, you: _You, stored: _Stored | None, one_date: bool) -> _Opened:
+    """An answer from the calendar with the mail the invitation came in, when the account that answers still has it: the organizer's own text goes out, nothing you
+    changed in your copy, and that mail gets the Replied mark (D-310). Only the newest mail of the organizer is read, so an answer never waits for a large mailbox."""
+    organizer = opened.message.organizer
+    if not opened.kept or organizer is None or not organizer.address or not you.account:
+        return opened
+    copy_text = stored.text if stored is not None else opened.text
+    try:
+        with open_mailbox(engine, you.account) as mailbox:
+            for row in mailbox.index.sent_by(organizer.address, MAILS_LOOKED_AT):
+                try:
+                    found = _invitation_in(mailbox, row, opened, copy_text, one_date)
+                except (ChronoMailError, OSError):  # a mail that cannot be read is not the one
+                    continue
+                if found is not None:
+                    return found
+    except (ChronoMailError, OSError, sqlite3.Error):
+        return opened
+    return opened
+
+
+def _remember(engine: Engine, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:
     """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline with no copy in a server calendar has nothing else to tell it. An answer or
     Change my answer takes an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again. `replied`: the
     server mails the answer, so nothing is sent here to set the Replied mark."""
-    if opened.marks is None or opened.message.method not in ("REQUEST", "ADD", "COUNTER", "REFRESH"):
+    if opened.marks is None or opened.source is None or opened.message.method not in ("REQUEST", "ADD", "COUNTER", "REFRESH"):
         return
     wanted = (opened.marks - ANSWER_MARKS) | ({mark} if mark is not None else frozenset[MessageFlag]()) | ({MessageFlag.REPLIED} if replied else frozenset[MessageFlag]())
     if wanted != opened.marks:
         try:
-            with open_mailbox(engine, parameters.account) as mailbox:
-                mailbox.set_flags(mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message)), wanted)
+            with open_mailbox(engine, opened.account) as mailbox:
+                mailbox.set_flags(mailbox.reference(mailbox.folder(opened.source[0]), _check_id(opened.source[1])), wanted)
         except ChronoMailError:
             return
 
@@ -447,7 +504,8 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     you = _you(engine, opened) if message.method != "PUBLISH" else _You("", "", "")  # a shared item asks no address
     kind = _kind(message)
     item_word, home = _item(message), _home(kind)
-    stored = _stored(engine, kind, message.uid)
+    stored = _copy_meant(engine, kind, parameters, message.uid)
+    opened = opened if parameters.dry else _with_its_mail(engine, opened, you, stored, bool(parameters.occurrence))
     declined = _kept_declined(engine, stored) if parameters.answer != "DECLINED" else None
     stored = None if declined is not None else stored
     adding = message.method == "ADD"
@@ -476,9 +534,9 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             if text is None:
                 raise UsageError("The occurrence could not be marked as declined")
             if stored.account == LOCAL_ACCOUNT_ID and message.occurrence is None and opened.marks is not None:
-                text = with_kept_mail(text, parameters.account, opened.message_id)  # its mark goes when the copy goes
+                text = with_kept_mail(text, opened.account, opened.message_id)  # its mark goes when the copy goes
         if kind == CollectionKind.EVENTS and message.method != "PUBLISH" and stored is None:
-            keeping = declined_copy(opened.text, you.address, you.name, parameters.account, opened.message_id)
+            keeping = declined_copy(opened.text, you.address, you.name, opened.account, opened.message_id)
     else:
         if stored is not None and message.method == "PUBLISH":  # a shared item kept already: a newer version as sent, nothing made up
             if not is_newer(message, (read_calendar_message(stored.text) or message).sequence, None):
@@ -552,8 +610,8 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply, mail_to or None)
         draft_account = you.account
     copy_tells = text is not None and target is not None and (target[0] != LOCAL_ACCOUNT_ID or message.occurrence is not None or adding)  # only a whole copy in Local Folders knows its mail, and can take the mark off when it goes
-    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" and not copy_tells else None, mails.server and message.method != "PUBLISH")
-    return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account, waiting)
+    _remember(engine, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" and not copy_tells else None, mails.server and message.method != "PUBLISH")
+    return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account, waiting, uid=message.uid)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -615,7 +673,7 @@ def _answer_text(opened: _Opened, you: _You, answer: str, copy_text: str | None 
     organizer = opened.message.organizer
     if not to and (organizer is None or not organizer.address):
         raise UsageError("This invitation names no organizer to answer")
-    reply = reply_text(opened.text, you.address, answer, datetime.now(UTC), you.name, copy_text, to)  # each date as your copy says
+    reply = reply_text(opened.meeting or opened.text, you.address, answer, datetime.now(UTC), you.name, copy_text, to, bare=opened.kept and not opened.meeting)  # each date as your copy says
     if reply is None:
         raise UsageError("The invitation could not be read")
     return reply
@@ -628,7 +686,7 @@ def _save_mail(engine: Engine, opened: _Opened, account: str, word: str, body: s
         if organizer is None or not organizer.address:
             raise UsageError("This calendar message names no organizer to write to")
         to = formataddr((organizer.name, organizer.address))  # quoted: "Doe, John" stays one name
-    subject = word if opened.message.kind == "freebusy" else f"{word}: {opened.message.title or '(no title)'}"
+    subject = word if opened.message.kind == "freebusy" or (opened.kept and not opened.meeting) else f"{word}: {(opened.title if opened.kept else opened.message.title) or '(no title)'}"
     saved = draft_save(engine, DraftSaveParameters(
         account=account, to=(to,), subject=subject, body=body, kind="reply", source_folder=opened.source[0] if opened.source else None,
         source_message=opened.source[1] if opened.source else None,
@@ -735,6 +793,7 @@ class DelegateResult:
     request_message: str  # the invitation passed on to the delegate
     answer_message: str  # the answer DELEGATED to the organizer; "": the calendar's server mails it, or nobody does
     server_answers: bool = False  # the calendar's server tells the organizer
+    uid: str = ""  # of the item: every open card of it shows what your calendar holds now
 
 
 def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> DelegateResult:
@@ -753,11 +812,13 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     organizer = message.organizer
     if organizer is None or not organizer.address:
         raise UsageError("This invitation names no organizer to answer")
-    texts = delegated_texts(opened.text, you.address, delegate, datetime.now(UTC), you.name)
+    stored = _copy_meant(engine, _kind(message), parameters, message.uid)
+    opened = _with_its_mail(engine, opened, you, stored, bool(parameters.occurrence))
+    meeting = opened.meeting or (shared_text(opened.text) if opened.kept else opened.text)
+    texts = delegated_texts(meeting, you.address, delegate, datetime.now(UTC), you.name, bare=opened.kept and not opened.meeting) if meeting is not None else None
     if texts is None:
         raise UsageError("The invitation could not be read")
     request, answer = texts
-    stored = _stored(engine, _kind(message), message.uid)
     adding = message.method == "ADD"
     declined = _kept_declined(engine, stored) if not adding else None
     stored = None if declined is not None else stored
@@ -801,15 +862,15 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     task = message.kind == "task"
     asked = f"{who} asks you to do this task in their place.\n" if task else f"{who} asks you to go to this meeting in their place.\n"
     if not parameters.mail:
-        _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
-        return DelegateResult(you.account, "", "", "")
+        _remember(engine, opened, MessageFlag.INVITE_DELEGATED)
+        return DelegateResult(you.account, "", "", "", uid=message.uid)
     passed = _save_mail(engine, opened, you.account, "Invitation", asked, request, to=delegate)
-    _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
+    _remember(engine, opened, MessageFlag.INVITE_DELEGATED)
     if not mails.chrono:  # the server mails your answer DELEGATED itself, or you want no such mails (D-310)
-        return DelegateResult(you.account, passed[0], passed[1], "", mails.server)
+        return DelegateResult(you.account, passed[0], passed[1], "", mails.server, uid=message.uid)
     told = f"{who} has asked {delegate} to do this task in their place.\n" if task else f"{who} has asked {delegate} to go to this meeting in their place.\n"
     answered = _save_mail(engine, opened, you.account, "Delegated", told, answer)
-    return DelegateResult(you.account, passed[0], passed[1], answered[1])
+    return DelegateResult(you.account, passed[0], passed[1], answered[1], uid=message.uid)
 
 
 Organize = Literal["take", "accept_proposal", "decline_proposal", "send_latest"]
@@ -928,7 +989,7 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     stored_in = _label(engine, stored.account, stored.info) if stored is not None else ""
     if not mailing or calendar is None:
         if parameters.action == "decline_proposal":
-            _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED)  # refused without a mail: handled all the same
+            _remember(engine, opened, MessageFlag.INVITE_DECLINED)  # refused without a mail: handled all the same
         return OrganizeResult(done, stored_in, server)
     title = (base.title if base is not None else "") or message.title or "(no title)"  # your meeting's: a request for the latest version has none
     body = {"Changed": f"The {item_word} has changed.\n", "Proposal declined": f"Thank you for your proposal; the {item_word} stays as it is.\n",
@@ -938,7 +999,7 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
         source_message=opened.source[1] if opened.source else None, in_reply_to=opened.message_id, references=(opened.message_id,) if opened.message_id else (), calendar=calendar,
     ))
     if parameters.action != "accept_proposal":  # (an accepted proposal shows in the meeting itself)
-        _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.action == "decline_proposal" else MessageFlag.INVITE_SENT)
+        _remember(engine, opened, MessageFlag.INVITE_DECLINED if parameters.action == "decline_proposal" else MessageFlag.INVITE_SENT)
     return OrganizeResult(done, stored_in, server, own.account.account_id, saved.folder, saved.message_id)
 
 
@@ -959,7 +1020,7 @@ def invitation_reopen(engine: Engine, parameters: SourceParameters) -> ReopenRes
         return ReopenResult(False, True)
     you = _you(engine, opened)
     stored = _stored(engine, _kind(message), message.uid)
-    _remember(engine, parameters, opened, None)
+    _remember(engine, opened, None)
     if stored is None:
         return ReopenResult(False)
     text = ""  # the whole copy goes

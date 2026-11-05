@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.555"
+__version__ = "itip.py 4.4.556"
 
 # --- Version history ----------------------------------------------------
+# v4.4.556: What goes out of an answer from the calendar: meeting_in_mail, the organizer's own text from the mail; shared_text; reply_text can leave out title and time; no server mark in a mail (D-310)
 # v4.4.555: An update is copied into the event you keep, also at Accept; a date it writes itself keeps its time; removed dates are capped and compared as sets; your deleted dates are no change of time; a cancellation sets Cancelled, cancelled_in as it leaves it; Accept of a copy a server reset takes its free mark off; with_organizer (D-310)
 # v4.4.554: A declined event stays in its copy: merged_answer answers every date on all of it, what you declined and now attend blocks your time again; with_kept_mail (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -296,7 +297,8 @@ def you_declined(text: str, addresses: Collection[str]) -> bool:
 
 
 def asked_again(stored: str, occurrence: Moment | None) -> str | None:
-    """A kept item as the invitation it was, to answer it from the calendar: the whole item, or (occurrence) that one date, also one taken out of the series."""
+    """A kept item as the invitation it was, to answer it from the calendar: the whole item, or (occurrence) that one date, also one taken out of the series.
+    It is your copy, with what you changed in it: what goes out comes from meeting_in_mail or shared_text."""
     calendar = _parse(stored)
     main = next((each for each in _items_of(calendar) if each.get("RECURRENCE-ID") is None), None) if calendar is not None else None
     if calendar is None:
@@ -320,6 +322,44 @@ def asked_again(stored: str, occurrence: Moment | None) -> str | None:
                 date_item.add("DTEND", moved_like_the_start(end, start, occurrence))
             date_item.add("RECURRENCE-ID", occurrence)
         calendar.subcomponents = [*(each for each in calendar.subcomponents if each.name == "VTIMEZONE"), date_item]
+    return calendar.to_ical().decode("utf-8")
+
+
+def _organizers_date(mail_text: str, stored: str, occurrence: Moment) -> Moment:
+    """A date of your copy as a date of the organizer's series: a series you moved yourself has its dates at your time."""
+    sent, kept = _parse(mail_text), _parse(stored)
+    series, own = (_main_of(sent) if sent is not None else None), (_main_of(kept) if kept is not None else None)
+    theirs, yours = (_moment(series, "DTSTART") if series is not None else None), (_moment(own, "DTSTART") if own is not None else None)
+    return moved_like_the_start(occurrence, yours, theirs) if theirs is not None and yours is not None else occurrence
+
+
+def meeting_in_mail(mail_text: str, stored: str, asked: CalendarMessage, one_date: bool) -> str | None:
+    """The organizer's own text of what you answer from the calendar (`asked`, from your copy `stored`), in an item of a mail: an invitation of the same
+    version from the same organizer, about the same dates. Nothing you changed in your copy is in it (D-310). None: this mail is not the one."""
+    sent = read_calendar_message(mail_text)
+    if sent is None or sent.method != "REQUEST" or sent.organizer is None or asked.organizer is None or sent.organizer.address.strip().lower() != asked.organizer.address.strip().lower():
+        return None
+    moment = _organizers_date(mail_text, stored, asked.occurrence) if one_date and asked.occurrence is not None else None
+    if moment is not None and not holds_occurrence(mail_text, moment):
+        return None
+    meeting = asked_again(mail_text, moment)
+    found = read_calendar_message(meeting) if meeting is not None else None
+    if meeting is None or found is None or found.sequence != asked.sequence or (moment is None and not _same_moment(found.occurrence, asked.occurrence)):
+        return None
+    if moment is None and asked.occurrence is not None and sorted(map(str, occurrences_of(meeting))) != sorted(map(str, occurrences_of(stored))):
+        return None  # a copy of only some dates, answered as a whole: a mail speaks for it only when it names them all
+    return meeting
+
+
+def shared_text(text: str) -> str | None:
+    """Your copy without what is yours alone: reminders, tags, colour, free or busy and every private mark. All that is left of a meeting whose mail is gone."""
+    calendar = _parse(text)
+    if calendar is None:
+        return None
+    for item in _items_of(calendar):
+        item.subcomponents = [each for each in item.subcomponents if each.name != "VALARM"]
+        for key in [each for each in item if each.upper() in ("CATEGORIES", "COLOR", "TRANSP") or each.upper().startswith("X-")]:
+            item.pop(key)
     return calendar.to_ical().decode("utf-8")
 
 
@@ -375,14 +415,23 @@ def _delegated_from(component: icalendar.Component, address: str) -> str:
     return next((str(person.params["DELEGATED-FROM"]) for person in people if _address_of(person) == address and person.params.get("DELEGATED-FROM")), "")
 
 
-def reply_text(message_text: str, address: str, answer: str, now: datetime, name: str = "", copy_text: str | None = None, organizer: str = "") -> str | None:
+def _no_server_marks(calendar: icalendar.Calendar) -> None:
+    """What your copy tells its calendar server (RFC 6638) means nothing in a mail."""
+    for line in _scheduled_lines(calendar):
+        for key in ("SCHEDULE-AGENT", "SCHEDULE-STATUS", "SCHEDULE-FORCE-SEND"):
+            line.params.pop(key, None)
+
+
+def reply_text(message_text: str, address: str, answer: str, now: datetime, name: str = "", copy_text: str | None = None, organizer: str = "", bare: bool = False) -> str | None:
     """Your answer to the organizer (METHOD:REPLY, RFC 5546 section 3.2.3): per item its UID, the SEQUENCE of the request, DTSTAMP now, the
     organizer, your attendee line with your answer, the RECURRENCE-ID of one occurrence, and its title and time to read. None when the text
-    holds nothing to answer. organizer: who it goes to, for an item that names nobody."""
+    holds nothing to answer. organizer: who it goes to, for an item that names nobody. bare: the text is your own copy, whose title and time may be
+    your own: they stay out, as the RFC allows."""
     message = _parse(message_text)
     if message is None or not _items_of(message):
         return None
     _name_added_dates(message)
+    _no_server_marks(message)
     reply = icalendar.Calendar()
     reply.add("PRODID", "-//Chrono Mail//Chrono Mail//EN")
     reply.add("VERSION", "2.0")
@@ -394,7 +443,7 @@ def reply_text(message_text: str, address: str, answer: str, now: datetime, name
         reply.add_component(zone)
     for item in _items_of(message):
         answer_item = icalendar.Event() if item.name == "VEVENT" else icalendar.Todo()
-        for key in ("UID", "SEQUENCE", "RECURRENCE-ID", "ORGANIZER", "SUMMARY", "DTSTART", "DTEND", "DUE"):
+        for key in ("UID", "SEQUENCE", "RECURRENCE-ID", "ORGANIZER", *(() if bare else ("SUMMARY", "DTSTART", "DTEND", "DUE"))):
             value = item.get(key)
             if value is not None and not isinstance(value, list):
                 answer_item[key] = value
@@ -848,13 +897,15 @@ def refresh_text(message_text: str, address: str, now: datetime) -> str | None:
     return refresh.to_ical().decode("utf-8")
 
 
-def delegated_texts(message_text: str, address: str, delegate: str, now: datetime, name: str = "") -> tuple[str, str] | None:
+def delegated_texts(message_text: str, address: str, delegate: str, now: datetime, name: str = "", bare: bool = False) -> tuple[str, str] | None:
     """Delegating an invitation (RFC 5546 section 3.2.2.3): the request passed on to the delegate (your line DELEGATED with DELEGATED-TO, a line
-    for the delegate with DELEGATED-FROM and RSVP), and the answer to the organizer (your line DELEGATED, DELEGATED-TO). None: nothing to pass on."""
+    for the delegate with DELEGATED-FROM and RSVP), and the answer to the organizer (your line DELEGATED, DELEGATED-TO). None: nothing to pass on.
+    bare: as reply_text."""
     message = _parse(message_text)
     if message is None or not _items_of(message):
         return None
     _name_added_dates(message)
+    _no_server_marks(message)
     you, other = address.strip().lower(), delegate.strip().lower()
     for item in _items_of(message):
         _set_answer(item, you, "DELEGATED", name)
@@ -870,7 +921,7 @@ def delegated_texts(message_text: str, address: str, delegate: str, now: datetim
         item.add("ATTENDEE", line)
     message.pop("METHOD", None)
     message.add("METHOD", "REQUEST")
-    reply = reply_text(message_text, address, "DELEGATED", now, name)
+    reply = reply_text(message_text, address, "DELEGATED", now, name, bare=bare)
     if reply is None:
         return None
     answered = _parse(reply)

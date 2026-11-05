@@ -50,9 +50,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.539"
+__version__ = "index.py 4.4.556"
 
 # --- Version history ----------------------------------------------------
+# v4.4.556: sent_by: the newest mail of one sender, for the mail of an answer from the calendar (D-310)
 # v4.4.539: format 20: a folder is a row of its own and each message holds its id: a rename or a move of a folder changes one row, whatever the
 #           size of its tree; paths are made from the rows (_FolderTree); an older index is upgraded in place in a first step, the sort indexes
 #           and the removal of the old rows follow one at a time (sort_indexes_to_make, make_sort_index) (D-314)
@@ -814,6 +815,11 @@ class Index(IndexDatabase):
 
     def with_message_id(self, message_id: str) -> list[IndexedMessage]:
         rows = self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.message_id = ?", (message_id,)).fetchall()
+        return self._messages_of(rows)
+
+    def sent_by(self, address: str, limit: int) -> list[IndexedMessage]:
+        """The newest messages from this address, in every folder."""
+        rows = self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.sender_address = ? COLLATE NOCASE ORDER BY m.date DESC LIMIT ?", (address, max(0, limit))).fetchall()
         return self._messages_of(rows)
 
     def thread_members(self, thread_key: str) -> list[IndexedMessage]:

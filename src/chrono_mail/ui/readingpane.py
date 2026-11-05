@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.555"
+__version__ = "readingpane.py 4.4.556"
 
 # --- Version history ----------------------------------------------------
+# v4.4.556: An answer from the calendar refreshes every open card of that item (D-310)
 # v4.4.555: Cancel in calendar sets Cancelled; the organizer's address is stored at Send and Don't send, and the window closes with it (D-310)
 # v4.4.554: Change my answer leaves a declined event where it is; Delegate on a copy in Local Folders picks a calendar first (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
@@ -660,15 +661,16 @@ class ReadingPane(QObject):
             return
 
         def delegated(result: DelegateResult) -> None:
+            shown = changed(place, uid=result.uid)
             told = " The calendar server tells the organizer." if result.server_answers else " Nothing goes to the organizer: confirmation emails are off for this account."
             if not result.request_message:
                 self._tell(reader, "You passed the invitation on. Nobody got a mail.")
             else:
                 self._tell(reader, "The invitation for them and your answer to the organizer are on their way." if result.answer_message else f"The invitation for them is on its way.{told}")
-                self._composing.send_calendar_mail(result.account, result.folder, result.request_message, question.note, lambda: self._show_again(reader, place))
+                self._composing.send_calendar_mail(result.account, result.folder, result.request_message, question.note, lambda: self._show_again(reader, shown))
             if result.answer_message:  # "": the calendar's server mails your answer
-                self._composing.send_calendar_mail(result.account, result.folder, result.answer_message, question.note, lambda: self._show_again(reader, place))
-            self._show_again(reader, place)
+                self._composing.send_calendar_mail(result.account, result.folder, result.answer_message, question.note, lambda: self._show_again(reader, shown))
+            self._show_again(reader, shown)
 
         self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address, mail=choice is Choice.SEND, calendar=calendar), delegated,
                           lambda error: self._tell(reader, "Could not pass the invitation on", error), owner=self)
@@ -708,7 +710,7 @@ class ReadingPane(QObject):
 
         self._backend.ask(INVITATION_APPLY, changed(parameters, dry=True), checked, refused, owner=self)
 
-    def _refresh_others(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
+    def _refresh_others(self, reader: ReaderWidget | InvitationWindow | None, place: CalendarSource) -> None:
         """Every other open window of that mail or file says what your calendar holds now (D-310): the reading pane, message windows, card windows."""
         where = (place.account, place.folder, place.message)
         for window, source in self._card_windows:
@@ -731,9 +733,24 @@ class ReadingPane(QObject):
 
         self._backend.ask(MESSAGE_SHOW, MessageParameters(*where), again, lambda error: None, owner=self)
 
+    def _refresh_cards_of(self, uid: str) -> None:
+        """An answer from the calendar: every open card of that item says what your calendar holds now, whichever mail or file it shows (D-310)."""
+        def shows(info: InvitationInfo | None) -> bool:
+            return info is not None and (info.uid == uid or any(part.uid == uid for part in info.parts))
+
+        places = [source for window, source in self._card_windows if isValid(window) and shows(window.invitation)]
+        if self.shown is not None and shows(self.reader.invitation):
+            places.append(CalendarSource(*self.shown))
+        places += [CalendarSource(*window.where) for window in self.message_windows if shows(window.reader.invitation)]
+        for place in dict.fromkeys(places):
+            self._refresh_others(None, place)
+
     def _show_again(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
         """The message shown again in its reader, when it still shows it: the card says what your calendar holds now. A window stays open: only the
         person closes it, or Send and Don't send of the organizer's address (D-310)."""
+        if place.event:
+            self._refresh_cards_of(place.uid)
+            return
         account, folder, message_id = place.account, place.folder, place.message
         self._refresh_others(reader, place)
         if not isValid(reader):
@@ -813,13 +830,14 @@ class ReadingPane(QObject):
         organizer_asked = False
 
         def answered(result: AnswerResult) -> None:
+            shown = changed(place, uid=result.uid)
             words = {"ACCEPTED": "accepted", "TENTATIVE": "accepted tentatively", "DECLINED": "declined"}[result.answer]
             where = f" It is in {result.stored_in}." if result.stored_in else ""
             mailer = (" The calendar server sends your answer when the connection is back." if result.waiting else " The calendar server sends your answer.") if result.server_answers else ""
             self._tell(reader, f"Added to your {home}.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, place))
-            self._show_again(reader, place)  # the card says what your calendar holds now
+                self._composing.send_calendar_mail(result.draft_account, result.draft_folder, result.draft_message, note, lambda: self._show_again(reader, shown))
+            self._show_again(reader, shown)  # the card says what your calendar holds now
             if organizer_asked and isValid(reader) and isinstance(reader, InvitationWindow):
                 reader.close()  # Send and Don't send of the organizer's address end the matter: the window closes with the dialog (D-310)
 
