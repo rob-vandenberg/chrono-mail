@@ -19,9 +19,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.526"
+__version__ = "test_engine_invitation_mailing.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: A Decline is one write that stays in the calendar; the waiting delete is tested through Change my answer (D-310)
 # v4.4.526: an answer says it waits for the connection (D-310)
 # v4.4.520: an answer the server mails sets the Replied mark (D-310)
 # v4.4.516: Change my answer tells nobody (D-310)
@@ -83,14 +84,14 @@ def test_when_chrono_mail_sends_the_server_is_told_to_stay_silent(setup: Setup, 
 
 
 def test_with_the_box_off_nothing_goes_out_also_on_a_decline(setup: Setup, server: FakeDav) -> None:  # noqa: F811
-    """The server deletes from what it holds, so a copy kept from when the server mailed is told to stay silent first."""
+    """A copy kept from when the server mailed is told to stay silent, in the one write of the answer: the event stays in its calendar."""
     message = invited(setup)
     answer(setup, message, "ACCEPTED", calendar_id(setup))
     settings(setup, invitation_answers="none")
     server.requests.clear()
     result = answer(setup, message, "DECLINED")
-    assert not result.server_answers and drafts(setup) == [] and on_server(server) == []
-    assert writes(server) == ["PUT", "DELETE"]
+    assert not result.server_answers and drafts(setup) == []
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0] and "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
 
 
 def test_a_copy_told_to_stay_silent_is_told_otherwise_when_the_server_mails_again(setup: Setup, server: FakeDav) -> None:  # noqa: F811
@@ -104,8 +105,8 @@ def test_a_copy_told_to_stay_silent_is_told_otherwise_when_the_server_mails_agai
     answer(setup, message, "ACCEPTED")
     settings(setup, invitation_answers="server")
     server.requests.clear()
-    assert answer(setup, message, "DECLINED").server_answers  # the mark is off before the delete: else the organizer gets no answer
-    assert writes(server) == ["PUT", "DELETE"] and drafts(setup) == []
+    assert answer(setup, message, "DECLINED").server_answers  # the mark goes with the answer: else the organizer gets no answer
+    assert writes(server) == ["PUT"] and "SCHEDULE-AGENT" not in on_server(server)[0] and drafts(setup) == []
 
 
 def test_a_server_that_always_mails_leaves_no_choice(setup: Setup, server: FakeDav) -> None:  # noqa: F811
@@ -114,12 +115,12 @@ def test_a_server_that_always_mails_leaves_no_choice(setup: Setup, server: FakeD
     assert answer(setup, message, "ACCEPTED", calendar_id(setup)).server_answers
     server.requests.clear()
     assert answer(setup, message, "DECLINED").server_answers
-    assert writes(server) == ["DELETE"] and drafts(setup) == []
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0] and drafts(setup) == []
 
 
 def test_another_address_on_a_server_that_always_mails_gets_one_correct_answer(setup: Setup, server: FakeDav) -> None:  # noqa: F811
-    """Measured on Kerio: for an address that is not its user it mails nothing on Accept, and on a delete a DECLINED in its user's name, which
-    is no answer of the invited person. Without an organizer the delete mails nothing, so Chrono Mail's answer is the one mail."""
+    """Measured on Kerio: for an address that is not its user it mails nothing on Accept nor on a saved Decline, so Chrono Mail's answer is the one mail.
+    On a delete it mails a DECLINED in its user's name, which is no answer of the invited person: without an organizer the delete mails nothing."""
     settings(setup, dav_always_answers=True, dav_addresses=("someone-else@example.com",))
     message = invited(setup)
     accepted = answer(setup, message, "ACCEPTED", calendar_id(setup))
@@ -127,7 +128,7 @@ def test_another_address_on_a_server_that_always_mails_gets_one_correct_answer(s
     server.requests.clear()
     declined = answer(setup, message, "DECLINED")
     assert not declined.server_answers and declined.draft_message is not None
-    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == []
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0] and "ORGANIZER" in on_server(server)[0]
     bare = without_organizer(calendar_text())
     assert bare is not None and "ORGANIZER" not in bare and "ATTENDEE" not in bare and "SUMMARY:Choice of colours" in bare
 
@@ -170,7 +171,7 @@ def test_a_refused_delete_leaves_the_meeting_as_it_was(setup: Setup, server: Fak
 
     monkeypatch.setattr(ItemGateway, "delete", refused)
     with pytest.raises(UsageError):
-        answer(setup, message, "DECLINED")
+        reopen(setup, message)
     assert "ORGANIZER" in on_server(server)[0] and "ATTENDEE" in on_server(server)[0]
 
 
@@ -190,10 +191,19 @@ def put_texts(fake: FakeDav, monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def declined_offline(setup: Setup, fake: FakeDav, message: str) -> object:  # noqa: F811
     fake.writes_failing = True
     result = answer(setup, message, "DECLINED")
-    assert calendar_items(setup) == [] and on_server(fake) != []  # gone here at once, still on the server
+    assert "DECLINED" in calendar_items(setup)[0] and "DECLINED" not in on_server(fake)[0]  # hidden here at once, on the server when the connection is back
     fake.writes_failing = False
     fake.requests.clear()
     return result
+
+
+def reopened_offline(setup: Setup, fake: FakeDav, message: str) -> None:  # noqa: F811
+    """Change my answer on an accepted meeting: its copy goes here at once and waits to go on the server."""
+    fake.writes_failing = True
+    reopen(setup, message)
+    assert calendar_items(setup) == [] and on_server(fake) != []
+    fake.writes_failing = False
+    fake.requests.clear()
 
 
 def test_offline_with_server_chosen_the_server_mails_the_decline_when_the_connection_is_back(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
@@ -206,8 +216,8 @@ def test_offline_with_server_chosen_the_server_mails_the_decline_when_the_connec
     assert result.server_answers and result.waiting and drafts(setup) == []  # type: ignore[attr-defined]
     sent = put_texts(server, monkeypatch)
     call(setup.engine, "dav.sync", account=setup.account_id)
-    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and drafts(setup) == []
-    assert "SCHEDULE-AGENT" not in sent[0]  # the mark is off first: else the server stays silent and nobody tells the organizer
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0] and drafts(setup) == []
+    assert "SCHEDULE-AGENT" not in sent[0]  # the mark is off: else the server stays silent and nobody tells the organizer
 
 
 def test_offline_with_chrono_mail_chosen_the_server_stays_silent_and_one_mail_goes(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
@@ -219,14 +229,14 @@ def test_offline_with_chrono_mail_chosen_the_server_stays_silent_and_one_mail_go
     assert len(drafts(setup)) == 1
     sent = put_texts(server, monkeypatch)
     call(setup.engine, "dav.sync", account=setup.account_id)
-    assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and "SCHEDULE-AGENT=CLIENT" in sent[0]
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0] and "SCHEDULE-AGENT=CLIENT" in sent[0]
 
 
 def test_offline_the_organizer_is_taken_off_first_on_a_server_that_mails_whatever_it_is_told(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     settings(setup, dav_always_answers=True, dav_addresses=("someone-else@example.com",))
     message = invited(setup)
     answer(setup, message, "ACCEPTED", calendar_id(setup))
-    declined_offline(setup, server, message)
+    reopened_offline(setup, server, message)
     sent = put_texts(server, monkeypatch)
     call(setup.engine, "dav.sync", account=setup.account_id)
     assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and "ORGANIZER" not in sent[0]
@@ -247,7 +257,7 @@ def test_a_delete_still_failing_after_the_copy_went_sends_only_the_delete_next_t
     message = invited(setup)
     answer(setup, message, "ACCEPTED", calendar_id(setup))
     settings(setup, invitation_answers="chrono")
-    declined_offline(setup, server, message)
+    reopened_offline(setup, server, message)
     original = DavClient.delete
 
     def busy(client: DavClient, href: str, etag: str) -> None:
@@ -266,6 +276,18 @@ def test_a_delete_still_failing_after_the_copy_went_sends_only_the_delete_next_t
     assert writes(server) == ["DELETE"] and on_server(server) == []
 
 
+def test_a_meeting_changed_on_the_server_while_change_my_answer_waited_is_a_conflict(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    settings(setup, invitation_answers="chrono")
+    reopened_offline(setup, server, message)
+    ((href, (_, text)),) = server.collections["events"].items.items()
+    server.collections["events"].items[href] = ("changed-there", text.replace("SUMMARY:", "SUMMARY:Moved "))
+    call(setup.engine, "dav.sync", account=setup.account_id)
+    assert "DELETE" not in writes(server) and len(on_server(server)) == 1
+    assert [conflict.reason for conflict in call(setup.engine, "conflict.list").conflicts] == ["changed_on_server"]
+
+
 def test_a_meeting_changed_on_the_server_while_the_decline_waited_is_a_conflict(setup: Setup, server: FakeDav) -> None:  # noqa: F811
     message = invited(setup)
     answer(setup, message, "ACCEPTED", calendar_id(setup))
@@ -274,11 +296,23 @@ def test_a_meeting_changed_on_the_server_while_the_decline_waited_is_a_conflict(
     ((href, (_, text)),) = server.collections["events"].items.items()
     server.collections["events"].items[href] = ("changed-there", text.replace("SUMMARY:", "SUMMARY:Moved "))
     call(setup.engine, "dav.sync", account=setup.account_id)
-    assert "DELETE" not in writes(server) and len(on_server(server)) == 1
-    assert [conflict.reason for conflict in call(setup.engine, "conflict.list").conflicts] == ["changed_on_server"]
+    assert "SUMMARY:Moved" in on_server(server)[0] and "DECLINED" not in on_server(server)[0]  # the server's stays until the person settles it
+    assert [conflict.reason for conflict in call(setup.engine, "conflict.list").conflicts] == ["clash"]
 
 
-def test_a_decline_refused_twice_keeps_the_meeting_and_a_conflict_until_it_is_settled(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+def test_a_decline_the_server_refuses_leaves_the_meeting_as_it_was_and_mails_nothing(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    """Server first: the event is hidden only when the server confirms."""
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    before = calendar_items(setup)
+    settings(setup, invitation_answers="chrono")
+    server.writes_refused = True
+    with pytest.raises(UsageError):
+        answer(setup, message, "DECLINED")
+    assert calendar_items(setup) == before and "DECLINED" not in on_server(server)[0] and drafts(setup) == []
+
+
+def test_change_my_answer_refused_twice_keeps_the_meeting_and_a_conflict_until_it_is_settled(setup: Setup, server: FakeDav, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     message = invited(setup)
     answer(setup, message, "ACCEPTED", calendar_id(setup))
     original = calendar_items(setup)
@@ -291,9 +325,9 @@ def test_a_decline_refused_twice_keeps_the_meeting_and_a_conflict_until_it_is_se
 
     monkeypatch.setattr(DavClient, "delete", refused)
     with pytest.raises(UsageError, match="kept here as it was.*Settings > Sync conflicts"):
-        answer(setup, message, "DECLINED")
+        reopen(setup, message)
     assert calendar_items(setup) == original and "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
-    assert drafts(setup) == []  # nothing was declined, so nothing is mailed
+    assert drafts(setup) == []  # nobody is told
     (conflict,) = call(setup.engine, "conflict.list").conflicts
     assert conflict.reason == "refused"
     call(setup.engine, "dav.sync", account=setup.account_id)
@@ -306,16 +340,17 @@ def test_a_decline_refused_twice_keeps_the_meeting_and_a_conflict_until_it_is_se
     assert call(setup.engine, "conflict.list").conflicts == () and len(calendar_items(setup)) == 1
 
 
-def test_a_decline_before_the_meeting_reached_the_server_is_mailed_by_chrono_mail(setup: Setup, server: FakeDav) -> None:  # noqa: F811
-    """P7: Accept offline, Decline before the server saw it: it never hears of the meeting, so it cannot answer."""
+def test_a_decline_before_the_meeting_reached_the_server_goes_there_as_one_write(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    """Accept offline, Decline before the server saw it: the one change that waits says Declined, and the server mails that, as an Accept that waits."""
     message = invited(setup)
     server.writes_failing = True
     assert answer(setup, message, "ACCEPTED", calendar_id(setup)).server_answers  # sent later, then the server mails
     declined = answer(setup, message, "DECLINED")
-    assert not declined.server_answers and declined.draft_message is not None and len(drafts(setup)) == 1
+    assert declined.server_answers and declined.draft_message is None and drafts(setup) == []
     server.writes_failing = False
+    server.requests.clear()
     call(setup.engine, "dav.sync", account=setup.account_id)
-    assert on_server(server) == []
+    assert writes(server) == ["PUT"] and "DECLINED" in on_server(server)[0]
 
 
 def test_a_server_that_announces_nothing_mails_only_when_the_person_chose_it(setup: Setup, server: FakeDav) -> None:  # noqa: F811

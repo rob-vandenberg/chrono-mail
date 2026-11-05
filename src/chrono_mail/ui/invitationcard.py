@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.534"
+__version__ = "invitationcard.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: The mail of a declined event says where it is hidden; Change my answer on it brings back the four answers (D-310)
 # v4.4.534: the four answer buttons are gradients (Accept green, Tentative orange, Delegate blue, Decline red) and stand in that order (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -259,12 +260,16 @@ def _kept_text(info: InvitationInfo) -> str:
         return f"A newer version is in {info.stored_in}."
     asks = info.method in ("REQUEST", "ADD") and not (info.organizer is not None and info.organizer.you)
     answer = _YOU.get(info.your_answer, "You have not answered yet." if asks else "")
+    if info.your_answer == "DECLINED" and info.kind == "event" and info.version != "newer":
+        return f"{answer} It is in your {info.stored_in}, marked hidden."
     return f"{answer} {_kept_in(info)}".strip() if info.version != "newer" or info.method in ("ADD", "CANCEL") else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
 def is_handled(info: InvitationInfo) -> bool:
     """An invitation counts as handled when you answered it, not when it merely is in a calendar: its answer buttons give way to Change my answer.
     An update that asks a new answer is not handled yet."""
+    if info.asked_again:
+        return False
     if info.answered_on_mail:
         return True
     if info.method == "ADD":  # (occurrence_kept: dates are still to add)
@@ -728,6 +733,15 @@ class InvitationCard(QFrame):
         self.info = replace(self.info, parts=self.info.parts + parts)
         self.blocks_changed.emit()
         QTimer.singleShot(0, self, self._want_more)
+
+    def ask_again(self, item: int) -> None:
+        """Change my answer on a declined event: nothing changed, the four answers are back on this card until it is shown anew (D-310)."""
+        if self.info is None:
+            return
+        if self.info.parts:
+            self.update_blocks(tuple(replace(part, asked_again=True) for part in self.info.parts if part.item == item), self.info.left)
+        else:
+            self.show_invitation(replace(self.info, asked_again=True))
 
     def update_blocks(self, parts: tuple[InvitationInfo, ...], left: int) -> None:
         """Only these blocks change, in their place: the person stays where they were in the list (D-310)."""

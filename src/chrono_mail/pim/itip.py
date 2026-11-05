@@ -18,9 +18,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.532"
+__version__ = "itip.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: A declined event stays in its copy: merged_answer answers every date on all of it, what you declined and now attend blocks your time again; with_kept_mail (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: more_attendees: attendees past those read are counted; keeps_busy: what blocks its time, for the warning too (D-310)
@@ -200,7 +201,8 @@ def is_newer(message: CalendarMessage, sequence: int, stamp: datetime | None) ->
 
 # --- answering (D-310) -------------------------------------------------------------------------------------------------------------------
 
-_KEPT_MAIL = "X-CHRONO-MAIL-INVITE"  # on a declined copy: the mail it came in (the copy stays on this computer)
+_KEPT_MAIL = "X-CHRONO-MAIL-INVITE"  # on a declined copy in Local Folders: the mail it came in (that copy stays on this computer)
+_SERVER_FREE = "X-MICROSOFT-CDO-BUSYSTATUS"  # how a server marks a copy free, beside TRANSP (measured on Kerio)
 ANSWERS: frozenset[str] = frozenset({"ACCEPTED", "TENTATIVE", "DECLINED", "DELEGATED"})
 
 
@@ -230,6 +232,21 @@ def _set_answer(component: icalendar.Component, address: str, answer: str, name:
     component.add("ATTENDEE", line)
 
 
+def _busy_again(component: icalendar.Component) -> None:
+    """You attend after all: the item blocks your time again. A server may have marked it free when you declined, and keeps that by itself (D-310)."""
+    for key in ("TRANSP", _SERVER_FREE):
+        component.pop(key, None)
+    component.add("TRANSP", "OPAQUE")
+
+
+def _answer_item(component: icalendar.Component, address: str, answer: str, name: str, before: icalendar.Component | None) -> None:
+    """Your answer on an item; `before` holds what you answered until now: what you declined and now attend blocks your time again."""
+    declined = before is not None and _your_answer(before, address) == "DECLINED"
+    _set_answer(component, address, answer, name)
+    if declined and answer in ("ACCEPTED", "TENTATIVE"):
+        _busy_again(component)
+
+
 def answered_copy(text: str, address: str, answer: str, name: str = "") -> str | None:
     """The calendar copy of a calendar message with your answer: without its METHOD (a stored item has none, RFC 4791), your attendee line set
     in every item of it. None when the text holds nothing to keep."""
@@ -242,14 +259,20 @@ def answered_copy(text: str, address: str, answer: str, name: str = "") -> str |
     return calendar.to_ical().decode("utf-8")
 
 
-def declined_copy(text: str, address: str, name: str, account: str, message_id: str | None) -> str | None:
-    """The copy kept of an invitation you declined (D-310), with the mail it came in, whose mark tells other computers: when the copy goes, so does the mark."""
-    copy_text = answered_copy(text, address, "DECLINED", name)
-    calendar = _parse(copy_text) if copy_text is not None and message_id else None
+def with_kept_mail(text: str, account: str, message_id: str | None) -> str:
+    """A copy in Local Folders that you declined, with the mail it came in, whose mark tells other computers: when the copy goes, so does the mark (D-310)."""
+    calendar = _parse(text) if message_id else None
     if calendar is None:
-        return copy_text
+        return text
+    calendar.pop(_KEPT_MAIL, None)
     calendar.add(_KEPT_MAIL, f"{account} {message_id}")
     return calendar.to_ical().decode("utf-8")
+
+
+def declined_copy(text: str, address: str, name: str, account: str, message_id: str | None) -> str | None:
+    """The copy of an invitation you declined with no copy anywhere, for Local Folders (D-310)."""
+    copy_text = answered_copy(text, address, "DECLINED", name)
+    return with_kept_mail(copy_text, account, message_id) if copy_text is not None else None
 
 
 def kept_mail(text: str) -> tuple[str, str] | None:
@@ -297,7 +320,8 @@ def asked_again(stored: str, occurrence: Moment | None) -> str | None:
 def merged_answer(stored: str, message_text: str, address: str, answer: str, occurrence: Moment | None, take_message: bool, name: str = "") -> str | None:
     """Your copy after answering, when one is kept already. take_message: the message is a newer version, so its items replace the kept
     ones (for one occurrence: only that occurrence); else the kept copy stays as it is (its own changes, reminders, colour) with your answer set
-    in it (for one occurrence: in that occurrence, taken from the message when the copy has no changed version of it)."""
+    in it (for one occurrence: in that occurrence, taken from the message when the copy has no changed version of it). An answer on all of it is on
+    every date, whatever you answered on one (D-310); only a delegation leaves a date you answered otherwise."""
     kept = _parse(stored)
     message = _parse(message_text)
     if kept is None or message is None:
@@ -308,13 +332,15 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     if occurrence is not None and series is not None and answer != "DECLINED":
         _without_moment(series, "EXDATE", occurrence)  # a date taken out by Change my answer comes back with its answer
 
+    every_date = answer != "DELEGATED"
     if occurrence is None and take_message:
-        _keep_own_answers(kept, message, lower)
+        if not every_date:
+            _keep_own_answers(kept, message, lower)
         old_main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
         series_answer = _your_answer(old_main, lower) if old_main is not None else ""
         before = {str(_moment(each, "RECURRENCE-ID")): each for each in _items_of(kept) if each.get("RECURRENCE-ID") is not None}
         for component in _items_of(message):
-            if component.get("RECURRENCE-ID") is None:
+            if component.get("RECURRENCE-ID") is None or every_date:
                 _set_answer(component, lower, answer, name)  # your answer to the series
                 continue
             old = before.get(str(_moment(component, "RECURRENCE-ID")))
@@ -328,9 +354,9 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     if occurrence is None:
         main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
         series_answer = _your_answer(main, lower) if main is not None else ""
-        for component in _items_of(kept):  # the series and the occurrences that followed it; one you answered otherwise keeps that
-            if component.get("RECURRENCE-ID") is None or _your_answer(component, lower) in ("", "NEEDS-ACTION", series_answer):
-                _set_answer(component, lower, answer, name)
+        for component in _items_of(kept):  # (a delegation: the series and the occurrences that followed it; one you answered otherwise keeps that)
+            if every_date or component.get("RECURRENCE-ID") is None or _your_answer(component, lower) in ("", "NEEDS-ACTION", series_answer):
+                _answer_item(component, lower, answer, name, component)
         return kept.to_ical().decode("utf-8")
     # A message about occurrences only (one or several): each of them into the copy, with your answer.
     incoming = [each for each in _items_of(message) if each.get("RECURRENCE-ID") is not None]
@@ -339,12 +365,13 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     for component in incoming:
         moment = _moment(component, "RECURRENCE-ID")
         present = [each for each in _items_of(kept) if _same_moment(_moment(each, "RECURRENCE-ID"), moment)]
+        before = present[0] if present else series
         if present and not take_message:
             for each in present:
-                _set_answer(each, lower, answer, name)
+                _answer_item(each, lower, answer, name, each)
             continue
         kept.subcomponents = [each for each in kept.subcomponents if not (each.name in ("VEVENT", "VTODO") and _same_moment(_moment(each, "RECURRENCE-ID"), moment))]
-        _set_answer(component, lower, answer, name)
+        _answer_item(component, lower, answer, name, before)
         kept.add_component(component)
     _copy_zones(message, kept)
     return kept.to_ical().decode("utf-8")

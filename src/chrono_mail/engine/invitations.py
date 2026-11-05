@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.532"
+__version__ = "invitations.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: copy_holds; a card remembers Change my answer on a declined event; a copy in a server calendar needs no mark (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -101,6 +102,7 @@ class InvitationInfo:
     in_mail: bool = False  # the card of a mail itself, not of a file or an attachment
     more_attendees: int = 0  # attendees past those listed: they are counted
     left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
+    asked_again: bool = False  # Change my answer on a declined event: the four answers are back, the copy is as it was (the window's own state)
 
 
 class _VisibleText(HTMLParser):
@@ -243,7 +245,7 @@ def your_calendars(engine: Engine, kind: CollectionKind) -> Iterator[list[tuple[
                 found.extend((account_id, store, info) for info in store.collections(kind) if is_yours(info))
             except (ChronoMailError, OSError, sqlite3.Error):
                 continue
-        yield sorted(found, key=lambda place: (place[0] == LOCAL_ACCOUNT_ID, place[2].server_value("public") == "1"))  # a declined copy of this computer knows less than a server's
+        yield sorted(found, key=lambda place: (place[0] == LOCAL_ACCOUNT_ID, place[2].server_value("public") == "1"))  # a copy of this computer knows less than a server's
 
 
 def _added_answer(text: str, message_text: str, addresses: frozenset[str]) -> str:
@@ -364,17 +366,21 @@ def with_writers(card: InvitationInfo, senders: Iterable[str]) -> InvitationInfo
     return replace(written, parts=tuple(with_writers(part, wrote) for part in card.parts)) if card.parts else written
 
 
+def copy_holds(card: InvitationInfo) -> bool:
+    """Whether a copy in your calendars holds what the card is about (ADD: occurrence_kept is dates still to add)."""
+    return bool(card.stored_in) and (not card.occurrence_kept if card.method == "ADD" else card.occurrence_kept)
+
+
 def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = ()) -> InvitationInfo:
-    """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves its copy on this computer only, so its mark is what tells the
-    others; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
+    """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline with no copy in a server calendar has only its mark to tell
+    the other computers; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
     A proposal you declined or a request you answered also exists only as that mark: the mail you wrote is all there is."""
     senders = tuple(senders)
     card = with_writers(card, senders)
     if card.method in ("COUNTER", "REFRESH"):
         return replace(card, answered_on_mail=bool(flags & ANSWER_MARKS) and card.items <= 1)
     answer = "DECLINED" if MessageFlag.INVITE_DECLINED in flags else "DELEGATED" if MessageFlag.INVITE_DELEGATED in flags else ""
-    holds = bool(card.stored_in) and (not card.occurrence_kept if card.method == "ADD" else card.occurrence_kept)  # (ADD: occurrence_kept is dates still to add)
-    if not answer or holds or card.items > 1 or card.method not in ("REQUEST", "ADD"):
+    if not answer or copy_holds(card) or card.items > 1 or card.method not in ("REQUEST", "ADD"):
         return card
     return replace(card, your_answer=answer, answered_on_mail=True, attendees=tuple(_yours_as_kept(person, answer) for person in card.attendees))
 

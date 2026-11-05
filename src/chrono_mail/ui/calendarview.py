@@ -49,9 +49,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.553"
+__version__ = "calendarview.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: A declined event can be selected and opens with a double click; Delete from the toolbar asks as its menu (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates deletes that date (D-310)
 # v4.4.552: A deleted date has no way back; Delete of a declined date deletes that date, never the series; Delete of a Cancelled meeting asks nothing about a mail (D-310)
 # v4.4.550: A cancelled event or date is grey instead of its colour, in every view (D-316)
@@ -447,7 +448,7 @@ class CalendarPage(PimPage):
         return next((candidate for candidate in self.entries if candidate.row == entry.row and candidate.start == entry.start), None)
 
     def _entry_clicked(self, entry: object) -> None:
-        self.selected = entry if isinstance(entry, Entry) and not entry.row.hidden else None  # a hidden date can only be looked at
+        self.selected = entry if isinstance(entry, Entry) else None
         for widget in (self.grid.header, self.grid.canvas, self.month):
             widget.select(self.selected)
         self._selection_changed()
@@ -506,7 +507,7 @@ class CalendarPage(PimPage):
         self._editor(None, self._current_calendar(), start=start.strftime("%Y-%m-%dT%H:%M"), end=(start + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
 
     def _entry_activated(self, entry: object) -> None:
-        if isinstance(entry, Entry) and not entry.row.hidden:
+        if isinstance(entry, Entry):
             self._entry_clicked(entry)
             self.read_selected()
 
@@ -559,6 +560,9 @@ class CalendarPage(PimPage):
         if entry is None:
             return
         row = entry.row
+        if row.hidden:
+            self._delete_asked(entry, EventDelete(row.item, "" if row.whole else row.occurrence))  # as its menu: what you declined is that date, or all of it
+            return
         values = EventDelete(row.item, row.occurrence)  # (not repeating: a date in an object of only changed dates has one, a single event none)
         if row.repeats:
             scope = self._ask_scope("Delete")

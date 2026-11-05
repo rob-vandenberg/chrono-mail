@@ -15,7 +15,7 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import SeriesClash, INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
+from chrono_mail.engine.commands_invitations import SeriesClash, INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, ReopenResult, SourceParameters
 from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.533"
+__version__ = "readingpane.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: Change my answer leaves a declined event where it is; Delegate on a copy in Local Folders picks a calendar first (D-310)
 # v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
@@ -438,7 +439,7 @@ class ReadingPane(QObject):
         self.change_answer(self.reader, self._in_pane())
 
     def change_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
-        """Change my answer: after the person confirmed, the appointment goes and the invitation asks for an answer again (D-310)."""
+        """Change my answer: after the person confirmed, the appointment goes and the invitation asks for an answer again; a declined event stays where it is, and only the four answers come back (D-310)."""
         info = self._card_of(reader, place) if place is not None else None
         if place is None or info is None:
             return
@@ -448,7 +449,14 @@ class ReadingPane(QObject):
         if not info.answered_on_mail and info.your_answer != "DECLINED" and QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:  # no copy: nothing leaves your calendar, so nothing to ask
             return
         parameters = SourceParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
-        self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._tell(reader, "Could not change your answer", error), owner=self)
+
+        def reopened(result: ReopenResult) -> None:
+            if not result.stays:
+                self._show_again(reader, place)
+            elif isValid(reader) and (reader is not self.reader or self.shown == (place.account, place.folder, place.message)):  # (another message may have been chosen meanwhile)
+                reader.card.ask_again(place.item)
+
+        self._backend.ask(INVITATION_REOPEN, parameters, reopened, lambda error: self._tell(reader, "Could not change your answer", error), owner=self)
 
     def _more_in_pane(self, first: int) -> None:
         if self.shown is not None:
@@ -629,7 +637,20 @@ class ReadingPane(QObject):
         if place is None:
             return
         info = self._card_of(reader, place) if not place.event else None
-        dialog = InvitationDelegateDialog(self._parent, task=info is not None and info.kind == "task")
+        task = info is not None and info.kind == "task"
+
+        def listed(choices: ChoicesResult) -> None:
+            if not choices.declined_here:
+                self._delegate(reader, place, task, "")
+                return
+            dialog = InvitationCalendarDialog(choices, task=task, parent=self._parent)  # as Accept and Tentative (D-310)
+            if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
+                self._delegate(reader, place, task, dialog.chosen)
+
+        self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._tell(reader, "Could not read the invitation", error), owner=self)
+
+    def _delegate(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, task: bool, calendar: str) -> None:
+        dialog = InvitationDelegateDialog(self._parent, task=task)
         if dialog.exec() != InvitationDelegateDialog.DialogCode.Accepted:
             return
         question = self._mail_dialog("Delegate", f"Send {dialog.address} the invitation, and tell the organizer?")
@@ -648,7 +669,7 @@ class ReadingPane(QObject):
                 self._composing.send_calendar_mail(result.account, result.folder, result.answer_message, question.note, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
-        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address, mail=choice is Choice.SEND), delegated,
+        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, event=place.event, occurrence=place.occurrence, item=place.item, to=dialog.address, mail=choice is Choice.SEND, calendar=calendar), delegated,
                           lambda error: self._tell(reader, "Could not pass the invitation on", error), owner=self)
 
     def _apply_in_pane(self) -> None:

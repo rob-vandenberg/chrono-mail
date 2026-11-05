@@ -12,7 +12,7 @@ from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, ChronoMailError, Co
 from chrono_mail.engine.commands_calendar import MAXIMUM_EVENTS, in_event_zone
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answering, writing, calendar_part, calendar_text, blocks_of, card_of, copy_holds, is_yours, items_left, kept_items, own_mail, take_mark_off, with_mark, with_writers, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -23,7 +23,7 @@ from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, Occurrence, _as_aware, occurrences, parse_events
 from chrono_mail.pim.itip import (
     keeps_busy,
-    asked_again, declined_copy, you_declined,
+    asked_again, declined_copy, with_kept_mail, you_declined,
     BusyPeriod, CalendarMessage, added_dates, answered_added, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_dates, without_occurrence, BEFORE_BARE, BEFORE_LOUD, BEFORE_SILENT, ready_to_delete,
 )
 from chrono_mail.pim.times import local_time, local_zone, parse_moment
@@ -31,9 +31,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.532"
+__version__ = "commands_invitations.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: A declined event stays hidden in the calendar it is in, Change my answer leaves it there, the mark only where no copy tells it, Delegate from Local Folders picks a calendar, Accept on a declined copy warns of clashes (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.531: A calendar file opened from your own Sent or Drafts is your own: no buttons (D-310)
 # v4.4.530: Every block of a mail with several items knows who wrote it (D-310)
@@ -102,6 +103,7 @@ class ChoicesResult:
     receiving: str = ""  # the account that received the mail ("": none, a file): the busy times window starts on its own calendars
     clashes: tuple[str, ...] = ()  # an invitation not kept yet: what you have at its time, each once, by title
     series_clashes: tuple[SeriesClash, ...] = ()  # a series not kept yet: each appointment of yours it meets in the coming year, in order of time
+    declined_here: bool = False  # the copy is one you declined in Local Folders: Delegate too asks for a calendar
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -307,13 +309,14 @@ def _stored(engine: Engine, kind: CollectionKind, uid: str) -> _Stored | None:
 
 
 def _kept_declined(engine: Engine, stored: _Stored | None) -> _Stored | None:
-    """The copy kept of an invitation you declined, on this computer only (D-310): it holds your answer, but it is no appointment. An answer that keeps
-    the invitation goes to a calendar the person picks, and this copy goes."""
+    """The copy in Local Folders of an invitation you declined (D-310): it holds your answer, but it is no appointment. An answer that keeps the
+    invitation goes to a calendar the person picks, and this copy goes. A declined copy in a server calendar simply stays there, and is answered in place."""
     return stored if stored is not None and stored.account == LOCAL_ACCOUNT_ID and you_declined(stored.text, your_addresses(engine)) else None
 
 
 def _keep_declined(engine: Engine, text: str) -> None:
-    """The copy of an invitation you declined goes, without asking, into the calendar of Local Folders: this computer only (the owner's exception to D-193)."""
+    """An invitation you declined with no copy anywhere has no calendar: its copy goes, without asking, into the calendar of Local Folders, on this computer only
+    (the owner's exception to D-193)."""
     ensure_local_pim(engine)
     with open_pim(engine, LOCAL_ACCOUNT_ID) as store, item_writer(engine, LOCAL_ACCOUNT_ID, store) as writer:
         info = next(iter(store.collections(CollectionKind.EVENTS)), None)
@@ -393,13 +396,14 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
                         chosen = info.collection_id
         except ChronoMailError:
             continue
-    clashes, series_clashes = _clashes(engine, opened) if not parameters.kind and opened.message.method in ("REQUEST", "ADD") and (stored is None or opened.message.method == "ADD") else ((), ())
-    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes, series_clashes)
+    blocking_already = stored is not None and opened.message.method != "ADD" and not you_declined(stored.text, your_addresses(engine))  # what you declined blocks nothing until you answer
+    clashes, series_clashes = _clashes(engine, opened) if not parameters.kind and opened.message.method in ("REQUEST", "ADD") and not blocking_already else ((), ())
+    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes, series_clashes, declined is not None and opened.message.method != "ADD")
 
 
 def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:
-    """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline leaves no copy to tell it. An answer or Change my answer takes
-    an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again. `replied`: the
+    """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline with no copy in a server calendar has nothing else to tell it. An answer or
+    Change my answer takes an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again. `replied`: the
     server mails the answer, so nothing is sent here to set the Replied mark."""
     if opened.marks is None or opened.message.method not in ("REQUEST", "ADD", "COUNTER", "REFRESH"):
         return
@@ -410,6 +414,14 @@ def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mar
                 mailbox.set_flags(mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message)), wanted)
         except ChronoMailError:
             return
+
+
+def _leave_local_folders(engine: Engine, declined: _Stored, item: str | None) -> None:
+    """A copy you declined in Local Folders became an appointment: the old copy goes, unless `item` is that copy, and the mark goes with it."""
+    if item != declined.item:
+        with open_pim(engine, declined.account) as store, item_writer(engine, declined.account, store) as writer:
+            writer.delete(declined.info, declined.item)
+    take_mark_off(engine, declined.text)
 
 
 def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerResult:
@@ -437,7 +449,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         if base is not None and is_newer(message, base.sequence, None) is False:
             raise UsageError(f"Your {home} has a newer version of this {item_word}: this invitation is out of date")  # OR-4: the command checks it
     text: str | None = None
-    keeping: str | None = None  # the copy this computer keeps of an invitation you declined
+    keeping: str | None = None  # the copy Local Folders gets of an invitation you declined with no copy anywhere
     if parameters.answer == "DECLINED" and adding and stored is not None:  # nothing is added; a date that is there already is marked
         text = answered_added(stored.text, opened.text, you.address, "DECLINED", you.name)
         target, item = ((stored.account, stored.info), stored.item) if text is not None else (None, None)
@@ -446,16 +458,16 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         # (not only dates removed already: the card looks at every date the message names, and so does Decline)
         target = (stored.account, stored.info) if stored is not None and holds else None  # an occurrence not in the copy: Decline adds nothing
         item: str | None = stored.item if stored is not None and holds else None
-        if stored is not None and holds and message.occurrence is not None:
+        if stored is not None and holds and (message.occurrence is not None or (kind == CollectionKind.EVENTS and message.method != "PUBLISH")):  # a declined event stays where it is, hidden
             same = read_calendar_message(stored.text, message.occurrence)
-            take = same is None or bool(is_newer(message, same.sequence, None))  # a newer version of the date: it replaces the kept one (as Accept)
+            take = same is None or bool(is_newer(message, same.sequence, None))  # a newer version: it replaces the kept one (as Accept)
             text = merged_answer(stored.text, opened.text, you.address, "DECLINED", message.occurrence, take_message=take, name=you.name)
             if text is None:
                 raise UsageError("The occurrence could not be marked as declined")
-        if kind == CollectionKind.EVENTS and message.method != "PUBLISH" and (stored is None or message.occurrence is None):
+            if stored.account == LOCAL_ACCOUNT_ID and message.occurrence is None and opened.marks is not None:
+                text = with_kept_mail(text, parameters.account, opened.message_id)  # its mark goes when the copy goes
+        if kind == CollectionKind.EVENTS and message.method != "PUBLISH" and stored is None:
             keeping = declined_copy(opened.text, you.address, you.name, parameters.account, opened.message_id)
-            if stored is not None and stored.account == LOCAL_ACCOUNT_ID:
-                text, keeping = keeping, None  # it is on this computer already: it stays where it is
     else:
         if stored is not None and message.method == "PUBLISH":  # a shared item kept already: a newer version as sent, nothing made up
             if not is_newer(message, (read_calendar_message(stored.text) or message).sequence, None):
@@ -475,7 +487,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             text = published_copy(opened.text) if shared else answered_copy(opened.text, you.address, parameters.answer, you.name)
             target, item = _collection(engine, kind, parameters.calendar), None
             if declined is not None and declined.info.collection_id == target[1].collection_id:
-                item, declined = declined.item, None  # the person chose the calendar it is in: it becomes an appointment there
+                item = declined.item  # the person chose the calendar it is in: it becomes an appointment there
             elif _holds(engine, target, message.uid):
                 raise UsageError(f"This {item_word} is in that {home} already")
         if text is None:
@@ -498,16 +510,14 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         if target is not None:
             with open_pim(engine, target[0]) as store, item_writer(engine, target[0], store) as writer:
                 if text is None and item is not None and stored is not None:
-                    delete_copy(writer, target[1], item, stored.text, mails)  # declined: the copy goes; a server that answers mails the decline itself (D-310)
+                    delete_copy(writer, target[1], item, stored.text, mails)  # a declined task or shared item: the copy goes; a server that answers mails the decline itself (D-310)
                 elif text is not None:
                     writer.put(target[1], copy_for(text, mails), item)
                 waiting = writer.waiting > 0
         if keeping is not None:
             _keep_declined(engine, keeping)
         if declined is not None:
-            with open_pim(engine, declined.account) as store, item_writer(engine, declined.account, store) as writer:
-                writer.delete(declined.info, declined.item)
-            take_mark_off(engine, declined.text)
+            _leave_local_folders(engine, declined, item)
     except StorageError as error:
         raise UsageError(str(error)) from None
     stored_in = _label(engine, target[0], target[1]) if target is not None and parameters.answer != "DECLINED" else ""
@@ -516,7 +526,8 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         draft_folder, draft_message = _save_mail(engine, opened, you.account, _SUBJECT_WORD[parameters.answer],
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply, to if missing else None)
         draft_account = you.account
-    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None, mails.server and message.method != "PUBLISH")
+    copy_tells = text is not None and target is not None and (target[0] != LOCAL_ACCOUNT_ID or message.occurrence is not None or adding)  # only a whole copy in Local Folders knows its mail, and can take the mark off when it goes
+    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" and not copy_tells else None, mails.server and message.method != "PUBLISH")
     return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account, waiting)
 
 
@@ -701,6 +712,7 @@ def invitation_apply(engine: Engine, parameters: ApplyParameters) -> ApplyResult
 class DelegateParameters(SourceParameters):
     to: str = field(metadata=option("The address of the person who goes in your place"))
     mail: bool = field(default=True, metadata=option("Make the mails (drafts to send); false: none, your answer only in your calendar"))
+    calendar: str = field(default="", metadata=option("A copy you declined in Local Folders: the calendar it goes into"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,6 +746,8 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     request, answer = texts
     stored = _stored(engine, _kind(message), message.uid)
     adding = message.method == "ADD"
+    declined = _kept_declined(engine, stored) if not adding else None
+    stored = None if declined is not None else stored
     if adding:
         _series_kept(stored, _home(_kind(message)))
     if stored is not None:
@@ -746,16 +760,28 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
         same = read_calendar_message(stored.text, message.occurrence) if message.occurrence is not None else read_calendar_message(stored.text, None)
         take = same is None or bool(is_newer(message, same.sequence, None))  # a newer invitation: its version into the copy (as Accept)
     text = merged_answer(stored.text, opened.text, you.address, "DELEGATED", message.occurrence, take_message=take, name=you.name) if stored is not None else None
+    target, item = ((stored.account, stored.info), stored.item) if stored is not None else (None, None)
+    if declined is not None:  # as Accept and Tentative: it goes to the calendar the person picks
+        target = _collection(engine, _kind(message), parameters.calendar)
+        if target[1].read_only:
+            raise UsageError(f"This {_home(_kind(message))} is read-only")
+        if declined.info.collection_id == target[1].collection_id:
+            item = declined.item  # the person chose the calendar it is in: it becomes an appointment there
+        elif _holds(engine, target, message.uid):
+            raise UsageError(f"This {_item(message)} is in that {_home(_kind(message))} already")
+        text = answered_copy(opened.text, you.address, "DELEGATED", you.name)
     moments = added_dates(opened.text) if adding else occurrences_of(opened.text) if message.occurrence is not None else []  # a whole series (also with changed dates): all of it
     if adding and stored is not None:  # only the new dates, and as with Decline they are not added: one that is there already is marked
         text = answered_added(stored.text, opened.text, you.address, "DELEGATED", you.name)
     text = with_delegate(text, you.address, delegate, moments) if text is not None else None  # a server answering itself names them
-    mails = who_mails(engine, (stored.account, stored.info) if stored is not None and text is not None else None, you.account, you.address)
+    mails = who_mails(engine, target if text is not None else None, you.account, you.address)
     mails = mails if parameters.mail else quiet(mails)
-    if stored is not None and text is not None:  # the calendar first: a refusal leaves no drafts behind
+    if target is not None and text is not None:  # the calendar first: a refusal leaves no drafts behind
         try:
-            with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
-                writer.put(stored.info, copy_for(text, mails), stored.item)
+            with open_pim(engine, target[0]) as store, item_writer(engine, target[0], store) as writer:
+                writer.put(target[1], copy_for(text, mails), item)
+            if declined is not None:
+                _leave_local_folders(engine, declined, item)
         except StorageError as error:
             raise UsageError(str(error)) from None
     who = you.name or you.address
@@ -906,14 +932,18 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
 @dataclass(frozen=True, slots=True)
 class ReopenResult:
     removed: bool  # false: it was not in your calendar any more
+    stays: bool = False  # a declined event stays where it is, nothing changed: only the four answers come back
 
 
 def invitation_reopen(engine: Engine, parameters: SourceParameters) -> ReopenResult:
     """Change my answer: your copy goes without a word to the organizer, so the invitation can be answered anew (D-310). A date of a series, or
-    dates added to it: only those dates go."""
+    dates added to it: only those dates go. Decline never deletes: a declined event stays where it is and nothing changes, the window only brings back the four answers."""
     opened = _opened(engine, parameters)
     message = opened.message
     _not_yours(engine, opened)
+    card = card_of(engine, parameters.part, opened.text)
+    if card is not None and message.kind == "event" and card.your_answer == "DECLINED" and copy_holds(card):
+        return ReopenResult(False, True)
     you = _you(engine, opened)
     stored = _stored(engine, _kind(message), message.uid)
     _remember(engine, parameters, opened, None)

@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 
 import pytest
@@ -14,9 +15,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.552"
+__version__ = "test_engine_invitation_answers.py 4.4.554"
 
 # --- Version history ----------------------------------------------------
+# v4.4.554: An answer on all occurrences replaces a date answered otherwise (D-310)
 # v4.4.552: A deleted date of a series shows nowhere (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.528: a Decline keeps its copy on this computer (D-310)
@@ -499,15 +501,19 @@ def test_your_own_meeting_cannot_be_answered(setup: Setup) -> None:
         call(setup.engine, "invitation.delegate", account=setup.account_id, folder="Inbox", message=message, to="sam@example.net")
 
 
-def test_a_new_answer_to_the_series_keeps_a_date_answered_otherwise() -> None:
+def test_an_answer_on_all_occurrences_replaces_a_date_answered_otherwise() -> None:
+    """The owner: "If it says "all events" it does "all events"" (D-310): for Accept, Tentative and Decline alike."""
     from chrono_mail.pim.itip import merged_answer
 
     series = calendar_text(method="", answer="TENTATIVE").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     declined = calendar_text(method="", answer="DECLINED").replace("SEQUENCE:0", "SEQUENCE:0\r\nRECURRENCE-ID:20261105T100000Z", 1)
     part = declined.split("BEGIN:VEVENT", 1)[1].split("END:VCALENDAR")[0]
     both = series.replace("END:VCALENDAR", "BEGIN:VEVENT" + part + "END:VCALENDAR", 1).replace("END:VEVENT\r\nEND:VEVENT", "END:VEVENT", 1)
-    copy = merged_answer(both, calendar_text(), "me@example.com", "ACCEPTED", None, take_message=False)
-    assert copy is not None and "PARTSTAT=DECLINED" in copy and "PARTSTAT=ACCEPTED" in copy
+    for answer_given in ("ACCEPTED", "DECLINED", "TENTATIVE"):
+        copy = merged_answer(both, calendar_text(), "me@example.com", answer_given, None, take_message=False)
+        assert copy is not None and copy.count(f"PARTSTAT={answer_given}") == 2 and len(set(re.findall("PARTSTAT=([A-Z-]+)", copy)) - {"NEEDS-ACTION"}) == 1
+    delegated = merged_answer(both, calendar_text(), "me@example.com", "DELEGATED", None, take_message=False)
+    assert delegated is not None and "PARTSTAT=DECLINED" in delegated and "PARTSTAT=DELEGATED" in delegated  # a delegation leaves a date answered otherwise
 
 
 def test_an_invitation_to_several_occurrences_reaches_the_copy_whole() -> None:
@@ -543,8 +549,8 @@ def test_delegating_several_occurrences_names_the_delegate_on_each(setup: Setup)
     assert text.count('DELEGATED-TO="mailto:sam@example.net"') == 2
 
 
-def test_accepting_a_newer_series_keeps_a_declined_date_it_resends() -> None:
-    """Step 2 review round 10: Accept overwrote a declined date the new version carried again; Update calendar kept it."""
+def test_accepting_a_newer_series_is_an_answer_on_all_of_it_also_on_a_date_it_resends() -> None:
+    """Accept on the whole series does what it says (D-310); Update calendar is what keeps a date answered otherwise."""
     from chrono_mail.pim.itip import merged_answer
 
     series = calendar_text(method="", answer="ACCEPTED").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
@@ -554,7 +560,7 @@ def test_accepting_a_newer_series_keeps_a_declined_date_it_resends() -> None:
     newer = both.replace("SEQUENCE:0", "SEQUENCE:2").replace("PARTSTAT=DECLINED", "PARTSTAT=NEEDS-ACTION").replace("PARTSTAT=ACCEPTED", "PARTSTAT=NEEDS-ACTION")
     newer = newer.replace("BEGIN:VCALENDAR\r\n", "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\n", 1)
     copy = merged_answer(both, newer, "me@example.com", "ACCEPTED", None, take_message=True)
-    assert copy is not None and "PARTSTAT=DECLINED" in copy and "PARTSTAT=ACCEPTED" in copy
+    assert copy is not None and "PARTSTAT=DECLINED" not in copy and copy.count("PARTSTAT=ACCEPTED") == 2
 
 
 def test_a_second_delegation_leaves_the_first_one_alone(setup: Setup) -> None:
@@ -609,7 +615,7 @@ def test_an_added_date_for_a_copy_of_single_occurrences_asks_for_the_series(setu
 
 
 def test_the_answer_mail_says_what_your_calendar_keeps(setup: Setup) -> None:
-    """Step 2 review round 14: the REPLY accepted a date your calendar kept declined."""
+    """Step 2 review round 14: the REPLY said something else than your calendar keeps. An answer on all of it is on every date (D-310)."""
     series = calendar_text(method="", answer="ACCEPTED").replace("SUMMARY:", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:", 1)
     declined = calendar_text(method="", answer="DECLINED").replace("SEQUENCE:0", "SEQUENCE:0\r\nRECURRENCE-ID:20261105T100000Z", 1)
     part = declined.split("BEGIN:VEVENT", 1)[1].split("END:VCALENDAR")[0]
@@ -620,7 +626,7 @@ def test_the_answer_mail_says_what_your_calendar_keeps(setup: Setup) -> None:
     answer(setup, deliver(setup, invitation_mail(newer)), "ACCEPTED")
     (draft,) = drafts(setup)
     part_text = next(each for each in parse_message(draft).attachments if each.content_type == "text/calendar").data.decode()
-    assert "PARTSTAT=DECLINED" in part_text and "PARTSTAT=ACCEPTED" in part_text
+    assert "PARTSTAT=DECLINED" not in part_text and part_text.count("PARTSTAT=ACCEPTED") == 2
 
 
 def test_a_shared_item_kept_already_is_said_to_be_there(setup: Setup) -> None:
