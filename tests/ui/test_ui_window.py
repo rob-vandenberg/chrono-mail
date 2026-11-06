@@ -24,9 +24,10 @@ from chrono_mail.ui.textbox import TextBox
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.454"
+__version__ = "test_ui_window.py 4.4.561"
 
 # --- Version history ----------------------------------------------------
+# v4.4.561: the window opened after a close gets a new backend: the closed one hands out no answers since 4.4.542
 # v4.2.454: F2 in the folder list asks through TextBox.ask (Rename folder opens 360 pixels wide)
 # v4.2.419: About is a window of its own (D-293)
 # v4.2.407: a search starts on All folders; the tests of one folder choose This folder only (D-287)
@@ -948,7 +949,7 @@ def test_sort_order_and_selected_folder_are_remembered(tmp_path: Path, qtbot: Qt
         ini = world.settings_path
         settings = QSettings(str(ini), QSettings.Format.IniFormat)
         assert '"sort": "sender"' in str(settings.value("folder_columns")) and settings.value("last_folder") == "Inbox"  # the Inbox's own sort (B-16)
-        reopened = MainWindow(world.backend, settings)
+        reopened = MainWindow(world.restart_backend(), settings)
         qtbot.addWidget(reopened)
         reopened.start()
         wait(qtbot, lambda: reopened.mail_state.view.folder == "Inbox")

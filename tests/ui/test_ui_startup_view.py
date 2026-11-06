@@ -1,6 +1,7 @@
 from PySide6.QtCore import QSettings, Qt
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.folderpane import FolderPane
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import KIND_ROLE
@@ -10,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_startup_view.py 2.0.298"
+__version__ = "test_ui_startup_view.py 4.4.561"
 
 # --- Version history ----------------------------------------------------
+# v4.4.561: the program started again gets a new backend: the closed one hands out no answers since 4.4.542
 # v2.0.298: the owner's order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied in Favorites (D-061, D-232)
 # v2.0.290: Favorites and the standard folders in the owner's order (D-061, D-232)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -33,7 +35,7 @@ def restarted(world: World, qtbot: QtBot, **values: object) -> MainWindow:
     for key, value in values.items():
         world.window.settings.setValue(key, value)
     world.window.settings.sync()
-    again = MainWindow(world.backend, QSettings(str(world.settings_path), QSettings.Format.IniFormat))
+    again = MainWindow(world.restart_backend(), QSettings(str(world.settings_path), QSettings.Format.IniFormat))
     qtbot.addWidget(again)
     again.show()
     again.start()
@@ -175,14 +177,14 @@ def asked_at_start(world: World, qtbot: QtBot, monkeypatch: object, **values: ob
 
     assert isinstance(monkeypatch, pytest.MonkeyPatch)
     folders: list[str] = []
-    real_ask = world.backend.ask
+    real_ask = Backend.ask
 
-    def ask(command: object, parameters: object, *rest: object, **named: object) -> int:
+    def ask(self: Backend, command: object, parameters: object, *rest: object, **named: object) -> int:
         if getattr(command, "id", "") == "folder.list":
             folders.append(str(getattr(parameters, "account")))
-        return real_ask(command, parameters, *rest, **named)  # type: ignore[arg-type]
+        return real_ask(self, command, parameters, *rest, **named)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(world.backend, "ask", ask)
+    monkeypatch.setattr(Backend, "ask", ask)  # the backend of the restart
     laid_out: list[int] = []
     real_lay_out = FolderPane.lay_out
 

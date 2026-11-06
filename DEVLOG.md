@@ -4108,3 +4108,7 @@ Not tried: on screen; on Kerio.
 
 What landed: a click in the Flag or Unread column of the message list toggles that mark on that one message, the selection stays; the cells have no hover text; the moves and release of a press on any icon column no longer reach Qt, which could select a range or drag another message.
 Not tried: on screen; on a real server; on Windows.
+
+## 2026-11-06 4.4.561 Window tests that reopen a window
+
+What landed: `World.restart_backend` in `tests/ui/world.py`; `tests/ui/test_ui_window.py::test_sort_order_and_selected_folder_are_remembered` and seven tests of `tests/ui/test_ui_startup_view.py` pass again. They failed since 4.4.542: closing ends the backend, which then drops every answer, and they opened a new window on it. The program itself was right.

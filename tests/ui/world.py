@@ -14,6 +14,7 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine import Engine, build_registry
 from chrono_mail.engine.newkey import recovery_code_stored
 from chrono_mail.ui import importdialog
+from chrono_mail.protocols.hangup import allow_connections
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.calendarmail import CalendarMailDialog, Choice
 from chrono_mail.ui.mainwindow import MainWindow
@@ -26,9 +27,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 4.4.532"
+__version__ = "world.py 4.4.561"
 
 # --- Version history ----------------------------------------------------
+# v4.4.561: World.restart_backend: a window opened after a close gets a new backend, as a real restart does
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.2.463: record_recovery_codes answers the recovery code window of the Import window, ticked or not (UR-08)
 # v4.2.454: answer_input answers the text box of a given width too (TextBox.ask, Rename folder)
@@ -73,6 +75,14 @@ class World:
 
     def call(self, command: str, **values: object) -> Any:  # noqa: ANN401 - command-specific result
         return REGISTRY.run(self.engine, command, values)
+
+    def restart_backend(self) -> Backend:
+        """The program starts again after its window closed: closing ended the engine's work and the backend, which hands out no answers
+        any more. A new backend on the same engine (its keys are only in memory), which may work again."""
+        self.engine.stop_event.clear()
+        allow_connections()
+        self.backend = Backend(self.engine)
+        return self.backend
 
 
 class RecoveryCodes:
