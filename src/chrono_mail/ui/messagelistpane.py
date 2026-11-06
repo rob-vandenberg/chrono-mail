@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.433"
+__version__ = "messagelistpane.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: take_away: selection_stays: a message that is not selected leaves at a click on its unread mark, and the selection stays as it is (D-319)
 # v4.2.433: the current message stays in view when a selected message moves to its new place in the sort
 # v4.2.432: the folders that show their recipients are the engine's list (RECIPIENT_VIEWS), one rule with the Contact sort (D-295)
 # v4.2.429: From / To where it shows the recipients sorts by exactly what it shows (to_shown, D-295)
@@ -751,12 +752,12 @@ class MessageListPane(QObject):
     def _forget_unreadable(self) -> None:
         self._unreadable = set()
 
-    def take_away(self, message_ids: list[str], at_once: bool = False) -> None:
+    def take_away(self, message_ids: list[str], at_once: bool = False, selection_stays: bool = False) -> None:
         """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the
         change (or the action fails), and the selection and the reading pane move at once to the next message without an
         action under way (the one after them, else the one before), so a next key press acts on what the person sees. An action
         that needs no server's word (at_once: POP3, Local Folders) takes the rows out now, and the list is painted before the next
-        key press is read (D-266)."""
+        key press is read (D-266). selection_stays: a click on a mark: a message that is not selected leaves, and the selection stays as it is (D-319)."""
         model = self.model
         model.mark_pending(message_ids)
         taken = set(message_ids)
@@ -764,6 +765,16 @@ class MessageListPane(QObject):
         rows = [row for row in rows if row >= 0]
         current = self.view.currentIndex()
         current_row = model.row_at(current.row()) if current.isValid() else None
+        chosen = self.view.selectionModel()
+        if selection_stays and not any(chosen.isRowSelected(row, QModelIndex()) for row in rows):
+            if current_row is not None and current_row.message_id in taken:  # else Qt moves the current row to a neighbour, which would open
+                self.taken_away.emit(False)  # the message that is being opened is moved away: its opening no longer counts
+                kept = chosen.selection()
+                chosen.setCurrentIndex(kept.at(0).topLeft() if kept.count() else QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate)
+            if at_once:
+                model.leave_now(message_ids)
+                self.view.viewport().repaint()
+            return
         if current_row is not None and current_row.message_id in taken:
             self.taken_away.emit(False)  # the message that is being opened is moved away: its opening no longer counts
         elif current_row is not None:

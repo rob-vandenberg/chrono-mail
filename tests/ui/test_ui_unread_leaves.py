@@ -1,18 +1,20 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui import forms
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.ui.models import KIND_ROLE
 from tests.ui.world import World, account_node, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_unread_leaves.py 4.2.396"
+__version__ = "test_ui_unread_leaves.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: a click on the unread mark follows the setting as Mark as read does, and the selection stays when another message is clicked (D-319)
 # v4.2.396: Remove messages from Unread when I mark them as read (D-282): off by default; on, a message marked as read leaves a list of
 #           unread mail as with Junk, also when the window waits for the server; Undo brings it back, Redo takes it out again, also one read
 #           already; a sort does not bring it back; one read by showing it stays
@@ -104,6 +106,123 @@ def test_toggle_read_to_read_leaves_unread_and_the_last_message_selects_nothing(
     world.window.act_toggle_read.trigger()
     wait(qtbot, lambda: model.find(last) < 0 and world.backend._pending == {})  # noqa: SLF001
     assert model.message_count() == 2 and selected(world) == []  # after the last message nothing is selected (D-266)
+
+
+def click_unread_mark(world: World, qtbot: QtBot, row: int) -> None:
+    window = world.window
+    window.resize(1200, 600)
+    window.show()
+    qtbot.wait(50)
+    rect = window.list_view.visualRect(window.list_model.index(row, window.list_model.columns.index("status")))
+    qtbot.mouseClick(window.list_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+
+
+def test_a_click_on_the_unread_mark_with_the_setting_on_takes_the_message_out_and_selects_the_next(world: World, qtbot: QtBot) -> None:
+    started(world, qtbot, leaves=True)
+    show_unread(world, qtbot)
+    model = world.window.list_model
+    clicked = select_row(world, qtbot, 1)
+    following = message_at(world, 2)
+    click_unread_mark(world, qtbot, 1)
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    assert model.message_count() == 2 and selected(world) == [following]
+
+
+@pytest.mark.parametrize("server", [False, True])
+def test_a_click_on_the_unread_mark_of_another_message_leaves_the_selection_where_it_is(world: World, qtbot: QtBot, server: bool) -> None:
+    started(world, qtbot, leaves=True, server=server)
+    show_unread(world, qtbot)
+    model = world.window.list_model
+    chosen = select_row(world, qtbot, 0)
+    clicked = message_at(world, 2)
+    click_unread_mark(world, qtbot, 2)
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    assert selected(world) == [chosen] and world.window.reading.shown is not None and world.window.reading.shown[2] == chosen  # noqa: SLF001
+
+
+@pytest.mark.parametrize("server", [False, True])
+def test_a_click_on_the_unread_mark_with_nothing_selected_selects_and_opens_nothing(world: World, qtbot: QtBot, server: bool) -> None:
+    started(world, qtbot, leaves=True, server=server)
+    show_unread(world, qtbot)
+    window, model = world.window, world.window.list_model
+    window.list_view.selectionModel().clear()
+    window.list_view.setCurrentIndex(QModelIndex())
+    clicked = message_at(world, 0)
+    shown_before = window.reading.shown  # noqa: SLF001
+    click_unread_mark(world, qtbot, 0)
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    assert selected(world) == [] and not window.list_view.currentIndex().isValid() and window.reading.shown == shown_before  # noqa: SLF001
+
+
+@pytest.mark.parametrize("server", [False, True])
+def test_a_click_on_the_unread_mark_of_a_message_deselected_with_ctrl_selects_and_opens_nothing(world: World, qtbot: QtBot, server: bool) -> None:
+    started(world, qtbot, leaves=True, server=server)
+    show_unread(world, qtbot)
+    window, model = world.window, world.window.list_model
+    clicked = select_row(world, qtbot, 1)
+    window.list_view.selectionModel().clearSelection()  # as Ctrl+click on it: nothing selected, the row is still the current one
+    assert window.list_view.currentIndex().row() == 1
+    click_unread_mark(world, qtbot, 1)
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    qtbot.wait(50)
+    assert selected(world) == [] and not window.list_view.currentIndex().isValid() and window.reading.shown is None  # noqa: SLF001
+
+
+@pytest.mark.parametrize("server", [False, True])
+def test_a_click_on_the_unread_mark_of_the_current_row_that_is_not_selected_keeps_the_selected_message(world: World, qtbot: QtBot, server: bool) -> None:
+    started(world, qtbot, leaves=True, server=server)
+    show_unread(world, qtbot)
+    window, model = world.window, world.window.list_model
+    chosen = select_row(world, qtbot, 0)
+    clicked = message_at(world, 1)
+    window.list_view.selectionModel().setCurrentIndex(model.index(1, 0), QItemSelectionModel.SelectionFlag.NoUpdate)  # as Ctrl+click on it twice
+    click_unread_mark(world, qtbot, 1)
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {} and window.reading.shown is not None and window.reading.shown[2] == chosen)  # noqa: SLF001
+    assert selected(world) == [chosen]
+
+
+def test_a_message_still_opening_does_not_appear_after_a_click_took_it_out(world: World, qtbot: QtBot) -> None:
+    started(world, qtbot, leaves=True, server=True)
+    show_unread(world, qtbot)
+    window, model = world.window, world.window.list_model
+    clicked = message_at(world, 1)
+    window.resize(1200, 600)
+    window.show()
+    qtbot.wait(50)
+    rect = window.list_view.visualRect(model.index(1, model.columns.index("status")))
+    window.list_view.setCurrentIndex(model.index(1, 0))  # it starts opening; the click comes before its answer can
+    window.list_view.selectionModel().clearSelection()
+    qtbot.mouseClick(window.list_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    assert window.reading.shown is None  # noqa: SLF001
+
+
+def test_a_click_on_the_unread_mark_moves_no_selection_on_a_row_still_on_its_way(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(world, qtbot, leaves=True, server=True)
+    show_unread(world, qtbot)
+    model = world.window.list_model
+    chosen = select_row(world, qtbot, 0)
+    clicked = message_at(world, 2)
+    real_row_at = model.row_at
+
+    def on_its_way(row: int, fetch: bool = False) -> MessageRow | None:
+        return None if row == 0 else real_row_at(row, fetch)
+
+    monkeypatch.setattr(model, "row_at", on_its_way)
+    click_unread_mark(world, qtbot, 2)
+    monkeypatch.undo()
+    wait(qtbot, lambda: model.find(clicked) < 0 and world.backend._pending == {})  # noqa: SLF001
+    assert selected(world) == [chosen]
+
+
+def test_a_click_on_the_unread_mark_with_the_setting_off_keeps_the_message_in_unread(world: World, qtbot: QtBot) -> None:
+    started(world, qtbot, leaves=False)
+    show_unread(world, qtbot)
+    model = world.window.list_model
+    clicked = message_at(world, 1)
+    click_unread_mark(world, qtbot, 1)
+    wait(qtbot, lambda: world.backend._pending == {} and "seen" in getattr(model.row_at(1), "flags"))  # noqa: SLF001
+    assert model.find(clicked) == 1 and model.message_count() == 3
 
 
 def test_a_message_read_by_showing_it_stays_in_unread_with_the_setting_on(world: World, qtbot: QtBot) -> None:

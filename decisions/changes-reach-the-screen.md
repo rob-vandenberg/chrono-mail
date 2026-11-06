@@ -25,3 +25,4 @@ See also: [[mail-window]] · [[look]]
 - [[D-273]] Places and headings read together
 - [[D-274]] Each profile has its own wallet name
 - [[D-275]] Readable wallet entries
+- [[D-319]] A click in the Flag or Unread column toggles that mark

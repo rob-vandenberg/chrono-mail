@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.457"
+__version__ = "messagelist.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: the cells of the Flag and Unread columns have no hover text; their headers have (D-319)
 # v4.2.457: a refetch while a new sort is on its way fetches the view in the new sort (_coming): it replaced the sort's question, so the
 #           list stayed in the old order while the sort menu showed the new one; another view shown forgets the old view's question at once
 #           (a refetch brought back the view left, and the list said it was loading for ever after an empty view)
@@ -100,6 +101,7 @@ ANSWERED_ROLES: frozenset[int] = frozenset({
 })  # what data answers; Qt asks more of every cell it draws (icon, tick box, background, size...), and those are None without looking
 HEADER_FLAGS: Qt.ItemFlag = Qt.ItemFlag.ItemNeverHasChildren  # not enabled: the arrow keys pass it, it cannot be selected
 MESSAGE_FLAGS: Qt.ItemFlag = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemNeverHasChildren | Qt.ItemFlag.ItemIsDragEnabled  # the list is flat
+NO_HOVER_COLUMNS: frozenset[str] = frozenset({"flag", "status"})  # a click toggles them; their headers say what they are (D-319)
 YES_NO_SORTS: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", "contact"})  # the icon columns: no group headers
 
 
@@ -937,6 +939,8 @@ class MessageListModel(QAbstractTableModel):
             return QBrush(QGuiApplication.palette().color(QPalette.ColorRole.PlaceholderText))  # an action is under way: greyed
         if role == Qt.ItemDataRole.DisplayRole and column_id == "tag":
             return ""  # the delegate draws the tags; the tooltip names them
+        if role == Qt.ItemDataRole.ToolTipRole and column_id in NO_HOVER_COLUMNS:
+            return None
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             text = cell_text(column_id, row, self.recipients_first, self.date_style)
             return text if role == Qt.ItemDataRole.DisplayRole else plain_tip(text)  # a subject or a sender: never markup (D-259)

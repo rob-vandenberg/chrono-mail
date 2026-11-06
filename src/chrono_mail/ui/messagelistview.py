@@ -14,9 +14,11 @@ from chrono_mail.ui.theme import show_focus
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 4.2.393"
+__version__ = "messagelistview.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: a click in the Flag or Unread column acts on that one message and leaves the selection alone, as on the other icons; the moves and
+#           the release of a press on an icon are the icon's too, also a pointer that moves a little never selects or drags (D-319)
 # v4.2.393: the list paints exactly what Qt asks; the rows are no longer moved on screen after a removal (at a scale such as 125 % Qt
 #           cannot move them, and the list painted as if it had: messages shown twice, others missing, D-266)
 # v4.1.381: a selection change of more rows than LARGE_SELECTION_CHANGE paints the list once instead of Qt's step, which asked the model
@@ -144,10 +146,10 @@ EMPTY_TEXT: str = "There are no messages to show in this view."
 class MessageListView(QTreeView):
     """The message list. Dragging messages shows a small badge with their number, never the rows. The selection is grey while the list has no focus."""
 
-    icon_clicked = Signal(int, str)  # row, column id ("contact" or "trash")
+    icon_clicked = Signal(int, str)  # row, column id ("contact", "trash", "flag" or "status")
     header_clicked = Signal(int)  # the row of a group header: fold or unfold it
     width_changed = Signal()  # the room for the columns changed (window, pane or scroll bar)
-    ICON_COLUMNS: tuple[str, ...] = ("contact", "trash")
+    ICON_COLUMNS: tuple[str, ...] = ("contact", "trash", "flag", "status")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -158,6 +160,7 @@ class MessageListView(QTreeView):
         self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
         self.is_header: Callable[[int], bool] = lambda row: False  # whether a row is a group header
         self._watched: QAbstractItemModel | None = None
+        self._press_on_icon: bool = False  # the press under way was on an icon: its moves and release are the icon's too, Qt never saw the press
 
     @override
     def setModel(self, model: QAbstractItemModel | None) -> None:
@@ -187,6 +190,7 @@ class MessageListView(QTreeView):
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._press_on_icon = False
         index = self.indexAt(event.position().toPoint())
         if index.isValid() and self.is_header(index.row()):
             event.accept()
@@ -196,9 +200,25 @@ class MessageListView(QTreeView):
         column_id = self.column_of(index.column()) if index.isValid() else ""
         if event.button() == Qt.MouseButton.LeftButton and column_id in self.ICON_COLUMNS:
             event.accept()  # the click acts on that one message and leaves the selection alone
+            self._press_on_icon = True
             self.icon_clicked.emit(index.row(), column_id)
             return
         super().mousePressEvent(event)
+
+    @override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._press_on_icon and event.buttons() & Qt.MouseButton.LeftButton:
+            event.accept()  # Qt would go on from the press before this one: a selection or a drag of other messages (D-319)
+            return
+        super().mouseMoveEvent(event)
+
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._press_on_icon:
+            self._press_on_icon = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     @override
     def drawRow(self, painter: QPainter, options: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -221,6 +241,7 @@ class MessageListView(QTreeView):
         index = self.indexAt(event.position().toPoint())
         if index.isValid() and (self.is_header(index.row()) or self.column_of(index.column()) in self.ICON_COLUMNS):
             event.accept()  # a quick second click on an icon does not open the message
+            self._press_on_icon = not self.is_header(index.row())
             return
         super().mouseDoubleClickEvent(event)
 

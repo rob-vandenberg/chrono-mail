@@ -69,9 +69,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.542"
+__version__ = "mainwindow.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: a click in the Flag or Unread column goes to mark_by_icon (D-319)
 # v4.4.542: closeEvent: closing waits for no server: connections are hung up, the window stays until the commands have ended and says so after a second
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.538: the status line says "Renaming folder…" and "Renaming folder, updating mail rules…" while a folder is renamed (working)
@@ -1646,12 +1647,15 @@ class MainWindow(QMainWindow):
         self.open_selected()
 
     def _icon_clicked(self, row: int, column_id: str) -> None:
-        """A click on the Delete icon deletes that message; a click on the Contact icon opens the contact."""
+        """A click on the Delete icon deletes that message; a click in the Flag or Unread column turns that mark the other way (D-319); a click on the Contact icon opens the contact."""
         message = self.list_model.row_at(row)
         if message is None:
             return
         if column_id == "trash":
             self.mail_actions.delete_by_icon(message)
+            return
+        if column_id in ("flag", "status"):
+            self.mail_actions.mark_by_icon(message, column_id)
             return
         found = self.list_model.index(row, 0).data(CONTACT_ROLE)
         if column_id == "contact" and isinstance(found, tuple) and len(found) == 2:

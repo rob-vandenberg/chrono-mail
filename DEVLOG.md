@@ -4103,3 +4103,8 @@ Not tried: on screen, only through window tests; the move of a series on Kerio i
 
 What landed: `merged_answer` and `with_delegate` treat Delegate on All as any answer on all of it: every date gets DELEGATED and names the delegate, also a date answered otherwise or delegated earlier to someone else.
 Not tried: on screen; on Kerio.
+
+## 2026-11-06 4.4.560 A click in the Flag or Unread column (D-319)
+
+What landed: a click in the Flag or Unread column of the message list toggles that mark on that one message, the selection stays; the cells have no hover text; the moves and release of a press on any icon column no longer reach Qt, which could select a range or drag another message.
+Not tried: on screen; on a real server; on Windows.

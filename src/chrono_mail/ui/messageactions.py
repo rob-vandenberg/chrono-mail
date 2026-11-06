@@ -31,9 +31,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 4.2.415"
+__version__ = "messageactions.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: mark_by_icon: a click in the Flag or Unread column turns that mark of that one message the other way (D-319)
 # v4.2.415: a selection is moved as single messages in principle (the owner, D-178, D-287): each is checked as if moved alone (in memory),
 #           those that may go are moved together, one command per folder; the rest stay and the status line says why; a drop no longer
 #           refuses all for one scheduled message; Junk and Not junk take only the messages they apply to
@@ -145,7 +146,7 @@ class MessageActions(QObject):
             return
         self._act_flags([(account_id, folder, message_id) for folder, message_id in targets], values, undo, take_away=False)
 
-    def _act_flags(self, targets: list[tuple[str, str, str]], values: dict[str, bool], undo: int, take_away: bool) -> None:
+    def _act_flags(self, targets: list[tuple[str, str, str]], values: dict[str, bool], undo: int, take_away: bool, selection_stays: bool = False) -> None:
         """The marks of these messages (account, folder, message); take_away: they leave the list, as with Junk (D-282)."""
 
         def answered(result: ManyResult) -> None:
@@ -154,7 +155,7 @@ class MessageActions(QObject):
 
         self.act_many(
             MESSAGE_FLAG_MANY, lambda account, folder, messages: ManyFlagParameters(account, folder, messages, seen=values.get("seen"), flagged=values.get("flagged"), undo=undo, leaves=take_away),
-            targets, "", "Could not change", take_away=take_away, each=answered,
+            targets, "", "Could not change", take_away=take_away, each=answered, selection_stays=selection_stays,
         )
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
@@ -167,7 +168,7 @@ class MessageActions(QObject):
             return
         self.mark_messages(self._messages.selected_rows(), seen, flagged)
 
-    def mark_messages(self, rows: Sequence[Placed], seen: bool | None = None, flagged: bool | None = None) -> None:
+    def mark_messages(self, rows: Sequence[Placed], seen: bool | None = None, flagged: bool | None = None, selection_stays: bool = False) -> None:
         values: dict[str, bool] = {}
         if seen is not None:
             values["seen"] = seen
@@ -179,7 +180,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()  # one key press, however many accounts: one step of Undo
         if seen is True and self._messages.reads_away():  # they leave the list of unread mail, all in one action (D-282)
             self._messages.model.leave_when_read([row.message_id for row in rows])
-            self._act_flags(self._state.targets(rows), values, number, take_away=True)
+            self._act_flags(self._state.targets(rows), values, number, take_away=True, selection_stays=selection_stays)
             return
         for account in dict.fromkeys(account_of(row) for row in rows):  # the combined views mix accounts
             self.set_flags([(row.folder, row.message_id) for row in rows if account_of(row) == account], values, account, number)
@@ -256,9 +257,31 @@ class MessageActions(QObject):
         at = self._messages.model.find(clicked.message_id)
         if self._messages.paused_at_edge(keyed=True, rows=[at] if at >= 0 else []):
             return
+        self._on_clicked(clicked, lambda message: self.delete_rows([message]))
+
+    def mark_by_icon(self, clicked: MessageRow, column_id: str) -> None:
+        """A click in the Flag or Unread column of one message turns that mark the other way, in turn with what waits, as a key press (D-319).
+        Marked as read in a list of unread mail with Remove messages from Unread when I mark them as read, it leaves the list (D-282)."""
+        unread = column_id == "status"
+        if unread and "seen" not in clicked.flags and self._messages.reads_away():
+            at = self._messages.model.find(clicked.message_id)
+            if self._messages.paused_at_edge(keyed=True, rows=[at] if at >= 0 else []):
+                return
+
+        def mark(message: MessageRow) -> None:
+            self._messages.model.mark_pending([message.message_id])  # until the answer: a second click would read the mark as it was (D-146)
+            if unread:
+                self.mark_messages([message], seen="seen" not in message.flags, selection_stays=True)
+            else:
+                self.mark_messages([message], flagged="flagged" not in message.flags)
+
+        self._on_clicked(clicked, mark)
+
+    def _on_clicked(self, clicked: MessageRow, act: Callable[[MessageRow], None]) -> None:
+        """What a click on an icon of one message does, in its turn, on the message as it is then."""
         view = self._messages.model.view_number  # the view it was clicked in (a sort keeps it): ids are unique only within one mailbox
 
-        def delete() -> None:
+        def in_turn() -> None:
             model = self._messages.model
             row = model.find(clicked.message_id) if model.view_number == view else -1
             message = model.row_at(row) if row >= 0 else None
@@ -267,9 +290,9 @@ class MessageActions(QObject):
             elif message.message_id in model.pending:
                 self._status.show("Nothing was done: an action on the message is under way", error=True)
             else:
-                self.delete_rows([message])
+                act(message)
 
-        self._messages.after_waiting(delete)
+        self._messages.after_waiting(in_turn)
 
     def delete_permanently(self) -> None:
         """Shift+Delete: remove the selected messages for good, without a stop in Trash, after asking."""
@@ -688,7 +711,7 @@ class MessageActions(QObject):
     def act_many[P](
         self, command: TypedCommand[P, ManyResult], parameters: Callable[[str, str, tuple[str, ...]], P], targets: list[tuple[str, str, str]], finished: str,
         title: str, take_away: bool = True, each: Callable[[ManyResult], None] | None = None, doing: tuple[str, str] | None = None,
-        progress: _Progress | None = None,
+        progress: _Progress | None = None, selection_stays: bool = False,
     ) -> None:
         """An action on many messages (R-08): greyed at the key press (take_away), one command per account and folder, each message's row
         follows its fact; when every answer is in, one line: the summary, or how many could not be done and why (one reason, not one line each)."""
@@ -703,7 +726,7 @@ class MessageActions(QObject):
             progress = _Progress(self._backend, self._status, [message_id for _, _, message_id in targets], doing[0], doing[1], self)
         at_once = take_away and not any(self._state.confirmed_by_server(account) for account, _ in groups)  # POP3, Local Folders: no server's word to wait for
         if take_away:
-            self._messages.take_away([message_id for _, _, message_id in targets], at_once=at_once)
+            self._messages.take_away([message_id for _, _, message_id in targets], at_once=at_once, selection_stays=selection_stays)
         remaining, failures, total = len(groups), list[NotDone](), len(targets)
         model = self._messages.model
 

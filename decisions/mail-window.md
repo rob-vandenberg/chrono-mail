@@ -109,3 +109,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-104]] Sizes and list choices shown live
 - [[D-310]] Calendar messages in mail (iTIP)
 - [[D-311]] A file's extension is never made up
+- [[D-319]] A click in the Flag or Unread column toggles that mark

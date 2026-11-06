@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QPoint, QPointF, QSettings, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QHeaderView, QToolBar
+from PySide6.QtWidgets import QApplication, QDialog, QHeaderView, QToolBar
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, cell_text, date_text, valid_columns
@@ -15,9 +16,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 4.2.436"
+__version__ = "test_ui_columns.py 4.4.560"
 
 # --- Version history ----------------------------------------------------
+# v4.4.560: a click in the Flag or Unread column toggles that mark of that one message; their cells have no hover text (D-319)
 # v4.2.436: Reset (was Standard columns) is the picker's
 # v4.2.430: the stand-in row has to_shown (the person From / To shows for mail one sent, D-295)
 # v3.6.360: the Delete icon test waits for the engine's delete, not only for the row (it leaves at the click since 3.6.353, D-266)
@@ -314,6 +316,152 @@ def test_a_click_on_the_delete_icon_deletes_that_message_only(world: World, qtbo
     qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
     wait(qtbot, lambda: model.rowCount() == 2 and world.backend._pending == {})  # noqa: SLF001 (the row leaves at the click, the engine's delete after it, D-266)
     assert next(info for info in world.call("folder.list", account=world.account_id) if info.path == "Inbox").messages == 2
+
+
+def click_cell(world: World, qtbot: QtBot, row: int, column_id: str) -> None:
+    view, model = world.window.list_view, world.window.list_model
+    rect = view.visualRect(model.index(row, model.columns.index(column_id)))
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+
+
+def marked(world: World, row: int, mark: str) -> bool:
+    found = world.window.list_model.row_at(row)
+    assert found is not None
+    return mark in found.flags
+
+
+TOGGLED_COLUMNS = [("flag", "flagged"), ("status", "seen")]
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_a_click_in_the_column_turns_the_mark_of_that_message_on_and_off_and_leaves_the_selection(world: World, qtbot: QtBot, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    view, model = world.window.list_view, world.window.list_model
+    view.setCurrentIndex(model.index(0, 4))
+    before, others = marked(world, 1, mark), marked(world, 2, mark)
+    click_cell(world, qtbot, 1, column_id)
+    wait(qtbot, lambda: marked(world, 1, mark) != before and world.backend._pending == {})  # noqa: SLF001
+    click_cell(world, qtbot, 1, column_id)
+    wait(qtbot, lambda: marked(world, 1, mark) == before and world.backend._pending == {})  # noqa: SLF001
+    assert marked(world, 2, mark) == others
+    assert [index.row() for index in view.selectionModel().selectedRows()] == [0] and view.currentIndex().row() == 0
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_one_undo_takes_a_click_in_the_column_back(world: World, qtbot: QtBot, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    before = marked(world, 1, mark)
+    click_cell(world, qtbot, 1, column_id)
+    wait(qtbot, lambda: marked(world, 1, mark) != before and world.backend._pending == {} and world.window.act_undo.isEnabled())  # noqa: SLF001
+    world.window.act_undo.trigger()
+    wait(qtbot, lambda: marked(world, 1, mark) == before and world.backend._pending == {})  # noqa: SLF001
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_a_click_in_the_column_of_a_message_under_way_is_no_second_action(world: World, qtbot: QtBot, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    model = world.window.list_model
+    found = model.row_at(1)
+    assert found is not None
+    before = marked(world, 1, mark)
+    model.pending.add(found.message_id)
+    click_cell(world, qtbot, 1, column_id)
+    assert world.backend._pending == {} and marked(world, 1, mark) == before  # noqa: SLF001
+    assert "under way" in world.window.report.label.text()
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_a_second_click_while_the_first_is_on_its_way_is_refused_and_the_row_is_free_again_after_the_answer(world: World, qtbot: QtBot, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    window, model = world.window, world.window.list_model
+    found = model.row_at(1)
+    assert found is not None
+    before = marked(world, 1, mark)
+    window._icon_clicked(1, column_id)  # noqa: SLF001 - both before any answer: an answer comes only when the window runs again
+    assert found.message_id in model.pending
+    window._icon_clicked(1, column_id)  # noqa: SLF001
+    assert "under way" in window.report.label.text()
+    wait(qtbot, lambda: marked(world, 1, mark) != before and world.backend._pending == {} and found.message_id not in model.pending)  # noqa: SLF001
+
+
+def press_move_release(world: World, row: int, column_id: str) -> None:
+    """A click of a hand that moves a little between the press and the release."""
+    view, model = world.window.list_view, world.window.list_model
+    left, nothing = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    start = view.visualRect(model.index(row, model.columns.index(column_id))).center()
+    steps = ((QEvent.Type.MouseButtonPress, start, left, left), (QEvent.Type.MouseMove, start + QPoint(1, 1), nothing, left),
+             (QEvent.Type.MouseMove, start + QPoint(2, 1), nothing, left), (QEvent.Type.MouseButtonRelease, start + QPoint(2, 1), left, nothing))
+    for kind, place, button, held in steps:
+        QApplication.sendEvent(view.viewport(), QMouseEvent(kind, QPointF(place), QPointF(view.viewport().mapToGlobal(place)), button, held, Qt.KeyboardModifier.NoModifier))
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_a_click_with_a_moving_pointer_selects_nothing_when_nothing_was_selected(world: World, qtbot: QtBot, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    view = world.window.list_view
+    view.selectionModel().clear()
+    before = marked(world, 2, mark)
+    press_move_release(world, 2, column_id)
+    wait(qtbot, lambda: marked(world, 2, mark) != before and world.backend._pending == {})  # noqa: SLF001
+    assert view.selectionModel().selectedRows() == []
+
+
+@pytest.mark.parametrize(("column_id", "mark"), TOGGLED_COLUMNS)
+def test_a_click_with_a_moving_pointer_starts_no_drag_of_the_message_clicked_before(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, column_id: str, mark: str) -> None:
+    shown(world, qtbot)
+    view, model = world.window.list_view, world.window.list_model
+    dragged: list[bool] = []
+
+    def record_drag(actions: object) -> None:
+        dragged.append(True)
+
+    monkeypatch.setattr(view, "startDrag", record_drag)
+    rect = view.visualRect(model.index(0, model.columns.index("subject")))
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    before = marked(world, 2, mark)
+    press_move_release(world, 2, column_id)
+    wait(qtbot, lambda: marked(world, 2, mark) != before and world.backend._pending == {})  # noqa: SLF001
+    assert dragged == [] and [index.row() for index in view.selectionModel().selectedRows()] == [0]
+
+
+@pytest.mark.parametrize("column_id", ["flag", "status"])
+def test_a_double_click_with_a_moving_pointer_selects_nothing(world: World, qtbot: QtBot, column_id: str) -> None:
+    shown(world, qtbot)
+    view, model = world.window.list_view, world.window.list_model
+    view.selectionModel().clear()
+    left, nothing = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    start = view.visualRect(model.index(2, model.columns.index(column_id))).center()
+    steps = ((QEvent.Type.MouseButtonPress, start, left, left), (QEvent.Type.MouseButtonRelease, start, left, nothing), (QEvent.Type.MouseButtonDblClick, start, left, left),
+             (QEvent.Type.MouseMove, start + QPoint(2, 1), nothing, left), (QEvent.Type.MouseButtonRelease, start + QPoint(2, 1), left, nothing))
+    for kind, place, button, held in steps:
+        QApplication.sendEvent(view.viewport(), QMouseEvent(kind, QPointF(place), QPointF(view.viewport().mapToGlobal(place)), button, held, Qt.KeyboardModifier.NoModifier))
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert view.selectionModel().selectedRows() == []
+
+
+@pytest.mark.parametrize("column_id", ["flag", "status"])
+def test_a_double_click_in_the_column_opens_nothing(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, column_id: str) -> None:
+    shown(world, qtbot)
+    view, model = world.window.list_view, world.window.list_model
+    opened: list[bool] = []
+    monkeypatch.setattr(world.window, "open_selected", lambda: opened.append(True))
+    rect = view.visualRect(model.index(1, model.columns.index(column_id)))
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())  # as a person: the first click, then the double click
+    qtbot.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert opened == []
+
+
+def test_the_flag_and_unread_cells_have_no_hover_text_and_their_headers_have(world: World, qtbot: QtBot) -> None:
+    shown(world, qtbot)
+    model = world.window.list_model
+    click_cell(world, qtbot, 0, "flag")
+    wait(qtbot, lambda: marked(world, 0, "flagged") and world.backend._pending == {})  # noqa: SLF001
+    for column_id, name in (("flag", "Flagged"), ("status", "Unread")):
+        column = model.columns.index(column_id)
+        assert model.index(0, column).data(Qt.ItemDataRole.ToolTipRole) is None and model.index(1, column).data(Qt.ItemDataRole.ToolTipRole) is None
+        assert model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole) == name
+    assert model.index(0, model.columns.index("subject")).data(Qt.ItemDataRole.ToolTipRole)  # the others keep theirs
 
 
 def test_the_contact_icon_shows_for_contacts_and_opens_the_contact(world: World, qtbot: QtBot) -> None:
