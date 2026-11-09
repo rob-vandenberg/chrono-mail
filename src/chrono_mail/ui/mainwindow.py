@@ -69,9 +69,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.560"
+__version__ = "mainwindow.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: Settings > Message list > Secondary sort is taken in at once, the list rearranged in place (D-320)
 # v4.4.560: a click in the Flag or Unread column goes to mark_by_icon (D-319)
 # v4.4.542: closeEvent: closing waits for no server: connections are hung up, the window stays until the commands have ended and says so after a second
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
@@ -1231,6 +1232,8 @@ class MainWindow(QMainWindow):
             self.act_conversations.setChecked(after.conversations)
         if differ("list_layout", "date_style", "tag_text_colour"):
             self.columns.take_in()  # in place: the rows and the selection stay
+        if differ("secondary_sort"):
+            self.messages.take_in_secondary_sort()  # in place: the rows and the selection stay (D-320)
         if looks or differ("list_scale", "list_density"):
             self.columns.apply_list_look(after.list_scale if self.prefs.trying is not None else None)  # tried: the size the slider shows
         if differ("reading_pane"):

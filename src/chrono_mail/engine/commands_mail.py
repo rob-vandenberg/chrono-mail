@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.542"
+__version__ = "commands_mail.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: ties_oldest_first: messages with the same value oldest first by when they were received, otherwise newest first (D-320)
 # v4.4.542: mail_send counts as a send at the end of the program
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: a part that repeats the card leaves the file row; an attachment says whether it is a calendar text (D-310)
@@ -754,6 +755,7 @@ class ListParameters:
         default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder; unread ... contact: yes first unless oldest_first)")
     )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
+    ties_oldest_first: bool = field(default=False, metadata=option("Messages with the same value oldest first, by when they were received (otherwise newest first)"))
     offset: int = field(default=0, metadata=option("How many messages to skip"))
     limit: int = field(default=50, metadata=option("How many messages to show"))
     unread_only: bool = field(default=False, metadata=option("Only unread messages"))
@@ -774,16 +776,18 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
         total = mailbox.index.count(folder)
         times = mailbox.timed(folder)
         if times is not None and _snooze_sort(parameters.sort, folder):
-            everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
+            everything = mailbox.index.page(folder, SortField.DATE, not parameters.ties_oldest_first, 0, total, parameters.unread_only)
             rows = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
-            everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
+            everything = mailbox.index.page(folder, SortField.DATE, not parameters.ties_oldest_first, 0, total, parameters.unread_only)
             rows = _by_contact(engine, everything, not parameters.oldest_first, shows_recipients(mailbox, folder))[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.tag:
             only = SearchFilter(unread=True if parameters.unread_only else None, tag=parameters.tag)
-            rows = mailbox.index.search("", folder, only, parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
+            rows = mailbox.index.search("", folder, only, parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first, parameters.ties_oldest_first)
         else:
-            rows = mailbox.index.page(folder, _sort_field(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
+            rows = mailbox.index.page(
+                folder, _sort_field(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only, parameters.ties_oldest_first,
+            )
         return ListResult("/".join(folder), total, mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows, times))
 
 
@@ -796,6 +800,7 @@ class PositionParameters:
         default="date", metadata=option("The sort order, as for message.list")
     )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
+    ties_oldest_first: bool = field(default=False, metadata=option("Messages with the same value oldest first, by when they were received (otherwise newest first)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -808,9 +813,9 @@ def message_position(engine: Engine, parameters: PositionParameters) -> Position
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder)
         if _special_order(parameters.sort, folder):
-            ordered = _ordered_ids(engine, mailbox, folder, parameters.sort, parameters.oldest_first)
+            ordered = _ordered_ids(engine, mailbox, folder, parameters.sort, parameters.oldest_first, parameters.ties_oldest_first)
             return PositionResult(next((number for number, message_id in enumerate(ordered) if message_id == parameters.message), None))
-        return PositionResult(mailbox.index.position(folder, parameters.message, _sort_field(parameters.sort), not parameters.oldest_first))
+        return PositionResult(mailbox.index.position(folder, parameters.message, _sort_field(parameters.sort), not parameters.oldest_first, ties_oldest_first=parameters.ties_oldest_first))
 
 
 def _special_order(sort: str, folder: tuple[str, ...]) -> bool:
@@ -818,12 +823,12 @@ def _special_order(sort: str, folder: tuple[str, ...]) -> bool:
     return _snooze_sort(sort, folder) or sort == CONTACT_SORT
 
 
-def _ordered_ids(engine: Engine, mailbox: Mailbox, folder: tuple[str, ...], sort: str, oldest_first: bool) -> list[str]:
+def _ordered_ids(engine: Engine, mailbox: Mailbox, folder: tuple[str, ...], sort: str, oldest_first: bool, ties_oldest_first: bool) -> list[str]:
     """The ids of every message of a folder in the order message.list gives them."""
     if not _special_order(sort, folder):
-        return [store_id for store_id, _, _ in mailbox.index.ordered(folder=folder, sort=_sort_field(sort), descending=not oldest_first)]
+        return [store_id for store_id, _, _ in mailbox.index.ordered(folder=folder, sort=_sort_field(sort), descending=not oldest_first, ties_oldest_first=ties_oldest_first)]
     times = mailbox.timed(folder)
-    everything = mailbox.index.page(folder, SortField.DATE, True, 0, mailbox.index.count(folder))
+    everything = mailbox.index.page(folder, SortField.DATE, not ties_oldest_first, 0, mailbox.index.count(folder))
     ordered = _by_snooze(everything, times, oldest_first) if times is not None and sort != CONTACT_SORT else _by_contact(engine, everything, not oldest_first, shows_recipients(mailbox, folder))
     return [message.store_id for message in ordered]
 
@@ -976,6 +981,7 @@ class SearchParameters:
         default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder; unread ... contact: yes first unless oldest_first)")
     )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
+    ties_oldest_first: bool = field(default=False, metadata=option("Messages with the same value oldest first, by when they were received (otherwise newest first)"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.groups)"))
     stay: tuple[str, ...] = field(default=(), metadata=option("A message that stays although it no longer matches unread, flagged or tag: it was changed while shown (repeat for more)"))
@@ -1044,13 +1050,16 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         times = mailbox.timed(folder)
         if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, not parameters.ties_oldest_first)
             found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING, SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING, SortField.DATE, not parameters.ties_oldest_first)
             found = _by_contact(engine, everything, not parameters.oldest_first, shows_recipients(mailbox, None if parameters.subfolders else folder))[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         else:
-            found = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
+            found = mailbox.index.search(
+                parameters.query, folder, _search_filter(parameters, mailbox), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first,
+                parameters.ties_oldest_first,
+            )
         return _rows(mailbox, found, times)
 
 
@@ -1102,7 +1111,7 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         plain = not parameters.query and parameters.folder and _search_filter(parameters, mailbox) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
         if plain and parameters.folder is not None:
-            position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first)).position
+            position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first, parameters.ties_oldest_first)).position
         else:
             everything = message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))
             position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message), None)
@@ -1193,7 +1202,7 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         place = mailbox.store.account_id
         if parameters.folder is not None and not parameters.query and _search_filter(parameters, mailbox) == SearchFilter():
-            ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
+            ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first, parameters.ties_oldest_first)
         else:
             ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
         shown = set(ordered)

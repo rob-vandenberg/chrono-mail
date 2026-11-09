@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.4.560"
+__version__ = "messagelistpane.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: the view asks for messages with the same value in the order Secondary sort sets, and follows a change of it in place (D-320)
 # v4.4.560: take_away: selection_stays: a message that is not selected leaves at a click on its unread mark, and the selection stays as it is (D-319)
 # v4.2.433: the current message stays in view when a selected message moves to its new place in the sort
 # v4.2.432: the folders that show their recipients are the engine's list (RECIPIENT_VIEWS), one rule with the Contact sort (D-295)
@@ -297,14 +298,15 @@ class MessageListPane(QObject):
         flagged = True if view.flagged else None
         attachments = True if view.attachments else None
         advanced = view.advanced
+        ties = self._prefs.applied.secondary_sort == "oldest"  # Settings > Message list > Secondary sort (D-320)
         if view.combined is not None and view.searching and view.scope is SearchScope.ALL:  # All folders is every folder of every account (D-287)
             return with_days(ViewSpec(
-                "", None, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments, combined=EVERYWHERE, tag=view.tag,
+                "", None, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments, combined=EVERYWHERE, tag=view.tag, ties_oldest_first=ties,
             ), advanced)
         if view.combined is not None:  # the filters narrow a Favorites or Tags view as they narrow a folder (R-03)
             return with_days(ViewSpec(
                 "", None, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments,
-                combined=view.combined, combined_accounts=view.combined_accounts, combined_tag=view.combined_tag or None, tag=view.tag,
+                combined=view.combined, combined_accounts=view.combined_accounts, combined_tag=view.combined_tag or None, tag=view.tag, ties_oldest_first=ties,
             ), advanced)
         folder = view.folder
         if view.searching and view.scope is SearchScope.ALL:
@@ -315,7 +317,7 @@ class MessageListPane(QObject):
         grouped = self._conversations_on() and view.kind == EntryKind.FOLDER and not (query or unread or flagged or attachments or view.advanced is not None)
         return with_days(ViewSpec(
             view.account, folder, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments,
-            conversations=grouped and view.tag is None, tag=view.tag, subfolders=subfolders,
+            conversations=grouped and view.tag is None, tag=view.tag, subfolders=subfolders, ties_oldest_first=ties,
         ), advanced)
 
     def apply_view(self) -> None:
@@ -398,6 +400,10 @@ class MessageListPane(QObject):
         """The sort of the folder about to be shown (its setup): taken into use without asking the list, which is asked next."""
         self.sort, self.oldest_first = sort, oldest_first
         self.update_sort_menu()
+
+    def take_in_secondary_sort(self) -> None:
+        """Settings > Message list > Secondary sort changed: the same messages in the new order, the selected ones stay selected (D-320)."""
+        self.model.rearrange(self.view_spec())
 
     def set_sort(self, sort: str, oldest_first: bool) -> None:
         self.sort, self.oldest_first = sort, oldest_first

@@ -59,9 +59,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.510"
+__version__ = "settingsdialog.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: Message list: Secondary sort, order by received, newest or oldest first (D-320)
 # v4.4.510: the Calendar page gone: its tick is per account now, in Edit account (D-310)
 # v4.4.505: the Calendar page: "Send my answer to an invitation", on by default (D-310)
 # v4.2.467: Settings > Reading: Widen the reading pane to fit the message (D-304)
@@ -153,6 +154,10 @@ MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
 )
 QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quoted text"), ("below", "My answer below the quoted text"), ("none", "Do not quote the original"))
 SCHEME_LABELS: tuple[tuple[str, str], ...] = (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark"))
+
+
+# Secondary sort: the choice continues the label as a sentence, so it starts in lower case (the owner, D-320).
+SECONDARY_SORT_LABELS: tuple[tuple[str, str], ...] = (("newest", "order by received, newest first"), ("oldest", "order by received, oldest first"))
 
 
 def _fill_combo(box: QComboBox, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:
@@ -645,6 +650,7 @@ class SettingsDialog(QDialog):
         self.pane_box = _fill_combo(part(page, QComboBox, "paneBox"), READING_PANES, self._chosen.reading_pane)
         self.date_box = _fill_combo(part(page, QComboBox, "dateBox"), DATE_STYLES, self._chosen.date_style)
         self.density_box = _fill_combo(part(page, QComboBox, "densityBox"), DENSITY_LABELS, self._chosen.list_density)
+        self.secondary_sort_box = _fill_combo(part(page, QComboBox, "secondarySortBox"), SECONDARY_SORT_LABELS, self._chosen.secondary_sort)
         self.conversations = part(page, QCheckBox, "conversations")
         self.conversations.setChecked(self._chosen.conversations)
         self.tag_text_colour = part(page, QCheckBox, "tagTextColour")
@@ -962,6 +968,7 @@ class SettingsDialog(QDialog):
             list_density=str(self.density_box.currentData()), list_scale=scale.factor_at(self.list_slider.value()), conversations=self.conversations.isChecked(),
             show_favorites=bool(sidebar["show_favorites"]), show_local_folders=bool(sidebar["show_local_folders"]), show_tags=bool(sidebar["show_tags"]),
             tag_text_colour=self.tag_text_colour.isChecked(), unread_leaves_on_read=self.unread_leaves_on_read.isChecked(),
+            secondary_sort=str(self.secondary_sort_box.currentData()),
             mark_read=str(self.mark_read_box.currentData()), mark_read_delay_ms=self.mark_read_delay.value(), reading_scale=scale.factor_at(self.reading_slider.value()),
             prefer_plain=self.prefer_plain.isChecked(), remote_always=self.remote_always.isChecked(), remote_senders=senders, links_ask=self.links_ask.isChecked(),
             reading_pane_fits_message=self.fits_message.isChecked(),

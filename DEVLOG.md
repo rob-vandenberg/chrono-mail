@@ -4112,3 +4112,10 @@ Not tried: on screen; on a real server; on Windows.
 ## 2026-11-06 4.4.561 Window tests that reopen a window
 
 What landed: `World.restart_backend` in `tests/ui/world.py`; `tests/ui/test_ui_window.py::test_sort_order_and_selected_folder_are_remembered` and seven tests of `tests/ui/test_ui_startup_view.py` pass again. They failed since 4.4.542: closing ends the backend, which then drops every answer, and they opened a new window on it. The program itself was right.
+
+## 2026-11-09 4.4.562 Secondary sort (D-320)
+
+What landed: Settings > Message list > Secondary sort, "order by received, newest first" (default) or "oldest first"; every sort but Received orders messages with the same value by received time, then by row, in every list (folders, searches, Favorites, Tags, Contact and Snoozed sorts, the merge across accounts). Index format 21: two sort indexes per sort (ties newest, ties oldest) plus their unread copies; a format-20 index is upgraded at once and its indexes made afterwards, the old ones dropped. The engine's commands take `ties_oldest_first`.
+Tests: `tests/test_index_secondary_sort.py` (21, all fail on 4.4.561); old tests updated to the format-21 index names and the new tie order (`tests/index_formats.py` keeps the format-20 sort indexes; `test_index_unread_sorts.py`, `test_index_mark_views.py`, `test_index_covering_sorts.py`, `test_index_index.py`). Pyrefly (Linux, win32) and the layer check clean on the program.
+Measured: a copy of the largest index (140,542 messages): upgrade 0.0 s, 79 steps 4.4 s with the file cached, 646 MB to 744 MB.
+Not tried: on screen; on Windows; on a cold spinning disk; a window test of the setting (kept minimal, the owner).

@@ -1,3 +1,4 @@
+import re
 import dataclasses
 import sqlite3
 import threading
@@ -17,9 +18,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 4.4.539"
+__version__ = "test_index_index.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: the Unread index by its format 21 names; messages of one sender in the Secondary sort's order (D-320)
 # v4.4.539: sort indexes by the folder's id (D-314)
 # v4.2.471: a yes/no sort with no first may be served by any covering sort index (D-306)
 # v4.2.406: a search with subfolders finds every folder inside, at any depth, and no sibling whose name starts the same (D-287)
@@ -340,7 +342,7 @@ def test_unread_counts_seek_the_index_of_the_unread_sort(tmp_path: Path) -> None
     index = filled(tmp_path, 50)
     plan = " | ".join(str(row[3]) for row in index._connection.execute(  # noqa: SLF001
         "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder_id = ? AND (m.flags & 1) = 0", (index._folder_id(INBOX),)))
-    assert "messages_by_unread (folder_id=? AND <expr>=?)" in plan, plan  # only the unread entries of the folder are visited
+    assert re.search(r"messages_by_unread(_ties_oldest)? \(folder_id=\? AND <expr>=\?\)", plan) is not None, plan  # only the unread entries of the folder are visited
     assert index.count(INBOX, unread_only=True) == 25
 
 
@@ -725,7 +727,7 @@ def test_sorting_and_grouping_by_sender_follow_the_name_the_from_column_shows(tm
     groups = index.groups(bounds_at(1), folder=INBOX, sort=SortField.SENDER, descending=False)
     assert [(group.value, group.count) for group in groups] == [("Corner Shop", 1), ("Corner Shop Team", 2), ("dues@example.com", 1), ("Zeta", 1)]
     listed = index.page(INBOX, SortField.SENDER, descending=False)
-    assert [message.store_id[-1] for message in listed][:3] == ["3", "1", "2"]  # the quoted name first, then both of one name together
+    assert [message.store_id[-1] for message in listed][0] == "3" and {message.store_id[-1] for message in listed[1:3]} == {"1", "2"}  # the quoted name first, then both of one name together (in the Secondary sort's order, D-320)
 
 
 def test_only_messages_with_a_send_time_are_scheduled_soonest_first(tmp_path: Path) -> None:

@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -16,9 +17,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_unread_sorts.py 4.4.539"
+__version__ = "test_index_unread_sorts.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: the sort indexes by their format 21 names (D-320)
 # v4.4.539: format 17 starts from format 19; sort indexes by the folder's id (D-314)
 # v4.2.471: format 19: the unread copies are sort indexes as 19 has them (D-306)
 # v4.2.470: the count of a folder's marked mail is no list question; Flagged gathers now (D-305)
@@ -76,7 +78,7 @@ def test_an_unread_view_sorted_by_any_column_reads_only_its_unread_mail(tmp_path
     plans = _plans(index, ran)
     assert len(plans) == 2
     for plan in plans:
-        assert "_unread (folder_id=?)" in plan or "messages_by_unread (folder_id=? AND" in plan, plan  # through an unread sort index, or the Unread one
+        assert "_unread (folder_id=?)" in plan or re.search(r"messages_by_unread(_ties_oldest)? \(folder_id=\? AND", plan) is not None, plan  # through an unread sort index, or the Unread one
         assert "SCAN m" not in plan, plan  # never every message
         if kept:
             assert "USING INTEGER PRIMARY KEY (rowid=?)" in plan, plan  # the outer list only by the ids found: never the folder's sort order
@@ -116,7 +118,7 @@ def test_a_folder_mostly_unread_that_keeps_a_message_walks_its_sort_order_only_a
     index._connection.set_trace_callback(None)  # noqa: SLF001
     assert [row.subject for row in found] == ["Mail 01", "Mail 02", "Mail 03", "Mail 04", "Mail 05"]
     plans = _plans(index, ran)
-    assert len(plans) == 1 and "messages_by_subject (folder_id=?)" in plans[0] and "TEMP B-TREE" not in plans[0], plans
+    assert len(plans) == 1 and re.search(r"messages_by_subject_ties_\w+ \(folder_id=\?\)", plans[0]) is not None and "TEMP B-TREE" not in plans[0], plans
 
 
 def test_the_whole_order_and_the_count_of_a_folder_mostly_unread_that_keeps_a_message_gather_its_unread_mail(tmp_path: Path) -> None:

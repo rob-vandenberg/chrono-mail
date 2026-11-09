@@ -52,3 +52,4 @@ See also: [[security]]
 - [[D-071]] Items kept as iCalendar and vCard
 - [[D-072]] The calendar and contact store
 - [[D-128]] Tags live in the properties file
+- [[D-320]] Secondary sort: messages with the same value by when they were received

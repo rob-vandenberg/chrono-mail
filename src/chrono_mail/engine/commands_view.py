@@ -14,9 +14,10 @@ from chrono_mail.index.database import writes
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 4.2.426"
+__version__ = "commands_view.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: message.order orders messages with the same value as ties_oldest_first says (D-320)
 # v4.2.426: a Favorites view sorted by when its messages leave (Snoozed, Scheduled, the Outbox) is always read whole, as its folder
 # v4.2.408: the filters are read with the mailbox (the days of snoozed and waiting messages, D-288)
 # v3.6.350: every order answer carries a write stamp of its index files (how many changes were written), read before the order (RV-206)
@@ -100,7 +101,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
                 settled_stamp(before, [mailbox.index.path]),
             )
         filters = _search_filter(parameters, mailbox)
-        found = mailbox.index.ordered(parameters.query, folder, filters, _sort_field(parameters.sort), not parameters.oldest_first, None if parameters.whole else first)
+        found = mailbox.index.ordered(parameters.query, folder, filters, _sort_field(parameters.sort), not parameters.oldest_first, None if parameters.whole else first, parameters.ties_oldest_first)
         if parameters.whole:
             total, unread_total = len(found), sum(1 for _, _, unread in found if unread)
         elif folder is not None and not parameters.query and filters == SearchFilter():

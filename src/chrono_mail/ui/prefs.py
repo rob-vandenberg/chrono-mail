@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.4.510"
+__version__ = "prefs.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: secondary_sort: messages with the same value by when they were received, newest (the default) or oldest first (D-320)
 # v4.4.510: send_invitation_answers gone: the choice is per account now (D-310)
 # v4.4.505: send_invitation_answers: Settings > Calendar's tick: Chrono Mail makes the answer to an invitation for the composer (D-310)
 # v4.2.467: reading_pane_fits_message: the reading pane widens to fit a message (off by default: it keeps the width the person gave it, D-304)
@@ -87,6 +88,7 @@ DEFAULTS: dict[str, object] = {
     "show_tags": True,  # the Tags at the bottom of the folder list
     "tag_text_colour": False,  # the text of a tagged message in the colour of its first tag
     "unread_leaves_on_read": False,  # a message the person marks as read leaves a list of unread mail (D-282)
+    "secondary_sort": "newest",  # messages with the same value in a sort: by when they were received, newest or oldest first (D-320)
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own
     "mark_read_delay_ms": 700,
@@ -109,6 +111,7 @@ COLOR_SCHEMES: tuple[str, ...] = ("system", "light", "dark")
 LIST_LAYOUTS: tuple[str, ...] = ("columns", "cards")
 READING_PANES: tuple[str, ...] = ("right", "bottom", "off")
 DATE_STYLES: tuple[str, ...] = ("short", "full", "iso")
+SECONDARY_SORTS: tuple[str, ...] = ("newest", "oldest")  # messages with the same value by when they were received (D-320)
 MARK_READ: tuple[str, ...] = ("delay", "never", "window")
 REPLY_QUOTES: tuple[str, ...] = ("above", "below", "none")
 SCHEDULED_REFRESHES: tuple[str, ...] = ("send_receive", "receive", "send")
@@ -291,6 +294,7 @@ class Preferences:
     show_tags: bool = True
     tag_text_colour: bool = False
     unread_leaves_on_read: bool = False
+    secondary_sort: str = "newest"
     mark_read: str = "delay"
     mark_read_delay_ms: int = 700
     reading_scale: float = 1.0
@@ -310,7 +314,7 @@ class Preferences:
 
 _LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999)}
 _CHOICES: dict[str, tuple[str, ...]] = {
-    "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES,
+    "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES, "secondary_sort": SECONDARY_SORTS,
     "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES, "scheduled_refresh": SCHEDULED_REFRESHES, "start_refresh": SCHEDULED_REFRESHES,
 }
 _KEY_OF: dict[str, str] = {"startup": "startup_view"}  # the field and its name in the settings file, where they differ
@@ -358,6 +362,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         show_tags=get_bool(settings, "show_tags"),
         tag_text_colour=get_bool(settings, "tag_text_colour"),
         unread_leaves_on_read=get_bool(settings, "unread_leaves_on_read"),
+        secondary_sort=choice("secondary_sort"),
         mark_read=choice("mark_read"),
         mark_read_delay_ms=number("mark_read_delay_ms"),
         reading_scale=_factor(settings, "reading_scale"),

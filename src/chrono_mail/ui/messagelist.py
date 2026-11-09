@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.4.560"
+__version__ = "messagelist.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: ViewSpec.ties_oldest_first: the Secondary sort asked of the engine; only the order differs with it (D-320)
 # v4.4.560: the cells of the Flag and Unread columns have no hover text; their headers have (D-319)
 # v4.2.457: a refetch while a new sort is on its way fetches the view in the new sort (_coming): it replaced the sort's question, so the
 #           list stayed in the old order while the sort menu showed the new one; another view shown forgets the old view's question at once
@@ -172,6 +173,7 @@ class ViewSpec:
     snoozed_to: str | None = None
     send_at_from: str | None = None  # when a waiting message is sent
     send_at_to: str | None = None
+    ties_oldest_first: bool = False  # messages with the same value oldest first by when they were received (Secondary sort, D-320)
 
 
 def with_days(spec: ViewSpec, advanced: AdvancedSearch | None) -> ViewSpec:
@@ -448,7 +450,7 @@ class MessageListModel(QAbstractTableModel):
     @staticmethod
     def _same_messages(old: ViewSpec, new: ViewSpec) -> bool:
         """Whether two views hold the same messages (only the order may differ)."""
-        return dataclasses.replace(old, sort=new.sort, oldest_first=new.oldest_first) == new
+        return dataclasses.replace(old, sort=new.sort, oldest_first=new.oldest_first, ties_oldest_first=new.ties_oldest_first) == new
 
     def _key_at_row(self, row: int) -> str | None:
         position = self.message_position(row)
@@ -569,6 +571,7 @@ class MessageListModel(QAbstractTableModel):
                 view=typing.cast(ViewName, spec.combined), tag=spec.combined_tag or "", accounts=spec.combined_accounts, query=spec.query, unread=spec.unread,
                 flagged=spec.flagged, has_attachments=spec.has_attachments, filter_tag=spec.tag, date_from=spec.date_from, date_to=spec.date_to,
                 minimum_size=spec.minimum_size, maximum_size=spec.maximum_size, sort=typing.cast(CombinedSort, spec.sort), oldest_first=spec.oldest_first,
+                ties_oldest_first=spec.ties_oldest_first,
                 sent_from=spec.sent_from, sent_to=spec.sent_to, snoozed_from=spec.snoozed_from, snoozed_to=spec.snoozed_to,
                 send_at_from=spec.send_at_from, send_at_to=spec.send_at_to,
                 stay_messages=tuple(message for _, message in kept), stay_mailboxes=tuple(mailbox for mailbox, _ in kept),
@@ -582,6 +585,7 @@ class MessageListModel(QAbstractTableModel):
             sent_from=spec.sent_from, sent_to=spec.sent_to, snoozed_from=spec.snoozed_from, snoozed_to=spec.snoozed_to,
             send_at_from=spec.send_at_from, send_at_to=spec.send_at_to,
             conversations=spec.conversations, sort=typing.cast(ListSort, spec.sort), oldest_first=spec.oldest_first, stay=tuple(stay),
+            ties_oldest_first=spec.ties_oldest_first,
             whole=whole, first=PAGE_SIZE, rows_of=tuple(rows_of), headings=headings,
         )
 

@@ -110,3 +110,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-310]] Calendar messages in mail (iTIP)
 - [[D-311]] A file's extension is never made up
 - [[D-319]] A click in the Flag or Unread column toggles that mark
+- [[D-320]] Secondary sort: messages with the same value by when they were received

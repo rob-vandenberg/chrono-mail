@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.4.539"
+__version__ = "schema.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: format 21: every sort but the date has two sort indexes, one per order of the messages with the same value (D-320)
 # v4.4.539: format 20: a folder is a row of its own (FOLDERS_TABLE), each message holds its id, so a rename changes one row (D-314); every
 #           index has a new name, so an upgrade makes what it needs beside the old ones (FIRST_INDEXES, OLD_MESSAGES)
 # v4.2.471: format 19: every sort index also holds each message's id (SORT_INDEXES), so a sort reads only its index (D-306);
@@ -31,7 +32,7 @@ __version__ = "schema.py 4.4.539"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 20  # 20: a folder is a row of its own and each message holds its id, so a rename changes one row (D-314; 19 to 11 upgraded in place: the rows copied at once, the sort indexes made and the old rows dropped afterwards); 19: every sort index also holds each message's id (SORT_INDEXES, D-306; 18 to 11 upgraded in place, the indexes remade afterwards); 18: every sort index has a copy holding only unread mail (UNREAD_INDEXES, D-305; 17 to 11 upgraded in place, the copies made afterwards); 17: to_shown filled in again from each message's own addresses (16 read them back from the joined recipients, which a name that looks like an address breaks); 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
+SCHEMA_VERSION: int = 21  # 21: every sort but the date has an index per order of the messages with the same value (D-320; 20 is upgraded in place, the indexes made and the old ones dropped afterwards); 20: a folder is a row of its own and each message holds its id, so a rename changes one row (D-314; 19 to 11 upgraded in place: the rows copied at once, the sort indexes made and the old rows dropped afterwards); 19: every sort index also holds each message's id (SORT_INDEXES, D-306; 18 to 11 upgraded in place, the indexes remade afterwards); 18: every sort index has a copy holding only unread mail (UNREAD_INDEXES, D-305; 17 to 11 upgraded in place, the copies made afterwards); 17: to_shown filled in again from each message's own addresses (16 read them back from the joined recipients, which a name that looks like an address breaks); 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
 FOLDER_SEPARATOR: str = "\x1f"
 SENT_FILL_KEY: str = "sent_filled_to"  # meta, after an upgrade in place: the row id up to which sent, has_attachments, the people columns and received_by were read from the messages; gone when all are done
 UPGRADE_FROM_11: tuple[str, ...] = (  # format 12 only adds the sent moment: the old index stays usable, sent is filled in afterwards (index.fill-sent)
@@ -85,33 +86,48 @@ UNREAD_INDEXES: tuple[str, ...] = tuple(
 # index, never the rows; the read mark is not in them (a mark change would rewrite every one): the unread ones come from the Unread index (one row read per message: 1.7 s on a spinning disk for a folder of 16,000, 0.07 s from the index).
 # The unread copies of D-305 the same. Every index has a name no format before 20 had: the upgrade makes the ones it needs at once beside the
 # old ones, whose removal reads all their pages (74 s on a cold disk); the rest follow afterwards, one at a time (Index.make_sort_index).
+# Format 21 (D-320): every sort but the date has two, one per order of the messages with the same value (the Secondary sort setting): the
+# received time descending (ties newest first when the sort goes up, oldest first when it goes down) and ascending; SQLite reads an index both
+# ways, never in mixed directions, so the four orders each read an index alone.
+# The sort keys are written exactly like _SORT_COLUMN in index.py, or SQLite does not use these indexes.
+_SORT_KEYS: tuple[tuple[str, str], ...] = (
+    ("sent", "sent"),
+    ("subject", "subject COLLATE NOCASE"),
+    ("sender_name", "sender_name COLLATE NOCASE"),  # the sender as the From column shows it
+    ("size", "size"),
+    ("to_shown", "to_shown COLLATE NOCASE"),  # From / To where it shows the recipients (D-295)
+    ("unread", "(flags & 1)"),
+    ("flagged", "((flags & 4) <> 0)"),
+    ("replied", "((flags & 2) <> 0)"),
+    ("attachment", "has_attachments"),
+    ("preview", "preview COLLATE NOCASE"),
+    ("sender", "sender COLLATE NOCASE"),  # the people columns sort like From (D-291)
+    ("sender_address", "sender_address COLLATE NOCASE"),
+    ("recipient_names", "recipient_names COLLATE NOCASE"),
+    ("recipient_addresses", "recipient_addresses COLLATE NOCASE"),
+)
 _SORTED_BY: tuple[tuple[str, str], ...] = (
     ("messages_by_date", "folder_id, date DESC, id DESC"),
-    ("messages_by_sent", "folder_id, sent DESC, id DESC"),
-    ("messages_by_subject", "folder_id, subject COLLATE NOCASE, id"),
-    ("messages_by_sender_name", "folder_id, sender_name COLLATE NOCASE, id"),  # the sender as the From column shows it
-    ("messages_by_size", "folder_id, size, id"),
-    ("messages_by_to_shown", "folder_id, to_shown COLLATE NOCASE, id"),  # From / To where it shows the recipients (D-295)
-    # The sort keys of the yes/no sorts are written exactly like _SORT_COLUMN in index.py, or SQLite does not use these indexes.
-    ("messages_by_unread", "folder_id, (flags & 1), date DESC, id DESC"),  # also serves unread counts: (flags & 1) = 0 is a seek
-    ("messages_by_flagged", "folder_id, ((flags & 4) <> 0), date, id"),
-    ("messages_by_replied", "folder_id, ((flags & 2) <> 0), date, id"),
-    ("messages_by_attachment", "folder_id, has_attachments, date, id"),
-    ("messages_by_preview", "folder_id, preview COLLATE NOCASE, date, id"),
-    ("messages_by_sender", "folder_id, sender COLLATE NOCASE, id"),  # the people columns sort like From (D-291)
-    ("messages_by_sender_address", "folder_id, sender_address COLLATE NOCASE, id"),
-    ("messages_by_recipient_names", "folder_id, recipient_names COLLATE NOCASE, id"),
-    ("messages_by_recipient_addresses", "folder_id, recipient_addresses COLLATE NOCASE, id"),
+    ("messages_by_unread", "folder_id, (flags & 1), date DESC, id DESC"),  # also serves unread counts: (flags & 1) = 0 is a seek; its name kept, as before 21
+    *((f"messages_by_{name}_ties_newest", f"folder_id, {key}, date DESC, id DESC") for name, key in _SORT_KEYS if name != "unread"),
+    *((f"messages_by_{name}_ties_oldest", f"folder_id, {key}, date, id") for name, key in _SORT_KEYS),
 )
-# A sort by a mark computes its key from flags: those indexes hold flags too, or SQLite reads every row for it (they change with that mark anyway).
-_MARKS: dict[str, str] = {"messages_by_unread": ", flags", "messages_by_flagged": ", flags", "messages_by_replied": ", flags"}
+# The Unread index serves the date sort of unread mail, and the unread sorts have no unread copy.
+_NO_UNREAD_COPY: frozenset[str] = frozenset({"messages_by_date", "messages_by_unread", "messages_by_unread_ties_oldest"})
+
+
+def _marks(columns: str) -> str:
+    """A sort by a mark computes its key from flags: those indexes hold flags too, or SQLite reads every row for it (they change with that mark anyway)."""
+    return ", flags" if "(flags" in columns else ""
+
+
 SORT_INDEX_PREFIX: str = "folder_"  # a sort index's name is the name it had before format 20 after this
 SORT_INDEXES: tuple[str, ...] = (
-    *(f"CREATE INDEX {SORT_INDEX_PREFIX}{name} ON messages ({columns}, store_id{_MARKS.get(name, '')})" for name, columns in _SORTED_BY),
+    *(f"CREATE INDEX {SORT_INDEX_PREFIX}{name} ON messages ({columns}, store_id{_marks(columns)})" for name, columns in _SORTED_BY),
     *(
         f"CREATE INDEX {SORT_INDEX_PREFIX}{name}_unread ON messages ({columns}, store_id, flags) WHERE (flags & 1) = 0"  # flags: the condition is read from it
         for name, columns in _SORTED_BY
-        if name not in ("messages_by_date", "messages_by_unread")  # the Unread index serves the date sort of unread mail
+        if name not in _NO_UNREAD_COPY
     ),
 )
 
@@ -152,7 +168,7 @@ SEND_AT_INDEX: str = "CREATE INDEX scheduled_messages ON messages (send_at) WHER
 THREAD_INDEX: str = "CREATE INDEX messages_of_thread ON messages (thread_key)"
 MESSAGE_ID_INDEX: str = "CREATE INDEX messages_with_message_id ON messages (message_id)"
 # What an upgraded index needs at once: the list by date, the unread ones, the conversations and the scheduled mail; the other sort indexes follow.
-FIRST_INDEXES: tuple[str, ...] = (*SORT_INDEXES[:1], SORT_INDEXES[6], SEND_AT_INDEX, THREAD_INDEX, MESSAGE_ID_INDEX)
+FIRST_INDEXES: tuple[str, ...] = (*SORT_INDEXES[:2], SEND_AT_INDEX, THREAD_INDEX, MESSAGE_ID_INDEX)
 
 OLD_MESSAGES: str = "messages_old"  # an upgraded index's rows as they were, with their indexes, until they are dropped afterwards (Index.make_sort_index)
 MESSAGES_TABLE: str = """CREATE TABLE messages (

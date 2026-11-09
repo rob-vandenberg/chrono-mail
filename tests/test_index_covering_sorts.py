@@ -8,7 +8,7 @@ from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.model import SearchFilter, SortField
 from chrono_mail.index.schema import FIRST_INDEXES, SCHEMA_VERSION, SORT_INDEX_PREFIX, SORT_INDEXES
-from tests.index_formats import as_format_19
+from tests.index_formats import FORMAT_20_SORT_INDEXES, as_format_19
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_index_unread_sorts import INDEXED_SORTS
@@ -16,9 +16,10 @@ from tests.test_index_unread_sorts import INDEXED_SORTS
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_covering_sorts.py 4.4.539"
+__version__ = "test_index_covering_sorts.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: format 18 drops the sort indexes as format 19 named them (D-320)
 # v4.4.539: format 18 starts from format 19; sort indexes by the folder's id (D-314)
 # v4.2.471: Initial: a sort reads only its index, several folders are ordered in one question, rows are read by the numbers an order
 #           gave and found again by their ids when those no longer hold them, format 18 is upgraded and its indexes remade (D-306)
@@ -108,7 +109,7 @@ def test_rows_remembered_for_an_index_file_are_never_used_for_a_rebuilt_one(tmp_
 def _as_format_18(path: Path) -> None:
     connection = sqlite3.connect(path)
     as_format_19(connection)
-    for statement in SORT_INDEXES:
+    for statement in FORMAT_20_SORT_INDEXES:  # as format 19 named them
         connection.execute(f"DROP INDEX {statement.split()[2].removeprefix(SORT_INDEX_PREFIX)}")
         connection.execute(statement.replace(SORT_INDEX_PREFIX, "", 1).replace("folder_id", "folder").replace(", store_id, flags)", ")").replace(", store_id)", ")"))
     connection.execute("UPDATE meta SET value = '18' WHERE key = 'schema'")

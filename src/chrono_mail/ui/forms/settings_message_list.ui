@@ -55,28 +55,41 @@
    <item row="3" column="1">
     <widget class="QComboBox" name="densityBox" />
    </item>
-   <item row="4" column="0" colspan="2">
+   <item row="4" column="0">
+    <widget class="QLabel" name="secondarySortLabel">
+     <property name="text">
+      <string>Secondary sort</string>
+     </property>
+     <property name="buddy">
+      <cstring>secondarySortBox</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="QComboBox" name="secondarySortBox" />
+   </item>
+   <item row="5" column="0" colspan="2">
     <widget class="QCheckBox" name="conversations">
      <property name="text">
       <string>Show messages grouped as conversations</string>
      </property>
     </widget>
    </item>
-   <item row="5" column="0" colspan="2">
+   <item row="6" column="0" colspan="2">
     <widget class="QCheckBox" name="tagTextColour">
      <property name="text">
       <string>Use the tag's colour for the text of tagged messages</string>
      </property>
     </widget>
    </item>
-   <item row="6" column="0" colspan="2">
+   <item row="7" column="0" colspan="2">
     <widget class="QCheckBox" name="unreadLeavesOnRead">
      <property name="text">
       <string>Remove messages from Unread when I mark them as read</string>
      </property>
     </widget>
    </item>
-   <item row="7" column="0" colspan="2">
+   <item row="8" column="0" colspan="2">
     <widget class="QLabel" name="columnsText">
      <property name="text">
       <string>Columns (tick the ones to show; the order is the order from left to right):</string>
@@ -86,7 +99,7 @@
      </property>
     </widget>
    </item>
-   <item row="8" column="0" colspan="2">
+   <item row="9" column="0" colspan="2">
     <widget class="QWidget" name="columnsPicker" />
    </item>
   </layout>

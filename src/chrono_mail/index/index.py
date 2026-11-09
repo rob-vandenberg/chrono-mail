@@ -50,9 +50,11 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.556"
+__version__ = "index.py 4.4.562"
 
 # --- Version history ----------------------------------------------------
+# v4.4.562: messages with the same value in any sort but the date are ordered by when they were received, newest or oldest first
+#           (ties_oldest_first, the Secondary sort setting); format 21 upgraded from 20 in place, its sort indexes made afterwards (D-320)
 # v4.4.556: sent_by: the newest mail of one sender, for the mail of an answer from the calendar (D-310)
 # v4.4.539: format 20: a folder is a row of its own and each message holds its id: a rename or a move of a folder changes one row, whatever the
 #           size of its tree; paths are made from the rows (_FolderTree); an older index is upgraded in place in a first step, the sort indexes
@@ -142,7 +144,6 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.ACCOUNT: f"{ACCOUNT_NAME} COLLATE NOCASE",  # by the name the Account column shows (D-292), from the connection's table of names
     SortField.TO_SHOWN: "m.to_shown COLLATE NOCASE",  # From / To where it shows the recipients: exactly what it shows (D-295)
 }
-_NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
 _TEXT_GROUP_COLUMN: dict[SortField, str] = {
     SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: FOLDER_PATH, SortField.PREVIEW: "m.preview",
     SortField.SENDER_FULL: "m.sender", SortField.SENDER_ADDRESS: "m.sender_address", SortField.RECIPIENT_NAMES: "m.recipient_names",
@@ -176,12 +177,14 @@ def split_tag_terms(query: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     return _TAG_TERM.sub(" ", query), tuple(wanted), tuple(excluded)
 
 
-def _order(sort: SortField, descending: bool) -> str:
-    """The ORDER BY of a list or a search."""
+def _order(sort: SortField, descending: bool, ties_oldest_first: bool = False) -> str:
+    """The ORDER BY of a list or a search: messages with the same value by when they were received, newest first unless
+    ties_oldest_first (the Secondary sort setting, D-320); the date sort itself as before."""
     direction = "DESC" if descending != (sort is SortField.UNREAD) else "ASC"
-    if sort in _NEWEST_WITHIN:
-        return f"{_SORT_COLUMN[sort]} {direction}, m.date DESC, m.id DESC"
-    return f"{_SORT_COLUMN[sort]} {direction}, m.id {direction}"
+    if sort is SortField.DATE:
+        return f"m.date {direction}, m.id {direction}"
+    ties = "ASC" if ties_oldest_first else "DESC"
+    return f"{_SORT_COLUMN[sort]} {direction}, m.date {ties}, m.id {ties}"
 
 
 def _folder_key(path: tuple[str, ...]) -> str:
@@ -333,6 +336,8 @@ class Index(IndexDatabase):
             found = self._format()
             if found is None:
                 self._create_schema()
+            elif found == "20":  # 21 only changed the sort indexes (D-320): they are made, and the old ones dropped, afterwards
+                self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found in ("17", "18", "19"):  # 18 and 19 only changed the sort indexes: nothing to fill in
                 self._give_folders_rows()
             elif found in ("11", "12", "13", "14", "15", "16"):
@@ -398,11 +403,11 @@ class Index(IndexDatabase):
         self._tree = _FolderTree(version, paths, {path: folder_id for folder_id, path in paths.items()})
         return self._tree
 
-    def _sort_order(self, sort: SortField, descending: bool) -> str:
+    def _sort_order(self, sort: SortField, descending: bool, ties_oldest_first: bool = False) -> str:
         """The ORDER BY of a list or a search, with what it reads."""
         if sort is SortField.FOLDER:
             self._write_paths()
-        return _order(sort, descending)
+        return _order(sort, descending, ties_oldest_first)
 
     def _write_paths(self) -> None:
         """The paths of the folders in this connection's own table, for a sort or groups by folder: they read them in SQLite, never a call per message."""
@@ -462,6 +467,10 @@ class Index(IndexDatabase):
         the removal of the old index it replaces; then the old indexes that are left, one by one; then the old rows."""
         found = {str(row[0]): str(row[1]) for row in self._connection.execute("SELECT name, tbl_name FROM sqlite_master WHERE type IN ('index', 'table') AND sql IS NOT NULL")}
         waiting = [statement for statement in SORT_INDEXES if statement.split()[2] not in found]
+        current = {statement.split()[2] for statement in SORT_INDEXES}
+        waiting += [  # a sort index of an earlier format 20 or later that no format has any more (D-320)
+            f"DROP INDEX {name}" for name, table in found.items() if table == "messages" and name.startswith(SORT_INDEX_PREFIX) and name not in current
+        ]
         if OLD_MESSAGES in found:
             replaced = {statement.split()[2].removeprefix(SORT_INDEX_PREFIX) for statement in waiting}
             waiting += [f"DROP INDEX {name}" for name, table in found.items() if table == OLD_MESSAGES and name != OLD_MESSAGES and name not in replaced]
@@ -771,17 +780,21 @@ class Index(IndexDatabase):
         sql = "SELECT count(*) FROM messages m WHERE m.folder_id = ?" + (" AND (m.flags & 1) = 0" if unread_only else "")
         return int(self._connection.execute(sql, (self._folder_id(folder),)).fetchone()[0])
 
-    def position(self, folder: tuple[str, ...], store_id: str, sort: SortField = SortField.DATE, descending: bool = True, unread_only: bool = False) -> int | None:
+    def position(
+        self, folder: tuple[str, ...], store_id: str, sort: SortField = SortField.DATE, descending: bool = True, unread_only: bool = False, ties_oldest_first: bool = False,
+    ) -> int | None:
         """Where a message stands in a folder in the chosen order, as page() lists it (0 is the first), or None when it is not there."""
         sql = (
-            f"SELECT place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder_id = ?"
+            f"SELECT place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending, ties_oldest_first)}) - 1 AS place FROM messages m WHERE m.folder_id = ?"
             + (" AND (m.flags & 1) = 0" if unread_only else "")
             + ") WHERE id = ?"
         )
         found = self._connection.execute(sql, (self._folder_id(folder), store_id)).fetchone()
         return None if found is None else int(found[0])
 
-    def positions(self, folder: tuple[str, ...], store_ids: Iterable[str], sort: SortField = SortField.DATE, descending: bool = True) -> dict[str, int]:
+    def positions(
+        self, folder: tuple[str, ...], store_ids: Iterable[str], sort: SortField = SortField.DATE, descending: bool = True, ties_oldest_first: bool = False,
+    ) -> dict[str, int]:
         """Where each of these messages stands in a folder in the chosen order, as page() lists it (0 is the first), worked
         out in one pass over the folder (one per 500 messages asked); a message that is not there is left out."""
         wanted = list(dict.fromkeys(store_ids))
@@ -789,7 +802,7 @@ class Index(IndexDatabase):
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
             sql = (
-                f"SELECT id, place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder_id = ?)"
+                f"SELECT id, place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending, ties_oldest_first)}) - 1 AS place FROM messages m WHERE m.folder_id = ?)"
                 f" WHERE id IN ({', '.join('?' * len(chunk))})"
             )
             for store_id, place in self._connection.execute(sql, (self._folder_id(folder), *chunk)):
@@ -804,12 +817,13 @@ class Index(IndexDatabase):
         offset: int = 0,
         limit: int = 100,
         unread_only: bool = False,
+        ties_oldest_first: bool = False,
     ) -> list[IndexedMessage]:
         """One screenful of a folder, in the chosen order."""
         sql = (
             f"SELECT {_COLUMNS} FROM messages m WHERE m.folder_id = ?"
             + (" AND (m.flags & 1) = 0" if unread_only else "")
-            + f" ORDER BY {self._sort_order(sort, descending)} LIMIT ? OFFSET ?"
+            + f" ORDER BY {self._sort_order(sort, descending, ties_oldest_first)} LIMIT ? OFFSET ?"
         )
         return self._messages_of(self._connection.execute(sql, (self._folder_id(folder), max(0, limit), max(0, offset))).fetchall())
 
@@ -882,10 +896,11 @@ class Index(IndexDatabase):
         limit: int = 100,
         sort: SortField = SortField.DATE,
         descending: bool = True,
+        ties_oldest_first: bool = False,
     ) -> list[IndexedMessage]:
         """Messages matching the words and the filters, newest first unless another order is asked for. An empty query lists by filters only."""
         source, where, parameters = self._search_parts(query, folder, filters, max(0, offset) + max(0, limit))
-        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {self._sort_order(sort, descending)} LIMIT ? OFFSET ?"
+        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {self._sort_order(sort, descending, ties_oldest_first)} LIMIT ? OFFSET ?"
         parameters.extend([max(0, limit), max(0, offset)])
         try:
             return self._messages_of(self._connection.execute(sql, parameters).fetchall())
@@ -894,14 +909,14 @@ class Index(IndexDatabase):
 
     def ordered(
         self, query: str = "", folder: tuple[str, ...] | None = None, filters: SearchFilter = SearchFilter(), sort: SortField = SortField.DATE, descending: bool = True,
-        limit: int | None = None,
+        limit: int | None = None, ties_oldest_first: bool = False,
     ) -> list[tuple[str, tuple[str, ...], bool]]:
         """Every message of a folder or a search in the order search() lists them (or the first limit of them), as (store id,
         folder, unread) only: the order of a view without reading its rows (R-15), from the sort index alone (D-306). Each folder is one
         shared tuple."""
         source, where, parameters = self._search_parts(query, folder, filters, None if limit is None else max(0, limit))
         unread_values = list(parameters)
-        order = self._sort_order(sort, descending)
+        order = self._sort_order(sort, descending, ties_oldest_first)
         tail = " LIMIT ?" if limit is not None else ""
         if limit is not None:
             parameters.append(max(0, limit))
@@ -925,18 +940,18 @@ class Index(IndexDatabase):
             raise StorageError(f"The search could not be run: {error}") from None
 
     def first_rows(
-        self, query: str, folder: tuple[str, ...], filters: SearchFilter, sort: SortField, descending: bool, limit: int,
+        self, query: str, folder: tuple[str, ...], filters: SearchFilter, sort: SortField, descending: bool, limit: int, ties_oldest_first: bool = False,
     ) -> list[tuple[str, object, int | None]]:
         """The first messages of a folder in the order search() lists them, as (store id, the value sorted by, the date for the sorts
         that put the newest first within a value): what a Favorites view merges, from the sort index alone (D-306)."""
         source, where, parameters = self._search_parts(query, folder, filters, max(0, limit))
         column = _SORT_COLUMN[sort].removesuffix(" COLLATE NOCASE")
-        newest = "m.date" if sort in _NEWEST_WITHIN else "NULL"
+        newest = "NULL" if sort is SortField.DATE else "m.date"  # the received time: what messages with the same value are ordered by (D-320)
         parameters.append(max(0, limit))
         rows: dict[str, int] = {}
         found: list[tuple[str, object, int | None]] = []
         try:
-            sql = f"SELECT m.store_id, m.id, {column}, {newest} FROM {source}{where} ORDER BY {self._sort_order(sort, descending)} LIMIT ?"
+            sql = f"SELECT m.store_id, m.id, {column}, {newest} FROM {source}{where} ORDER BY {self._sort_order(sort, descending, ties_oldest_first)} LIMIT ?"
             for store_id, row, value, date in self._connection.execute(sql, parameters):
                 rows[str(store_id)] = int(row)
                 found.append((str(store_id), value, None if date is None else int(date)))
