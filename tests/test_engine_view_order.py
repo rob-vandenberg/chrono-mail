@@ -12,9 +12,10 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, mail, setup  # noqa: F401 - setup is the fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_view_order.py 3.6.368"
+__version__ = "test_engine_view_order.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: the day headings are counted at the engine's clock, and every answer with headings says the day they were counted for (D-321)
 # v3.6.368: a message that comes in between the reading of the order and of the headings never puts a message under the wrong heading
 # v3.6.350: an answer read while its index was written carries a stamp that matches no other (RV-206)
 # v2.0.280: the sort order sent (the message's own Date) in a folder and in a Favorites view, with its date headings (B-16)
@@ -201,3 +202,32 @@ def test_a_message_that_comes_in_while_a_favorites_view_is_asked_where_messages_
     assert found.group_names == ("C", "D")
     located = call(setup.engine, "message.combined-locate", account=setup.account_id, message=ids["C"], **values)
     assert located.group_name == "C"
+
+
+def test_the_day_headings_are_counted_at_the_engines_clock_and_say_their_day(setup: Setup) -> None:
+    """D-321: "Today" of Sunday is another group than "Today" of Tuesday; every answer with headings says which day it counted for."""
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        for subject, day in (("Monday", 9), ("Sunday", 8), ("Saturday", 7)):
+            dated = raw_message(subject=subject, message_id=f"<{subject}@x>", date=datetime(2026, 11, day, 12).astimezone())
+            mailbox.deliver(mailbox.folder("Inbox"), dated, frozenset())
+    ids = {row.subject: row.message_id for row in call(setup.engine, "message.list", account=setup.account_id, folder="Inbox", limit=1000).messages}
+    values = {"account": setup.account_id, "folder": "Inbox", "sort": "sent"}
+    favorites = {"view": "inboxes", "sort": "sent"}
+    for moment, day, headings in (
+        (datetime(2026, 11, 8, 20).astimezone(), "2026-11-08", ("today", "yesterday")),  # Sunday evening (Monday's date is ahead: Today)
+        (datetime(2026, 11, 10, 9).astimezone(), "2026-11-10", ("yesterday", "last_week")),  # Tuesday morning
+    ):
+        setup.engine.clock = moment.timestamp
+        order = call(setup.engine, "message.order", headings=True, **values)
+        assert order.day == day and tuple(group.key for group in order.groups if group.key in headings) == headings
+        combined = call(setup.engine, "message.combined-order", headings=True, **favorites)
+        assert combined.day == day and tuple(group.key for group in combined.groups if group.key in headings) == headings
+        places = call(setup.engine, "message.places", messages=(ids["Monday"],), headings=True, **values)
+        assert places.day == day and places.group_keys == (headings[0],)
+        combined_places = call(setup.engine, "message.combined-places", messages=(ids["Monday"],), mailboxes=(setup.account_id,), headings=True, **favorites)
+        assert combined_places.day == day and combined_places.group_keys == (headings[0],)
+        located = call(setup.engine, "message.locate", message=ids["Saturday"], **values)
+        assert located.day == day and located.group_key == headings[1]
+        combined_located = call(setup.engine, "message.combined-locate", account=setup.account_id, message=ids["Saturday"], **favorites)
+        assert combined_located.day == day and combined_located.group_key == headings[1]
+    assert call(setup.engine, "message.order", **values).day == ""  # asked without headings: no day

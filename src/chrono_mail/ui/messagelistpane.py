@@ -2,9 +2,10 @@ import bisect
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from dataclasses import replace as changed
+from datetime import datetime
 from typing import override
 
-from PySide6.QtCore import QCoreApplication, QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
@@ -18,6 +19,7 @@ from chrono_mail.ui.columns import SAVED_LABEL
 from chrono_mail.ui.columnsetup import FROM_TO_SORT, STARTING, folder_type
 from chrono_mail.ui.advancedsearch import SearchScope
 from chrono_mail.ui.currentview import CurrentView, EntryKind
+from chrono_mail.ui.dayheadings import DayWatch
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
 from chrono_mail.ui.mailstate import MailState
@@ -29,9 +31,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.4.562"
+__version__ = "messagelistpane.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: a new local day (by the engine's clock) asks the list's day headings again, draws what is on screen again and keeps the message at
+#           the top of the screen where it was (DayWatch, D-321)
 # v4.4.562: the view asks for messages with the same value in the order Secondary sort sets, and follows a change of it in place (D-320)
 # v4.4.560: take_away: selection_stays: a message that is not selected leaves at a click on its unread mark, and the selection stays as it is (D-319)
 # v4.2.433: the current message stays in view when a selected message moves to its new place in the sort
@@ -191,6 +195,15 @@ class MessageListPane(QObject):
         self.model.modelReset.connect(self._span_group_headers)  # a reset (another layout, other columns) forgets the spans
         self.view.header_clicked.connect(self.model.toggle_group)
         self.model.counts_changed.connect(self._counts_changed)
+        self.day_watch: DayWatch = DayWatch(self, lambda: datetime.fromtimestamp(backend.engine.clock()).astimezone())  # the engine's clock (D-321)
+        self._day: str = self.day_watch.day
+        self._top: QPersistentModelIndex = QPersistentModelIndex()  # the message at the top of the screen while the order of a new day lands
+        self._at_top: bool = False
+        self._top_offset: int = 0
+        self.model.new_day(self._day)
+        self.day_watch.looked.connect(self._new_day)
+        self.model.day_order_coming.connect(self._note_top)
+        self.model.day_order_taken.connect(self._top_back)
         self.model.load_failed.connect(status.load_failed)
         self.model.loaded.connect(self._select_unread_after_load)
         self.model.load_failed.connect(self._unread_load_failed)
@@ -424,6 +437,33 @@ class MessageListPane(QObject):
         starts = self.model.header_rows()
         for row in starts[bisect.bisect_left(starts, first):bisect.bisect_right(starts, last)]:
             self.view.setFirstColumnSpanned(row, QModelIndex(), True)
+
+    def _new_day(self, day: str) -> None:
+        """A look at the local day: the headings follow it; on a new day the rows on screen are drawn again ("14:03" becomes "Yesterday"),
+        only what is on screen, so a list of 500,000 messages does not walk every row (D-321)."""
+        self.model.new_day(day)
+        if day != self._day:
+            self._day = day
+            self.view.viewport().update()
+
+    def _note_top(self) -> None:
+        """The order of a new day is about to change the headings: the message at the top of the screen is noted (D-321)."""
+        self._at_top = self.view.verticalScrollBar().value() == 0
+        row = self.view.indexAt(QPoint(0, 0)).row()
+        while 0 <= row < self.model.rowCount() and self.model.is_header(row):
+            row += 1
+        self._top = QPersistentModelIndex(self.model.index(row, 0)) if 0 <= row < self.model.rowCount() else QPersistentModelIndex()
+        self._top_offset = self.view.visualRect(self.model.index(row, 0)).top() if self._top.isValid() else 0  # where on the screen, to the pixel
+
+    def _top_back(self) -> None:
+        """The new day's headings are there: the message that was at the top of the screen is there again, so nothing moves the person
+        did not move (G-2); a list at its top stays at its top."""
+        if self._at_top:
+            self.view.scrollToTop()
+        elif self._top.isValid():
+            bar = self.view.verticalScrollBar()
+            bar.setValue(bar.value() + self.view.visualRect(self.model.index(self._top.row(), 0)).top() - self._top_offset)
+        self._top = QPersistentModelIndex()
 
     def _counts_changed(self, total: int, unread: int) -> None:
         self.count_label.setText(f"{total:,} {'message' if total == 1 else 'messages'}" + (f", {unread:,} unread" if unread else ""))

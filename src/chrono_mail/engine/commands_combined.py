@@ -2,11 +2,10 @@ from dataclasses import dataclass, field, replace
 import typing
 from typing import Literal
 
-from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole, shown_name
-from chrono_mail.engine.commands_mail import CONTACT_SORT, LATER, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of, RECIPIENT_VIEWS
+from chrono_mail.engine.commands_mail import CONTACT_SORT, LATER, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of, heading_day, heading_moment, RECIPIENT_VIEWS
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, snooze_group
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -15,9 +14,10 @@ from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.4.562"
+__version__ = "commands_combined.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: the groups of a Favorites view are counted at the engine's clock and carry the day they were counted for (D-321)
 # v4.4.562: ties_oldest_first: messages with the same value in every sort but the date by when they were received, as set (D-320)
 # v4.2.471: a Favorites view takes the first rows of all its folders of a mailbox in one order from the sort index and reads only those
 #           rows (_gather_first, D-306)
@@ -202,6 +202,7 @@ class Gathered:
     total: int = 0
     unread: int = 0
     from_contact: dict[tuple[str, str], bool] = field(default_factory=dict)  # (account, store id) -> from (or to) a contact
+    day: str = ""  # the local day the groups were counted for (YYYY-MM-DD)
 
 
 def gather(engine: Engine, parameters: CombinedParameters, want: int | None, groups: bool = False, tally: bool = False) -> Gathered:
@@ -213,11 +214,11 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
     contact, timed = parameters.sort == CONTACT_SORT, parameters.sort == TIMED_SORT
     sort, descending = SortField.DATE if contact or timed else SortField(parameters.sort), not parameters.oldest_first
     grouped = groups and not contact and not timed and sort not in YES_NO_SORTS  # the yes/no sorts have no group headers
-    bounds = date_bounds(datetime.now())
-    now = datetime.fromtimestamp(engine.clock()).astimezone()
+    now = heading_moment(engine)  # one moment for the date and snooze groups and their day
+    bounds = date_bounds(now)
     names = dict(SNOOZE_GROUPS)
     known = contact_address_set(engine) if contact and want is not None else frozenset[str]()
-    found = Gathered()
+    found = Gathered(day=heading_day(now))
     for account in _places(engine, parameters.accounts):
         with open_mailbox(engine, account) as mailbox, mailbox.reading():
             filters = _filters(view, parameters, mailbox, account)  # once per mailbox: the same for each of its folders
@@ -353,7 +354,7 @@ def message_combined_locate(engine: Engine, parameters: CombinedLocateParameters
     if position is None:
         return LocateResult(None)
     key, name = group_of(groups_in_order(found, parameters), position)
-    return LocateResult(position, key, name)
+    return LocateResult(position, key, name, found.day)
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +387,7 @@ def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters
     positions = leave_out(everywhere, left)
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions, before=before, before_mailboxes=before_mailboxes)
-    return with_headings(positions, groups_in_order(found, parameters), tuple(everywhere), before, before_mailboxes)
+    return with_headings(positions, groups_in_order(found, parameters), tuple(everywhere), before, before_mailboxes, found.day)
 
 
 MESSAGE_COMBINED_PLACES: TypedCommand[CombinedPlacesParameters, PlacesResult] = TypedCommand("message.combined-places", CombinedPlacesParameters, PlacesResult)

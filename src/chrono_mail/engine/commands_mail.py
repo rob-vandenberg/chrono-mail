@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.562"
+__version__ = "commands_mail.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: the group headings are counted at the engine's clock, and every answer with headings says the local day they were counted for (day, D-321)
 # v4.4.562: ties_oldest_first: messages with the same value oldest first by when they were received, otherwise newest first (D-320)
 # v4.4.542: mail_send counts as a send at the end of the program
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -998,6 +999,16 @@ def date_bounds(now: datetime) -> DateBounds:
     return DateBounds(starts[0], starts[1], starts[2], starts[3], starts[4], starts[5])
 
 
+def heading_moment(engine: Engine) -> datetime:
+    """The moment the group headings are counted for, in local time: the engine's clock, so the headings and their day are one moment."""
+    return datetime.fromtimestamp(engine.clock()).astimezone()
+
+
+def heading_day(moment: datetime) -> str:
+    """The local day headings counted at this moment are for (YYYY-MM-DD): "Today" of another day is another group."""
+    return moment.astimezone().date().isoformat()
+
+
 def _day(text: str | None, name: str, end: bool) -> datetime | None:
     """The start (or the last moment) of a day given as YYYY-MM-DD, in the local time zone."""
     text = (text or "").strip()
@@ -1063,14 +1074,16 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
         return _rows(mailbox, found, times)
 
 
-def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupCount, ...]:
-    """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages."""
+def message_groups(engine: Engine, parameters: SearchParameters, moment: datetime | None = None) -> tuple[GroupCount, ...]:
+    """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages
+    (counted for this moment, else now)."""
     if parameters.sort == CONTACT_SORT:
         return ()  # a yes/no sort has no group headers
+    now = moment or heading_moment(engine)
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         if folder is not None and _snooze_sort(parameters.sort, folder):
-            times, now = mailbox.timed(folder) or {}, datetime.fromtimestamp(engine.clock()).astimezone()
+            times = mailbox.timed(folder) or {}
             everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
             counts: dict[str, int] = {}
             for message in everything:
@@ -1078,7 +1091,7 @@ def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupC
                 counts[key] = counts.get(key, 0) + 1
             order = SNOOZE_GROUPS if parameters.oldest_first else tuple(reversed(SNOOZE_GROUPS))
             return tuple(GroupCount(key, name, counts[key]) for key, name in order if counts.get(key))
-        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters, mailbox), _sort_field(parameters.sort), not parameters.oldest_first)
+        found = mailbox.index.groups(date_bounds(now), parameters.query, folder, _search_filter(parameters, mailbox), _sort_field(parameters.sort), not parameters.oldest_first)
         return tuple(found)
 
 
@@ -1087,6 +1100,7 @@ class LocateResult:
     position: int | None  # where the message stands in the view's order (0 is the first); None when it is not in the view
     group_key: str = ""  # the group heading it falls under ("" when the view has no headings in this order)
     group_name: str = ""
+    day: str = ""  # the local day the heading was counted for (YYYY-MM-DD); "" without one
 
 
 def group_of(groups: tuple[GroupCount, ...], position: int) -> tuple[str, str]:
@@ -1117,8 +1131,9 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
             position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message), None)
         if position is None:
             return LocateResult(None)
-        key, name = group_of(message_groups(engine, parameters), position)
-    return LocateResult(position, key, name)
+        moment = heading_moment(engine)
+        key, name = group_of(message_groups(engine, parameters, moment), position)
+    return LocateResult(position, key, name, heading_day(moment))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1136,6 +1151,7 @@ class PlacesResult:
     known: bool = True  # False: what came in after the facts heard is no longer known one by one (the asker fetches the view again)
     before: tuple[str, ...] = ()  # for each message: the message it comes before among those the asker holds ("" at the end, or not in the view)
     before_mailboxes: tuple[str, ...] = ()  # a Favorites view: the mailbox of each of those
+    day: str = ""  # with headings: the local day they were counted for (YYYY-MM-DD); headings of another day are other groups
 
 
 def neighbours[K](ordered: Sequence[K], asked: Sequence[K], left_out: Collection[K]) -> list[K | None]:
@@ -1160,11 +1176,12 @@ def neighbours[K](ordered: Sequence[K], asked: Sequence[K], left_out: Collection
 
 def with_headings(
     positions: tuple[int | None, ...], groups: tuple[GroupCount, ...], counted: tuple[int | None, ...] | None = None, before: tuple[str, ...] = (), before_mailboxes: tuple[str, ...] = (),
+    day: str = "",
 ) -> PlacesResult:
     """The places with the group heading of each, worked out from the groups in list order with their counts (counted: the
-    places among everything, when the places given leave out messages the asker has not heard of)."""
+    places among everything, when the places given leave out messages the asker has not heard of; day: the day the groups were counted for)."""
     found = [group_of(groups, position) if position is not None else ("", "") for position in (positions if counted is None else counted)]
-    return PlacesResult(positions, tuple(key for key, _ in found), tuple(name for _, name in found), before=before, before_mailboxes=before_mailboxes)
+    return PlacesResult(positions, tuple(key for key, _ in found), tuple(name for _, name in found), before=before, before_mailboxes=before_mailboxes, day=day)
 
 
 def not_heard(engine: Engine, given: tuple[str, ...], places: set[str]) -> dict[str, set[str]] | None:
@@ -1206,7 +1223,8 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
         else:
             ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
         shown = set(ordered)
-        groups = message_groups(engine, parameters) if parameters.headings and any(message in shown for message in parameters.messages) else ()
+        moment = heading_moment(engine)
+        groups = message_groups(engine, parameters, moment) if parameters.headings and any(message in shown for message in parameters.messages) else ()
     missing = not_heard(engine, parameters.heard, {place})  # after the reading: a superset of what it counted
     if missing is None:
         return PlacesResult(tuple(None for _ in parameters.messages), known=False)
@@ -1218,7 +1236,7 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     positions = leave_out(everywhere, left)
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions, before=before)
-    return with_headings(positions, groups, tuple(everywhere), before)
+    return with_headings(positions, groups, tuple(everywhere), before, day=heading_day(moment))
 
 
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:

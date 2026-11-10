@@ -5,7 +5,7 @@ from pathlib import Path
 
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_combined import TIMED_SORT, CombinedParameters, gather, groups_in_order, in_order
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, TIMED, SearchParameters, _rows, _search_filter, _snooze_sort, _sort_field, message_groups, message_search
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, TIMED, SearchParameters, _rows, _search_filter, _snooze_sort, _sort_field, heading_day, heading_moment, message_groups, message_search
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
@@ -14,9 +14,10 @@ from chrono_mail.index.database import writes
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 4.4.562"
+__version__ = "commands_view.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: an order with headings says the local day they were counted for (day, D-321)
 # v4.4.562: message.order orders messages with the same value as ties_oldest_first says (D-320)
 # v4.2.426: a Favorites view sorted by when its messages leave (Snoozed, Scheduled, the Outbox) is always read whole, as its folder
 # v4.2.408: the filters are read with the mailbox (the days of snoozed and waiting messages, D-288)
@@ -43,6 +44,7 @@ class ViewOrder:
     groups: tuple[GroupCount, ...]  # the group headings in order with their numbers of messages (asked with headings)
     rows: tuple[MessageRow, ...]  # the rows of the first messages and of the messages named
     stamp: str = ""  # when the index files were last written, read before the order (write_stamp): another stamp, other writes between
+    day: str = ""  # with headings: the local day they were counted for (YYYY-MM-DD); headings of another day are other groups
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +92,9 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         before = write_stamp([mailbox.index.path])  # before anything is read: a write after it changes the stamp of the next answer
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        groups = message_groups(engine, parameters) if parameters.headings else ()  # inside the same reading: the same moment
+        moment = heading_moment(engine)
+        groups = message_groups(engine, parameters, moment) if parameters.headings else ()  # inside the same reading: the same moment
+        day = heading_day(moment) if parameters.headings else ""
         names: dict[str, str] = {}
         if parameters.sort == CONTACT_SORT or _snooze_sort(parameters.sort, folder):  # worked out here, over every message: always whole
             everything = message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))
@@ -98,7 +102,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
             return ViewOrder(
                 tuple(row.message_id for row in everything), (), tuple(_shared(row.folder, names) for row in everything), tuple("seen" not in row.flags for row in everything),
                 len(everything), sum(1 for row in everything if "seen" not in row.flags), True, groups, tuple(row for row in everything if row.message_id in wanted),
-                settled_stamp(before, [mailbox.index.path]),
+                settled_stamp(before, [mailbox.index.path]), day,
             )
         filters = _search_filter(parameters, mailbox)
         found = mailbox.index.ordered(parameters.query, folder, filters, _sort_field(parameters.sort), not parameters.oldest_first, None if parameters.whole else first, parameters.ties_oldest_first)
@@ -113,7 +117,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
         rows = _rows(mailbox, [indexed[store_id] for store_id in dict.fromkeys(wanted_ids) if store_id in indexed], mailbox.timed(folder))
         return ViewOrder(
             tuple(store_id for store_id, _, _ in found), (), tuple(_shared("/".join(path), names) for _, path, _ in found), tuple(unread for _, _, unread in found),
-            total, unread_total, parameters.whole or total <= len(found), groups, rows, settled_stamp(before, [mailbox.index.path]),
+            total, unread_total, parameters.whole or total <= len(found), groups, rows, settled_stamp(before, [mailbox.index.path]), day,
         )
 
 
@@ -139,6 +143,7 @@ def message_combined_order(engine: Engine, parameters: CombinedOrderParameters) 
         tuple(row.message_id for row in ordered), tuple(_shared(row.account, names) for row in ordered), tuple(_shared(row.folder, names) for row in ordered),
         tuple("seen" not in row.flags for row in ordered), total, unread_total, whole or total <= len(ordered), groups_in_order(found, parameters),
         tuple(row for number, row in enumerate(ordered) if number < first or (row.account, row.message_id) in named), settled_stamp(before, indexes),
+        found.day if parameters.headings else "",
     )
 
 

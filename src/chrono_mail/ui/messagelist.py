@@ -17,6 +17,7 @@ from chrono_mail.index.model import GroupCount
 from chrono_mail.ui.advancedsearch import AdvancedSearch
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.burst import Burst
+from chrono_mail.ui.dayheadings import DAY_SORTS
 from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SEND_AT_VIEWS, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
@@ -26,9 +27,12 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.4.562"
+__version__ = "messagelist.py 4.4.563"
 
 # --- Version history ----------------------------------------------------
+# v4.4.563: the headings know the local day they were counted for: a new day, or an answer counted on another day, asks them again in place;
+#           after midnight the list looks as after a restart: no day heading folded; a failed ask stays silent and the next look asks again
+#           (new_day, D-321)
 # v4.4.562: ViewSpec.ties_oldest_first: the Secondary sort asked of the engine; only the order differs with it (D-320)
 # v4.4.560: the cells of the Flag and Unread columns have no hover text; their headers have (D-319)
 # v4.2.457: a refetch while a new sort is on its way fetches the view in the new sort (_coming): it replaced the sort's question, so the
@@ -216,6 +220,8 @@ class MessageListModel(QAbstractTableModel):
     load_failed = Signal(str)
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
+    day_order_coming = Signal()  # the order of a new day is about to change the headings (the view notes what is at its top, D-321)
+    day_order_taken = Signal()  # it did: the same messages, the new day's headings
     selected_moved = Signal(list)  # the ids of selected messages that moved to their new place in the sort (the current one is brought into view)
     placed = Signal()  # the whole order of the view is in: every message has its place (a large view comes start first, W12b)
     refetch_wanted = Signal()  # a folder fact changed which messages the view holds: the pane fetches it again, once, one at a time (D-287)
@@ -258,6 +264,8 @@ class MessageListModel(QAbstractTableModel):
         self.contacts: dict[str, tuple[str, str]] = {}  # address (lower case) -> (contact id, address book)
         self.show_groups: bool = True
         self._group_counts: list[tuple[str, str, int]] | None = None  # key, name, count of each group; None: no headers
+        self._headings_day: str = ""  # the local day the headings were counted for (D-321)
+        self._day_pending: str = ""  # a new day came while an order was on its way: judged when it has landed
         self._groups: list[_Group] = []
         self._group_starts: list[int] = []  # the row of each header, for finding the group of a row quickly
         self._display_rows: int = 0
@@ -447,6 +455,26 @@ class MessageListModel(QAbstractTableModel):
         wanted = kept + [key for key in self._shown_keys() if key not in kept] if fresh else [key for key in kept if key not in self._rows]
         self._ask_order(spec, whole=True, rows_of=wanted, purpose="reload" if fresh else "rearrange")
 
+    def _other_day(self, day: str) -> bool:
+        """Whether headings counted for this day are of another day than those shown, in a sort whose headings name a day (D-321)."""
+        spec = self._spec
+        return bool(day) and bool(self._group_counts) and spec is not None and spec.sort in DAY_SORTS and day != self._headings_day  # no heading shown: none to put right
+
+    def new_day(self, day: str) -> None:
+        """A look at the local day (DayWatch). After midnight the list looks as after a restart (D-321): the folds of the day sorts are gone
+        and the headings are of the new day, asked again in place. An order on its way is never replaced (a large view keeps the places
+        selected while it loads): it lands first, then is judged. A look after a failed ask asks again."""
+        if self._ordering is not None:
+            self._day_pending = day
+        elif self._other_day(day):
+            self._headings_again()
+
+    def _headings_again(self) -> None:
+        """The headings are of another day: the same order asked again with its headings, in place (D-147). Nothing scrolls, and when it
+        fails the list stays as it is: the person did nothing (D-321)."""
+        if self._spec is not None and self._display_rows:
+            self._ask_order(self._spec, whole=True, rows_of=[key for key in self._kept_keys() if key not in self._rows], purpose="new_day")
+
     @staticmethod
     def _same_messages(old: ViewSpec, new: ViewSpec) -> bool:
         """Whether two views hold the same messages (only the order may differ)."""
@@ -602,7 +630,8 @@ class MessageListModel(QAbstractTableModel):
 
     def _ask_order(self, spec: ViewSpec, whole: bool, rows_of: Sequence[str], purpose: str) -> None:
         """Ask the order of the view: purpose show (the first answer of a view shown), complete (the whole order after its
-        start), rearrange (a new sort: the rows loaded stay) or reload (fetched again: the rows come again)."""
+        start), rearrange (a new sort: the rows loaded stay), reload (fetched again: the rows come again) or new_day (the same
+        order with the headings of the new day: the rows stay, nothing scrolls, a failure keeps the list, D-321)."""
         try:
             parameters = self._order_parameters(spec, whole, rows_of)
         except ChronoMailError as error:
@@ -626,6 +655,7 @@ class MessageListModel(QAbstractTableModel):
                 return
             self._take_order(spec, order, facts, purpose)
             self._arrivals_done()
+            self._after_new_day()
 
         def failed(error: ChronoMailError) -> None:
             self._answered(question)
@@ -636,6 +666,13 @@ class MessageListModel(QAbstractTableModel):
             if now is not None:  # it named the folder by its old name: asked under the new one, nothing went wrong
                 self._ask_order(now, whole, rows_of, purpose)
                 return
+            if purpose == "new_day":  # a step the person did not take: the list stays as it is, without a word; the next look asks again
+                self.settled = True
+                if self._arriving:
+                    self._take_in()  # what came in while it was on its way
+                self._plan_resort()  # what changed while it was on its way
+                self._arrivals_done()
+                return
             self._failed(error)
             if not self._complete:  # what waits for the rest of the order would wait for ever: it is not done, and that is said (RV-206)
                 self.places_epoch += 1
@@ -643,6 +680,8 @@ class MessageListModel(QAbstractTableModel):
             self.settled = True
             if purpose == "rearrange":
                 self.show(spec)  # the new order without the rows kept: the error is shown
+            else:
+                self._after_new_day()
             self._arrivals_done()
 
         if isinstance(parameters, CombinedOrderParameters):
@@ -650,9 +689,17 @@ class MessageListModel(QAbstractTableModel):
         else:
             self._backend.ask(MESSAGE_ORDER, parameters, answered, failed, owner=self)
 
+    def _after_new_day(self) -> None:
+        """An order has landed (or failed) after a new day was told while it was on its way: asked once more when its headings are of
+        another day (D-321)."""
+        pending, self._day_pending = self._day_pending, ""
+        if pending and self._ordering is None and self._other_day(pending):
+            self._headings_again()
+
     def _take_order(self, spec: ViewSpec, order: ViewOrder, facts: list[Change], purpose: str) -> None:
         """An order arrived: it takes the place of what the list held, then the facts heard since it was asked are applied to it."""
         keys = [message_key(mailbox, message_id) for mailbox, message_id in zip(order.mailboxes, order.messages, strict=True)] if order.mailboxes else list(order.messages)
+        day_turned = False  # its headings are of another day than those shown: the view keeps what is at its top (D-321)
         if purpose == "show":
             self._start_stamp = order.stamp
             self.beginResetModel()  # the list is empty: there is nothing on it to keep
@@ -660,7 +707,13 @@ class MessageListModel(QAbstractTableModel):
             self.endResetModel()
             self.groups_changed.emit()
         else:
-            self._swap_in(spec, order, keys, keep_rows=purpose != "reload", completed=purpose == "complete")
+            day_turned = purpose == "new_day" or (  # a sort the person changed keeps its own scroll to the current message
+                purpose != "rearrange" and spec == self._spec and spec.sort in DAY_SORTS  # exactly the view and order on screen
+                and bool(self._group_counts) and bool(order.day) and order.day != self._headings_day
+            )
+            if day_turned:
+                self.day_order_coming.emit()  # also a list fetched again after midnight before the day watch looked
+            self._swap_in(spec, order, keys, keep_rows=purpose != "reload", completed=purpose in ("complete", "new_day"))  # new_day: places kept as complete keeps them
         if not self._complete and any(self._touches_view(fact) for fact in facts):
             self._changed_while_loading = True  # heard while the start was on its way: the start may or may not count it
         for fact in facts:
@@ -672,6 +725,8 @@ class MessageListModel(QAbstractTableModel):
         self.settled = True
         if purpose in ("rearrange", "reload"):
             self.rearranged.emit()
+        if day_turned:
+            self.day_order_taken.emit()
         self.loaded.emit()
         if not self._complete:
             self._ask_order(self._renamed_since(spec) or spec, whole=True, rows_of=[], purpose="complete")  # under the folder's name now
@@ -701,6 +756,7 @@ class MessageListModel(QAbstractTableModel):
             held = self._held(row, row.account or mailbox)
             self._store(self._row_key(held), held)
         self._group_counts = _groups_of(spec.sort, order.groups) if self.show_groups and spec.sort not in YES_NO_SORTS else None
+        self._headings_day = order.day
         self._layout_groups()
 
     def _swap_in(self, spec: ViewSpec, order: ViewOrder, keys: list[str], keep_rows: bool, completed: bool = False) -> None:
@@ -783,7 +839,8 @@ class MessageListModel(QAbstractTableModel):
         spec = self._spec
         if spec is None:
             return ("", None, "")
-        return ((spec.combined or spec.account) + (f":{spec.combined_tag}" if spec.combined_tag and spec.combined else ""), spec.folder if spec.combined is None else ",".join(spec.combined_accounts), spec.sort)
+        sort = f"{spec.sort}@{self._headings_day}" if spec.sort in DAY_SORTS else spec.sort  # a day heading's fold belongs to its day: as after a restart, none on another (D-321)
+        return ((spec.combined or spec.account) + (f":{spec.combined_tag}" if spec.combined_tag and spec.combined else ""), spec.folder if spec.combined is None else ",".join(spec.combined_accounts), sort)
 
     def _available(self) -> int:
         """How many messages the view holds (also those whose place is not known yet while its whole order is on its way)."""
@@ -1660,6 +1717,9 @@ class MessageListModel(QAbstractTableModel):
             if not result.known:
                 self.rearrange(self._spec)  # what came in is no longer known one by one: the order is asked once
                 return
+            another_day = self._other_day(result.day)  # its heading is of another day than the list's: placed now, the headings asked after (D-321)
+            if result.day and self._group_counts is not None and not self._group_counts:
+                self._headings_day = result.day  # the first heading of an empty list: the list's day is now that of its heading
             positions, befores, before_mailboxes = result.positions, result.before, result.before_mailboxes
             group_keys, group_names = result.group_keys, result.group_names
             placed = sorted((position, number) for number, position in enumerate(positions) if isinstance(position, int))
@@ -1678,12 +1738,14 @@ class MessageListModel(QAbstractTableModel):
                     place = len(self._order)
                 group_key, group_name = group_keys[number] if group_keys else "", group_names[number] if group_names else ""
                 provisional = bool(before) and self._still_moving(self._key(before_mailboxes[number] if number < len(before_mailboxes) else "", before))
-                if provisional:
+                if provisional or another_day:  # another day: its heading's name is the new day's; until those headings land, counted where it sits
                     group_key, group_name = self._group_here(place, group_key, group_name)  # counted where it sits for now
                 self._insert(place, key, row, group_key, group_name)
                 if provisional or key in self._resort_when_placed:
                     self._resort_when_placed.discard(key)
                     self._resort(key)  # placed by a message whose own move is not done, or changed while its place was asked: asked again
+            if another_day:
+                self._headings_again()  # the order with the new day's headings, in place; should it fail, the messages are there all the same
             self.took_in.emit()
             self._unpark()  # placed: a place that waited for one of them is known now
             if self._arriving:
@@ -1816,6 +1878,7 @@ class MessageListModel(QAbstractTableModel):
             if not result.known:
                 self.rearrange(self._spec)  # what changed is no longer known one by one: the order is asked once
                 return
+            another_day = self._other_day(result.day)  # its heading is of another day than the list's: moved now, the headings asked after (D-321)
             moves: list[tuple[str, int, str, str, str]] = []
             for number, key in enumerate(keys):
                 position = result.positions[number] if number < len(result.positions) else None
@@ -1826,7 +1889,9 @@ class MessageListModel(QAbstractTableModel):
                 group_key = result.group_keys[number] if result.group_keys else ""
                 group_name = result.group_names[number] if result.group_names else ""
                 moves.append((key, position, self._key(mailbox, before) if before else "", group_key, group_name))
-            self._move_to_places(moves, left_meanwhile=(self._order_changes, self._facts_heard) != asked_changes)
+            self._move_to_places(moves, left_meanwhile=(self._order_changes, self._facts_heard) != asked_changes, another_day=another_day)
+            if another_day:
+                self._headings_again()  # the order with the new day's headings, in place; should it fail, the moves are done all the same
             self._plan_resort()
 
         def failed(error: ChronoMailError) -> None:
@@ -1854,9 +1919,9 @@ class MessageListModel(QAbstractTableModel):
     def _group_here(self, place: int, group_key: str, name: str) -> tuple[str, str]:
         """The heading of the message at this place of the list as it stands now (the given one when there is none): a message put before
         it for now is counted where it sits, so the headings' counts keep matching the list until its true place comes."""
-        if not self._group_counts or place >= len(self._order):
+        if not self._group_counts or not self._order:
             return group_key, name
-        found_key, found_name, _ = self._group_counts[self._group_index(place)]
+        found_key, found_name, _ = self._group_counts[self._group_index(min(place, len(self._order) - 1))]  # at the end: the last heading
         return found_key, found_name
 
     def _still_moving(self, key: str) -> bool:
@@ -1864,7 +1929,7 @@ class MessageListModel(QAbstractTableModel):
         still holds it at its old one, so a place given by it is not sure yet."""
         return key in self._resorting or (self._resort_asked is not None and key in self._resort_asked)
 
-    def _move_to_places(self, moves: list[tuple[str, int, str, str, str]], left_meanwhile: bool = False) -> None:
+    def _move_to_places(self, moves: list[tuple[str, int, str, str, str]], left_meanwhile: bool = False, another_day: bool = False) -> None:
         """Messages of the view go to their new places (key, its place in the engine's order, the key of the message it now comes before
         or "" for the end, the key and name of its heading), in one layout change: every index Qt holds moves with its message, so the
         selection and the current message stay with their messages; a heading that empties goes, a new one comes; a folded group bar a
@@ -1923,7 +1988,7 @@ class MessageListModel(QAbstractTableModel):
             self._order.remove(key)
         for key, _, before, group_key, name in wanted:
             place = self._order.position(before) if before else len(self._order)
-            if before and self._still_moving(before):
+            if another_day or (before and self._still_moving(before)):  # another day: counted where it sits until its headings land (D-321)
                 group_key, name = self._group_here(place, group_key, name)
             if self._group_counts is not None:
                 self._count_into_group(place, group_key, name)

@@ -26,3 +26,4 @@ See also: [[mail-window]] · [[look]]
 - [[D-274]] Each profile has its own wallet name
 - [[D-275]] Readable wallet entries
 - [[D-319]] A click in the Flag or Unread column toggles that mark
+- [[D-321]] The day headings follow the day
