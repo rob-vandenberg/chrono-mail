@@ -38,6 +38,7 @@ from chrono_mail.ui.paletteeditor import colour_from
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks, mark_icon
 from chrono_mail.ui.calendarlayout import Entry
+from chrono_mail.ui.dayheadings import DayWatch
 from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, GridCanvas, MonthView, item_of
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.icons import theme_icon
@@ -49,9 +50,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.558"
+__version__ = "calendarview.py 4.4.564"
 
 # --- Version history ----------------------------------------------------
+# v4.4.564: After midnight the calendar looks as after a restart: today is the new day in every view, and a calendar that showed today shows the new today (D-322)
 # v4.4.558: The two final event menus in every view: invited and self-created, greyed by the date right-clicked; New only on an empty space, Edit off the menu; every action asks this occurrence or all occurrences after the click
 # v4.4.557: Cancel and Restore on the right-click menu, with the mail question on your own meeting; a Cancelled event does not open and its Edit is greyed until Restore (D-310)
 # v4.4.554: A declined event can be selected and opens with a double click; Delete from the toolbar asks as its menu (D-310)
@@ -192,7 +194,9 @@ class CalendarPage(PimPage):
         self.view: str = str(settings.value("calendar_view", layout.WEEK))
         if self.view not in {name for name, _ in layout.VIEWS}:
             self.view = layout.WEEK
-        self.anchor: date = date.today()
+        self.day_watch: DayWatch = DayWatch(self)  # the local day; its change shows the new today (D-322)
+        self.anchor: date = self._today()
+        self._day_shown: date = self.anchor  # the today the shown days were asked with; another day after midnight is asked again
         self.entries: list[Entry] = []
         self.selected: Entry | None = None
         self.first_weekday: int = QLocale().firstDayOfWeek().value - 1
@@ -292,7 +296,8 @@ class CalendarPage(PimPage):
         # connections
         self.previous_button.clicked.connect(lambda: self.step(-1))
         self.next_button.clicked.connect(lambda: self.step(1))
-        self.today_button.clicked.connect(lambda: self.goto(date.today()))
+        self.today_button.clicked.connect(self._goto_today)
+        self.day_watch.looked.connect(self._look)
         self.past_button.toggled.connect(self._past_toggled)
         self.hidden_button.toggled.connect(self._hidden_toggled)
         self.mini.clicked.connect(self._mini_clicked)
@@ -355,8 +360,25 @@ class CalendarPage(PimPage):
     def _tick(self) -> None:
         """Every minute: the line of the present moment moves."""
         self.grid.canvas.now = datetime.now(self.zone)
-        self.grid.canvas.today = date.today()
         self.grid.canvas.update()
+
+    def _today(self) -> date:
+        return date.fromisoformat(self.day_watch.day)
+
+    def _goto_today(self) -> None:
+        self.day_watch.look()  # the day of this moment, also when the computer just woke past midnight
+        self.goto(self._today())
+
+    def _look(self, day: str) -> None:
+        """A look at the local day (DayWatch). After midnight the calendar looks as after a restart (D-322): today is the new day in
+        every view, and a calendar that showed today shows the new today; days the person went to stay. A load that fails stays
+        silent and is tried again at the next look."""
+        today = date.fromisoformat(day)
+        if today == self._day_shown:
+            return
+        if self.anchor == self._day_shown:
+            self.anchor = today
+        self.reload(quiet=True)
 
     def set_view(self, name: str) -> None:
         self.view = name
@@ -392,11 +414,13 @@ class CalendarPage(PimPage):
         self.set_view(layout.DAY)
 
     def days(self) -> list[date]:
-        return layout.days_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, date.today())
+        return layout.days_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
 
-    def reload(self) -> None:
+    def reload(self, quiet: bool = False) -> None:
+        """The days of the view asked again; quiet: a failure says nothing (the look after midnight, tried again at the next look)."""
         visible = set(self.panel.visible_ids())
-        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, date.today())
+        today = self._today()
+        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, today)
         self._generation += 1
         generation = self._generation
         self.title.setText(layout.title_for(self.view, self.anchor, self.days()))
@@ -405,19 +429,21 @@ class CalendarPage(PimPage):
         self.mini.updateCells()
         if not visible:
             self.entries = []
+            self._day_shown = today
             self._show_data()
             return
 
         def arrived(result: EventList) -> None:
             if generation != self._generation:
                 return
+            self._day_shown = today
             self.entries = self._coloured(layout.entries_from(list(result.events), self.zone))
-            self._show_data()
+            self._show_data(keep=quiet)
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip(), hidden=self.show_hidden)
-        self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
+        self._backend.ask(EVENT_LIST, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
@@ -427,14 +453,15 @@ class CalendarPage(PimPage):
     def _scroll_to_morning(self) -> None:
         self.grid.scroll_to_hour(FIRST_HOUR)
 
-    def _show_data(self) -> None:
+    def _show_data(self, keep: bool = False) -> None:
+        """keep: the fill of the new day; Agenda keeps its selected event and the line at its top (D-322)."""
         days = self.days()
-        today = date.today()
+        today = self._today()
         now = datetime.now(self.zone)
         if self.view == layout.MONTH:
             self.month.set_data(days, self.entries, self.anchor.month, today, self.first_weekday)
         elif self.view == layout.AGENDA:
-            self.agenda.set_data(layout.agenda_groups(self.entries, days, self.hide_past, now), today)
+            self.agenda.set_data(layout.agenda_groups(self.entries, days, self.hide_past, now), today, keep)
         else:
             self.grid.header.set_data(days, self.entries, today)
             self.grid.canvas.now = now
@@ -680,7 +707,7 @@ class CalendarPage(PimPage):
             self._show_data()
         if kind == "item_removed" or target not in set(self.panel.visible_ids()):
             return
-        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, date.today())
+        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
         generation = self._generation
 
         def arrived(result: EventList) -> None:

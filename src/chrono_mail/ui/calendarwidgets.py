@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.558"
+__version__ = "calendarwidgets.py 4.4.564"
 
 # --- Version history ----------------------------------------------------
+# v4.4.564: The agenda keeps its selected event and the line at its top when it is filled again for the new day (D-322)
 # v4.4.558: The agenda has the right-click menus of the other views
 # v4.4.550: Hovering a cancelled event says Cancelled and its calendar, in every view (D-316)
 # v4.4.535: A location of several lines is drawn on one line (round 4)
@@ -600,8 +601,21 @@ class AgendaView(QListWidget):
         self.currentItemChanged.connect(self._current_changed)
         self.mark_of: Callable[[str], str] = no_mark  # an event's sync mark (D-194)
 
-    def set_data(self, groups: list[tuple[date, list[Entry]]], today: date) -> None:
+    def _key(self, item: QListWidgetItem | None) -> tuple[object, ...] | None:
+        """What a line stands for, the same after the list is filled again: an event's occurrence, or a day's heading."""
+        if item is None:
+            return None
+        entry = self._entry(item)
+        if entry is not None:
+            return ("event", entry.row, entry.start)
+        day = item.data(Qt.ItemDataRole.UserRole)
+        return ("day", day) if isinstance(day, date) else None
+
+    def set_data(self, groups: list[tuple[date, list[Entry]]], today: date, keep: bool = False) -> None:
+        """Filled; it starts at the top. keep (the new day, D-322): the selected event and the line at the top stay where they still are."""
         self.blockSignals(True)
+        chosen = self._key(self.currentItem()) if keep else None
+        top = self._key(self.itemAt(0, 0)) if keep and self.verticalScrollBar().value() > 0 else None
         self.clear()
         for day, entries in groups:
             title = f"{day.strftime('%A')}, {day.strftime('%B')} {day.day}, {day.year}" + ("   — Today" if day == today else "")
@@ -610,6 +624,7 @@ class AgendaView(QListWidget):
             font.setBold(True)
             header.setFont(font)
             header.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            header.setData(Qt.ItemDataRole.UserRole, day)
             self.addItem(header)
             for entry in entries:
                 place = one_line(entry.row.location)
@@ -623,6 +638,11 @@ class AgendaView(QListWidget):
             placeholder = QListWidgetItem("No events")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self.addItem(placeholder)
+        lines = [self.item(row) for row in range(self.count())]
+        if chosen is not None and (again := next((line for line in lines if self._key(line) == chosen), None)) is not None:
+            self.setCurrentItem(again)
+        if top is not None and (first := next((line for line in lines if self._key(line) == top), None)) is not None:
+            self.scrollToItem(first, QListWidget.ScrollHint.PositionAtTop)
         self.blockSignals(False)
 
     def _entry(self, item: QListWidgetItem | None) -> Entry | None:

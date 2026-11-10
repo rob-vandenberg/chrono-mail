@@ -51,6 +51,7 @@ from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, 
 from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.ui.colours import green, red, theme
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
+from chrono_mail.ui.dayheadings import DayWatch
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
@@ -59,9 +60,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 3.6.349"
+__version__ = "tasksview.py 4.4.564"
 
 # --- Version history ----------------------------------------------------
+# v4.4.564: After midnight the tasks look as after a restart: Overdue, Today, Tomorrow and the overdue marks of the new day, selection and top task kept (D-322)
 # v3.6.349: a task's dates through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: every engine call typed; delete and move are typed steps
@@ -451,6 +453,8 @@ class TasksPage(PimListPage):
         self._tags_known: list[str] = []
         self.model = TaskListModel()
         self.model.fetch = self._fetch_rows
+        self.day_watch: DayWatch = DayWatch(self)  # the local day; its change groups the tasks again (D-322)
+        self._day_shown: str = ""  # the day the list was grouped with
         self.delegate = TaskDelegate(self.colours)
         pane = QWidget()
         pane_layout = QVBoxLayout(pane)
@@ -541,6 +545,7 @@ class TasksPage(PimListPage):
         self.list.selectionModel().selectionChanged.connect(self._selection_changed)
         self.list.doubleClicked.connect(self._double_clicked)
         self.list.customContextMenuRequested.connect(self._list_menu)
+        self.day_watch.looked.connect(self._look)
 
     # --- showing ------------------------------------------------------------------------------
 
@@ -560,18 +565,36 @@ class TasksPage(PimListPage):
     def _state(self) -> Literal["open", "done", "all"]:
         return "open" if self._tab == "upcoming" else ("done" if self._tab == "completed" else "all")
 
+    def _today(self) -> date:
+        return date.fromisoformat(self.day_watch.day)
+
+    def _look(self, day: str) -> None:
+        """A look at the local day (DayWatch). After midnight the tasks look as after a restart (D-322): grouped by the new day, their
+        overdue marks asked again; the selection and the task at the top stay. A load that fails stays silent and is tried again at the next look."""
+        if not self._day_shown or day == self._day_shown:
+            return
+        top = ""
+        first = self.list.indexAt(QPoint(0, 0)).row()
+        if self.list.verticalScrollBar().value() > 0 and first >= 0:
+            top = next((payload.item for _, payload in self.model.entries[first:] if isinstance(payload, TaskPlace)), "")  # the first task in sight
+        self.reload_list(quiet=True, top=top)
+
     @override
-    def reload_list(self, keep: list[str] | None = None) -> None:
+    def reload_list(self, keep: list[str] | None = None, quiet: bool = False, top: str = "") -> None:
+        """The tasks asked again; quiet: a failure says nothing (the look after midnight); top: the task put back at the top of the list."""
         self._generation += 1
         generation = self._generation
         visible = self.panel.visible_ids()
         selected = keep if keep is not None else self._selected_items()
         parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip())  # only the lists shown: never a cut shared with hidden ones
 
+        today = self._today()
+
         def arrived(result: TaskPlaces) -> None:
             if generation != self._generation:
                 return
-            self.model.load(result.places)  # every task's place; the rows are asked for as they come into view
+            self._day_shown = today.isoformat()
+            self.model.load(result.places, today)  # every task's place; the rows are asked for as they come into view
             self._counted()
             self.status(self.count_label.text())
             positions = [position for position in (self.model.position_of(item) for item in selected) if position >= 0]
@@ -580,15 +603,18 @@ class TasksPage(PimListPage):
                 self.list.selectionModel().select(self.model.index(position), QItemSelectionModel.SelectionFlag.Select)
             if positions:
                 self.list.selectionModel().setCurrentIndex(self.model.index(positions[0]), QItemSelectionModel.SelectionFlag.NoUpdate)
+            if top and (at := self.model.position_of(top)) >= 0:
+                self.list.scrollTo(self.model.index(at), QAbstractItemView.ScrollHint.PositionAtTop)
             self._selection_changed()
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
         if not visible:
-            self.model.load([])
+            self._day_shown = today.isoformat()
+            self.model.load([], today)
             self.count_label.setText("")
             self._selection_changed()
             return
-        self._backend.ask(TASK_PLACES, parameters, arrived, self._failed, owner=self)
+        self._backend.ask(TASK_PLACES, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
 
     def _fetch_rows(self, items: list[str], request: int) -> None:
         """The rows of a page of the list (or of a task that changed), as they come into view."""
@@ -763,7 +789,7 @@ class TasksPage(PimListPage):
                 self.model.forget(wanted)  # its row changed: asked for again
                 if result.position is not None and result.places:  # its place in the engine's order, among the others
                     others.insert(min(result.position, len(others)), result.places[0])
-                    self.model.follow(others, wanted)
+                    self.model.follow(others, wanted, self._today())
                 else:
                     self.model.drop(wanted)  # it no longer matches the tab or the search
                 if self._select_when_there == wanted:

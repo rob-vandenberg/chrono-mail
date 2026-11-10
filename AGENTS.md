@@ -88,7 +88,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 ### 4.5 Tests are the gate
 
 1. Every change comes with tests.
-2. A task is only done when: the tests related to the change pass (never the full suite, the owner's rule), the type check of §3 passes, the layer check passes.
+2. A task is only done when: the tests related to the change pass (never the full suite, the owner's rule), the type check of §3 passes, the layer check passes, fresh reviewers found nothing real (the owner's rule G-9: at most 2 Sonnet reviewers per round; first whether it works as required, then only real-life faults, never unlikely edge cases).
 3. Protocol code is tested against a real mail server (SMTP, POP3, later IMAP, including their TLS variants), not only against mocks. No mail server is installed on the development machine: the tests use the Dovecot/Exim servers on the user's DirectAdmin hosts through opt-in `live` tests (`pytest -m live`, D-020). The default run (`pytest`) stays offline and excludes them.
 4. Performance target: the app stays responsive with **500,000 messages**. Heavy operations are measured against a generated test mailbox of that size.
 5. **A test is unambiguous** (the owner, R-45, D-223). Its result never depends on what ran before it, nor on timing; a test that can do that is a gamble, not a test. So:

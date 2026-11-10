@@ -27,3 +27,4 @@ See also: [[mail-window]] · [[look]]
 - [[D-275]] Readable wallet entries
 - [[D-319]] A click in the Flag or Unread column toggles that mark
 - [[D-321]] The day headings follow the day
+- [[D-322]] The calendar and the tasks follow the day

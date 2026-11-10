@@ -5,9 +5,10 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
 # --- Version ------------------------------------------------------------
-__version__ = "dayheadings.py 4.4.563"
+__version__ = "dayheadings.py 4.4.564"
 
 # --- Version history ----------------------------------------------------
+# v4.4.564: Also for the calendar and the tasks (D-322); without a clock of its own a watch reads local_now at each look
 # v4.4.563: Initial: the local day is watched; when it changes, the message list asks its day headings again (D-321)
 
 DAY_SORTS: frozenset[str] = frozenset({"date", "sent", "snoozed"})  # the sorts whose headings name a day (Today, Yesterday; Tomorrow for Snoozed)
@@ -27,10 +28,10 @@ class DayWatch(QObject):
     day_changed: Signal = Signal(str)  # the new day, YYYY-MM-DD
     looked: Signal = Signal(str)  # every look, with the day (a list whose headings are of another day asks them again)
 
-    def __init__(self, parent: QObject | None = None, now: Callable[[], datetime] = local_now) -> None:
+    def __init__(self, parent: QObject | None = None, now: Callable[[], datetime] | None = None) -> None:
         super().__init__(parent)
-        self._now: Callable[[], datetime] = now
-        self._day: str = now().date().isoformat()
+        self._now: Callable[[], datetime] = now if now is not None else (lambda: local_now())  # read at each look, so a test can set the time
+        self._day: str = self._now().date().isoformat()
         self._timer: QTimer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.look)
