@@ -6,8 +6,9 @@ from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QSettings, Qt, Signal
 from PySide6.QtGui import QDropEvent
-from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap, QStandardItemModel
 from PySide6.QtWidgets import (
+    QComboBox,
     QAbstractItemView,
     QColorDialog,
     QDialog,
@@ -39,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.568"
+__version__ = "collectionpanel.py 4.4.569"
 
 # --- Version history ----------------------------------------------------
+# v4.4.569: grey_read_only: the Calendar or List field of a new item greys a read-only one, with why (D-326)
 # v4.4.568: Calendars and task lists left out in Settings > Sidebar are not in the list; a blue plus marks the one new appointments or tasks go to, chosen with Use for new appointments (D-326)
 # v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
 # v4.2.438: a calendar fact brings its timed_background (UR-02, D-297)
@@ -73,6 +75,21 @@ KIND_WORDS: dict[str, tuple[str, str]] = {"events": ("Calendar", "calendar"), "t
 NEW_ITEMS: dict[str, str] = {"events": "appointments", "tasks": "tasks"}  # what goes to the collection with the blue plus (D-326)
 PLUS_COLUMN: int = 1  # the column of the blue plus, at the right of the list
 PLUS_SIZE: int = 14
+
+
+def grey_read_only(field: QComboBox, collections: list[CollectionSummary], word: str, items: str) -> None:
+    """The Calendar or List field of a new item: a read-only one greyed, with why, and never the one chosen (D-326, OR-15)."""
+    model = field.model()
+    if not isinstance(model, QStandardItemModel):
+        return
+    for number, info in enumerate(collections):
+        entry = model.item(number)
+        if info.read_only and entry is not None:
+            entry.setEnabled(False)
+            entry.setToolTip(f"This {word} is read only: it takes no new {items}")
+    current = field.currentIndex()
+    if 0 <= current < len(collections) and collections[current].read_only:
+        field.setCurrentIndex(next((number for number, info in enumerate(collections) if not info.read_only), current))
 
 
 def settings_set(settings: QSettings, key: str) -> set[str]:

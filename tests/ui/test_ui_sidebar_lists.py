@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QIcon, QImage, QPalette
+from PySide6.QtGui import QAction, QIcon, QImage, QPalette, QStandardItemModel
 from PySide6.QtWidgets import QDialog, QTabWidget, QTreeWidgetItem
 from pytestqt.qtbot import QtBot
 
@@ -20,9 +20,10 @@ from tests.ui.test_ui_tasks import open_tasks
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sidebar_lists.py 4.4.568"
+__version__ = "test_ui_sidebar_lists.py 4.4.569"
 
 # --- Version history ----------------------------------------------------
+# v4.4.569: A new appointment or task cannot be put in a read-only calendar or task list (D-326)
 # v4.4.568: Initial: Settings > Sidebar's Calendar and Tasks tabs, the blue plus and Use for new appointments or tasks (D-326)
 
 
@@ -234,3 +235,49 @@ def test_with_only_read_only_calendars_new_opens_nothing_and_says_why(world: Wor
     page.new_item()
     page._slot_activated(page.anchor, 600)  # noqa: SLF001
     assert opened == [] and said and "read only" in said[-1]
+
+
+def test_a_new_appointment_cannot_be_put_in_a_read_only_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page, own, work = with_work(world, qtbot)
+    with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
+        store.update_collection(own, read_only=True)
+    page.panel.reload()
+    wait(qtbot, lambda: bool(getattr(page.panel.info(own), "read_only", False)))
+    seen: list[tuple[bool, str, bool, str]] = []
+
+    def open_editor(editor: EventEditor) -> int:
+        model = editor.calendar.model()
+        assert isinstance(model, QStandardItemModel)
+        row = editor.calendar.findData(own)
+        free = editor.calendar.findData(work)
+        item, other = model.item(row), model.item(free)
+        assert item is not None and other is not None
+        seen.append((item.isEnabled(), item.toolTip(), other.isEnabled(), str(editor.calendar.currentData())))
+        return 0
+
+    monkeypatch.setattr(EventEditor, "exec", open_editor)
+    page.new_item()
+    assert seen == [(False, "This calendar is read only: it takes no new appointments", True, work)]
+
+
+def test_a_new_task_cannot_be_put_in_a_read_only_task_list(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page = open_tasks(world, qtbot, 0)
+    errands = str(world.call("collection.create", kind="tasks", name="Errands").collection)
+    wait(qtbot, lambda: page.panel._entry(errands) is not None)  # noqa: SLF001
+    with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
+        store.update_collection(errands, read_only=True)
+    page.panel.reload()
+    wait(qtbot, lambda: bool(getattr(page.panel.info(errands), "read_only", False)))
+    seen: list[tuple[bool, str]] = []
+
+    def open_editor(editor: TaskEditor) -> int:
+        model = editor.list.model()
+        assert isinstance(model, QStandardItemModel)
+        item = model.item(editor.list.findData(errands))
+        assert item is not None
+        seen.append((item.isEnabled(), item.toolTip()))
+        return 0
+
+    monkeypatch.setattr(TaskEditor, "exec", open_editor)
+    page.new_item()
+    assert seen == [(False, "This task list is read only: it takes no new tasks")]

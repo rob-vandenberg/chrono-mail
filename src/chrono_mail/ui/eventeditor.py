@@ -21,6 +21,7 @@ from chrono_mail.engine.commands_calendar import AddParameters as EventAdd
 from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
+from chrono_mail.ui.collectionpanel import grey_read_only
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventattendees import AttendeesDialog, Person
 from chrono_mail.ui.eventreminders import ReminderList
@@ -30,9 +31,10 @@ from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circl
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.536"
+__version__ = "eventeditor.py 4.4.569"
 
 # --- Version history ----------------------------------------------------
+# v4.4.569: The Calendar field of a new appointment greys a read-only calendar, with why (D-326)
 # v4.4.536: Reminders: up to 5, each Notification or Email with a number and a unit (round 4)
 # v4.4.535: A saved appointment opens read-only with an Edit button; attendees one per line, changed in a dialog of their own; tags picked from a list; the location has several lines; the repeat list follows the date, with Custom; date and times are separate fields (round 4)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -102,6 +104,8 @@ class EventEditor(QDialog):
             self.calendar.addItem(f"{info.account_name} — {info.name}", info.collection)
         self.calendar.setCurrentIndex(max(0, self.calendar.findData(collection)))
         self.calendar.setEnabled(event is None and self.calendar.count() > 1)
+        if event is None:  # a new appointment: a read-only calendar takes none (D-326)
+            grey_read_only(self.calendar, list(calendars), "calendar", "appointments")
         self._calendars: list[CollectionSummary] = list(calendars)
         self.colour: QToolButton = part(form, QToolButton, "colour")  # "● name ▾": the colour of the appointment, one of its calendar's (D-191)
         self.colour.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)

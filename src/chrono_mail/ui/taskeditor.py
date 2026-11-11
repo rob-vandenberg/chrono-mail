@@ -27,15 +27,17 @@ from chrono_mail.engine.commands_tasklist import AddParameters as TaskAdd
 from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
+from chrono_mail.ui.collectionpanel import grey_read_only
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.548"
+__version__ = "taskeditor.py 4.4.569"
 
 # --- Version history ----------------------------------------------------
+# v4.4.569: The List field of a new task greys a read-only task list, with why (D-326)
 # v4.4.548: the width of a reminder row is measured without a row in the window: a row removed again stayed on screen over Done and Repeat while the window was open
 # v4.4.547: the reminders are the rows of an appointment (eventreminders.py): every reminder of a task is shown and kept, each Notification or Email, a number and a unit or a set time, at most 5 (D-316)
 # v4.4.546: the Reminder list always offers At a set time… with a date and a time; without a due date the choices counted from it are greyed with a hover text, and a task that has one keeps it, shown greyed (D-316)
@@ -123,6 +125,8 @@ class TaskEditor(QDialog):
             self.list.addItem(f"{info.account_name} — {info.name}", info.collection)
         self.list.setCurrentIndex(max(0, self.list.findData(collection)))
         self.list.setEnabled(task is None and self.list.count() > 1)
+        if task is None:  # a new task: a read-only list takes none (D-326)
+            grey_read_only(self.list, list(lists), "task list", "tasks")
         self.start: DateField = part(form, DateField, "startField")
         self.due: DateField = part(form, DateField, "dueField")
         self.priority: QComboBox = part(form, QComboBox, "priority")
