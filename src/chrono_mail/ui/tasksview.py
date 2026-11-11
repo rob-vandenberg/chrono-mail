@@ -61,9 +61,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.572"
+__version__ = "tasksview.py 4.4.574"
 
 # --- Version history ----------------------------------------------------
+# v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.572: open_task: a task opens in its editor from the Tag overview, as with a double click here (D-328)
 # v4.4.571: Tags under the task lists in the sidebar: a click on a tag shows only the tasks with that tag, All tasks shows every task again (D-327)
 # v4.4.568: New tasks go to the task list with the blue plus (D-326)
@@ -455,6 +456,7 @@ class TasksPage(PimListPage):
         self._generation: int = 0
         self._select_when_there: str = ""  # a task just saved: selected when its row has come in
         self._tags_known: list[str] = []
+        self._tags_asked: int = 0  # requests for the tags: only the answer to the latest counts, an older one may come after it
         self.model = TaskListModel()
         self.model.fetch = self._fetch_rows
         self.day_watch: DayWatch = DayWatch(self)  # the local day; its change groups the tasks again (D-322)
@@ -623,14 +625,14 @@ class TasksPage(PimListPage):
             if top and (at := self.model.position_of(top)) >= 0:
                 self.list.scrollTo(self.model.index(at), QAbstractItemView.ScrollHint.PositionAtTop)
             self._selection_changed()
-            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
+            self._ask_tags()
 
         if not visible:
             self._day_shown = today.isoformat()
             self.model.load([], today)
             self.count_label.setText("")
             self._selection_changed()
-            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the tags still show with no list ticked
+            self._ask_tags()  # the tags still show with no list ticked
             return
         self._backend.ask(TASK_PLACES, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
 
@@ -651,7 +653,19 @@ class TasksPage(PimListPage):
 
     def reload_tags(self) -> None:
         """The tags asked again (their colours or names changed in Settings): the Tags list and the chips follow (D-327)."""
-        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
+        self._ask_tags()
+
+    def _ask_tags(self) -> None:
+        """The tags asked again; their answers come on threads of their own, so one asked earlier can arrive later: only the latest counts
+        (an older one would bring back old colours or numbers, D-329)."""
+        self._tags_asked += 1
+        number = self._tags_asked
+
+        def arrived(result: tuple[TagInfo, ...]) -> None:
+            if number == self._tags_asked:
+                self._tags_arrived(result)
+
+        self._backend.ask(TAG_LIST, NoParameters(), arrived, lambda error: None, owner=self)
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
@@ -809,7 +823,7 @@ class TasksPage(PimListPage):
         """A task was added, changed, deleted or moved: only that task changes (D-146)."""
         kind, collection, item = str(change.kind), change.folder, change.message_id
         visible = self.panel.visible_ids()
-        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the numbers of the tags, for any task (D-327)
+        self._ask_tags()  # the numbers of the tags, for any task (D-327)
         if kind in ("item_removed", "item_moved") and self.model.position_of(item) >= 0:
             self.model.pending.discard(item)
             self.model.drop(item)

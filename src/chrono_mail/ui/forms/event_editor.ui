@@ -223,6 +223,13 @@
          </property>
         </widget>
        </item>
+         <item>
+          <widget class="QPushButton" name="removeTag">
+           <property name="text">
+            <string>Remove tag</string>
+           </property>
+          </widget>
+         </item>
        <item>
         <spacer name="tagsRest">
          <property name="orientation">

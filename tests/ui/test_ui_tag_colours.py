@@ -1,3 +1,4 @@
+import pytest
 import dataclasses
 
 from PySide6.QtCore import QRect, QRectF
@@ -203,3 +204,120 @@ def test_a_long_tag_name_ends_in_dots_and_shows_whole_on_hover(qtbot: QtBot) -> 
     box.set_tags([name])
     label = next(label for label in box.findChildren(QLabel) if label.toolTip() == name)
     assert label.text().endswith("…") and label.text() != name
+
+
+def open_add_tag_list_and_click(qtbot: QtBot, editor: EventEditor, name: str) -> tuple[list[str], bool]:
+    """A click on Add tag…, then on a tag in its list, as a person does; what the list offered, and whether it closed."""
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtTest import QTest
+
+    offered: list[str] = []
+
+    def inside() -> None:
+        menu = editor.tag_menu
+        if not menu.isVisible():
+            QTimer.singleShot(50, inside)  # the list is not open yet: look again in a moment
+            return
+        offered.extend(action.text() for action in menu.actions() if action.text())
+        action = next(action for action in menu.actions() if action.text() == name)
+        rect = menu.actionGeometry(action)
+        QTest.mouseMove(menu, rect.center())
+        QTest.mouseClick(menu, Qt.MouseButton.LeftButton, pos=rect.center())
+
+    QTimer.singleShot(50, inside)
+    QTest.mouseClick(editor.add_tag, Qt.MouseButton.LeftButton)
+    qtbot.wait(100)
+    return offered, editor.tag_menu.isVisible()
+
+
+def test_a_click_in_the_add_tag_list_adds_the_tag_and_closes_the_list(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    world.call("tag.create", name="Party", colour="#aa00aa")
+    _, editor = editor_for(world, qtbot)
+    editor.show()
+    qtbot.waitExposed(editor)
+    offered, still_open = open_add_tag_list_and_click(qtbot, editor, "Party")
+    assert "Food" not in offered and "Party" in offered and offered[-1] == "New tag…"  # only the tags it does not have yet
+    assert not still_open and editor.chosen_tags == ["Food", "Party"]
+    assert any(label.text() == "Party" and label.isVisible() for label in editor.tag_box.findChildren(QLabel))  # seen at once in the box
+
+
+def test_the_tags_box_has_the_dark_field_colour_of_the_attendee_list(world: World, qtbot: QtBot) -> None:
+    _, editor = editor_for(world, qtbot)
+    editor.show()
+    qtbot.waitExposed(editor)
+    picture = editor.grab().toImage()
+    box = editor.tag_box.mapTo(editor, editor.tag_box.rect().bottomRight())
+    attendees = editor.attendees.mapTo(editor, editor.attendees.rect().bottomRight())
+    assert picture.pixelColor(box.x() - 20, box.y() - 6) == picture.pixelColor(attendees.x() - 20, attendees.y() - 6)
+
+
+def test_the_window_opens_780_pixels_wide_on_the_owner_s_screen(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui import forms
+    from chrono_mail.ui.scale import wpx
+
+    _, editor = editor_for(world, qtbot)
+    screen = editor.screen()
+    room = screen.availableGeometry().width() if screen is not None else 10_000
+    assert editor.width() == max(editor.minimumWidth(), min(wpx(forms.owner_width(780)), room))
+
+
+def test_a_click_on_a_tag_selects_it_and_remove_tag_or_delete_removes_it(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel
+
+    _, editor = editor_for(world, qtbot)
+    editor.choose_tag("Party", True)
+    editor.choose_tag("Sport", True)
+    editor.show()
+    qtbot.waitExposed(editor)
+    assert not editor.remove_tag.isEnabled() and editor.remove_tag.toolTip() != ""  # greyed, with why
+    label = next(label for label in editor.tag_box.findChildren(QLabel) if label.text() == "Party")
+    QTest.mouseClick(label, Qt.MouseButton.LeftButton)
+    assert editor.tag_box.selected() == "Party" and editor.remove_tag.isEnabled()
+    shown = next(label for label in editor.tag_box.findChildren(QLabel) if label.text() == "Party")  # the box drew its lines again
+    row = shown.parentWidget()
+    assert row is not None and row.autoFillBackground()  # highlighted
+    editor.remove_tag.click()
+    assert editor.chosen_tags == ["Food", "Sport"] and not editor.remove_tag.isEnabled()
+    sport = next(label for label in editor.tag_box.findChildren(QLabel) if label.text() == "Sport")
+    QTest.mouseClick(sport, Qt.MouseButton.LeftButton)
+    QTest.keyClick(editor.tag_box, Qt.Key.Key_Delete)
+    assert editor.chosen_tags == ["Food"]
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+
+    radio = next(button for button in editor.tag_box.findChildren(QRadioButton))
+    option = QStyleOptionButton()
+    option.initFrom(radio)
+    circle = radio.style().subElementRect(QStyle.SubElement.SE_RadioButtonIndicator, option, radio)
+    QTest.mouseClick(radio, Qt.MouseButton.LeftButton, pos=circle.center())  # on the round button itself
+    assert editor.tag_box.selected() == ""  # a click on the radio button chooses the colour, it selects nothing
+
+
+def test_a_read_only_window_greys_add_tag_and_remove_tag(world: World, qtbot: QtBot) -> None:
+    _, editor = editor_for(world, qtbot, reading=True)
+    editor.tag_box.select("Food")
+    assert not editor.add_tag.isEnabled() and not editor.remove_tag.isEnabled()
+
+
+def test_an_older_answer_about_the_tags_never_brings_back_old_colours(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from collections.abc import Callable
+
+    from chrono_mail.engine.commands_pim import TagInfo
+
+    page = open_calendar(world, qtbot, layout.WEEK)
+    answers: list[Callable[[tuple[TagInfo, ...]], None]] = []
+
+    def held(command: object, parameters: object, arrived: Callable[[tuple[TagInfo, ...]], None], failed: object, owner: object = None) -> None:
+        answers.append(arrived)  # held back: delivered below in the wrong order, as threads may
+
+    monkeypatch.setattr(page._backend, "ask", held)  # noqa: SLF001
+    page.reload_tags()  # asked first: still the old colour
+    page.reload_tags()  # asked second: the new colour
+    old = (TagInfo("Food", "#111111", 0, 1, 0),)
+    new = (TagInfo("Food", "#e01b84", 0, 1, 0),)
+    answers[1](new)
+    answers[0](old)  # the older answer comes last
+    assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#e01b84"

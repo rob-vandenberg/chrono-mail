@@ -3,10 +3,8 @@ from collections.abc import Callable
 from datetime import date, datetime
 
 from dataclasses import replace
-from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
-from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
 
 from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
@@ -33,9 +31,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.573"
+__version__ = "eventeditor.py 4.4.574"
 
 # --- Version history ----------------------------------------------------
+# v4.4.574: Add tag… lists the tags not on the appointment and closes at a click; Remove tag beside it removes the selected tag; opens 780 pixels wide on the owner's screen (D-329)
 # v4.4.573: No Colour field: the Tags box beside Show as and the attendees, each tag in its colour, a radio button chooses the tag that colours the appointment; Description starts lower (D-329)
 # v4.4.569: The Calendar field of a new appointment greys a read-only calendar, with why (D-326)
 # v4.4.536: Reminders: up to 5, each Notification or Email with a number and a unit (round 4)
@@ -55,6 +54,7 @@ __version__ = "eventeditor.py 4.4.573"
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
 # v0.0.64: Initial editor for an event
 
+OPENING_WIDTH: int = 780  # the owner's pixels on his screen (forms.owner_width)
 NARROW: int = 300  # Repeat, Show as and the attendees: the Tags box is on their right (D-329)
 DESCRIPTION_LINES: int = 3
 CUSTOM: str = "custom"  # the last line of the repeat list: it opens the Custom window
@@ -69,18 +69,6 @@ def to_qdatetime(text: str) -> QDateTime:
     moment = datetime.fromisoformat(text)
     local = in_local_zone(moment)  # shown in the zone the engine reads the times back in
     return QDateTime(QDate(local.year, local.month, local.day), QTime(local.hour, local.minute))
-
-
-class TickMenu(QMenu):
-    """A list of ticks that stays open, so that several can be ticked in one go."""
-
-    @override
-    def mouseReleaseEvent(self, arg__1: QMouseEvent, /) -> None:
-        action = self.activeAction()
-        if action is not None and action.isCheckable():
-            action.trigger()
-            return
-        super().mouseReleaseEvent(arg__1)
 
 
 class EventEditor(QDialog):
@@ -154,9 +142,12 @@ class EventEditor(QDialog):
         self.attendees_button.clicked.connect(self._change_attendees)
         self.people: list[Person] = []
         self._names_asked: set[str] = set()
-        self.add_tag: QPushButton = part(form, QPushButton, "addTag")  # its list ticks the tags: a tick adds, taking it away removes
-        self.tag_menu = TickMenu(self.add_tag)
+        self.add_tag: QPushButton = part(form, QPushButton, "addTag")  # its list: the tags not on the appointment; a click adds one and closes it
+        self.tag_menu = QMenu(self.add_tag)
         self.add_tag.setMenu(self.tag_menu)
+        self.remove_tag: QPushButton = part(form, QPushButton, "removeTag")  # removes the tag selected in the box; greyed until one is
+        self.remove_tag.clicked.connect(self.tag_box.remove_selected)
+        self.tag_box.selection_changed.connect(self._show_remove_tag)
         self._known_tags: list[TagInfo] = [tag for tag in known_tags if "events" in tag.kinds]
         tag_colours = TagColourBook()
         tag_colours.update(known_tags)
@@ -171,7 +162,7 @@ class EventEditor(QDialog):
         self.edit_button.clicked.connect(self.start_editing)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        forms.smallest(self, 540)  # its texts are never cut off, also at the largest size
+        forms.open_at(self, 540, forms.owner_width(OPENING_WIDTH))  # its texts are never cut off; it opens 780 pixels wide on the owner's screen
         self.all_day.toggled.connect(self._show_when)
         self.several_days.toggled.connect(self._several_days_changed)
         self.start_date.dateChanged.connect(self._start_moved)
@@ -226,6 +217,7 @@ class EventEditor(QDialog):
         for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.busy, self.attendees_button, self.add_tag):
             field.setEnabled(not reading)
         self.tag_box.set_enabled(not reading)
+        self._show_remove_tag()
         self.reminders.set_enabled(not reading)
         self.repeat.setEnabled(not reading and not self._occurrence)  # one occurrence has no rule of its own
         calendar = self._current_calendar()
@@ -300,16 +292,21 @@ class EventEditor(QDialog):
         self.tag_box.set_tags(self.tag_box.tags())
 
     def _fill_tag_menu(self) -> None:
+        """The tags the appointment does not have yet, each in its colour, then New tag…; a click adds one and the list closes."""
         self.tag_menu.clear()
         colours = {tag.name: tag.colour for tag in self._known_tags}
-        chosen = self.chosen_tags
-        for name in [*colours, *(tag for tag in chosen if tag not in colours)]:
-            action = self.tag_menu.addAction(circle_icon(colours[name]), name) if name in colours else self.tag_menu.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(name in chosen)
-            action.toggled.connect(lambda on=False, tag=name: self.choose_tag(tag, on))
-        self.tag_menu.addSeparator()
+        chosen = {name.casefold() for name in self.chosen_tags}
+        for name in (name for name in colours if name.casefold() not in chosen):
+            self.tag_menu.addAction(circle_icon(colours[name]), name, lambda tag=name: self.choose_tag(tag, True))
+        if not self.tag_menu.isEmpty():
+            self.tag_menu.addSeparator()
         self.tag_menu.addAction("New tag…", self._new_tag)
+
+    def _show_remove_tag(self) -> None:
+        """Remove tag works on the selected tag: greyed, with why, until one is selected (OR-15)."""
+        usable = bool(self.tag_box.selected()) and not self._reading
+        self.remove_tag.setEnabled(usable)
+        self.remove_tag.setToolTip("" if usable else "Click a tag in the list first" if not self._reading else "")
 
     def choose_tag(self, name: str, on: bool) -> None:
         if on:

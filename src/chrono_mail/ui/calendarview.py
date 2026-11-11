@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.573"
+__version__ = "calendarview.py 4.4.574"
 
 # --- Version history ----------------------------------------------------
+# v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.573: An appointment takes the colour of its first tag, and knows its tags' colours (D-329)
 # v4.4.572: open_event: an event opens read-only from the Tag overview, a Cancelled one not until it is Restored (D-328)
 # v4.4.571: Tags under the calendars in the sidebar: a click on a tag shows only the events with that tag in every view, All events shows every event again (D-327)
@@ -216,6 +217,7 @@ class CalendarPage(PimPage):
         self._fetches: int = 0  # how many fetches of events were asked: a title on its way counts only the ones after it (D-325)
         self._pending: dict[tuple[str, str], PendingTitle] = {}  # titles typed in place on their way to the server, shared with the views (D-325)
         self._tags_known: list[TagInfo] = []
+        self._tags_asked: int = 0  # requests for the tags: only the answer to the latest counts, an older one may come after it
         self._scrolled: bool = False
         # sidebar: the calendars, and the small month
         side = QWidget()
@@ -453,7 +455,7 @@ class CalendarPage(PimPage):
             self.entries = []
             self._day_shown = today
             self._show_data()
-            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the tags still show with no calendar ticked
+            self._ask_tags()  # the tags still show with no calendar ticked
             return
 
         self._fetches += 1
@@ -467,14 +469,26 @@ class CalendarPage(PimPage):
             self._fetched(None, number)
             self._show_data(keep=quiet)
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
-            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
+            self._ask_tags()
 
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip(), tag=self.tag_filter.tag(), hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
 
     def reload_tags(self) -> None:
         """The tags asked again (their colours or names changed in Settings): the Tags list follows (D-327)."""
-        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
+        self._ask_tags()
+
+    def _ask_tags(self) -> None:
+        """The tags asked again; their answers come on threads of their own, so one asked earlier can arrive later: only the latest counts
+        (an older one would bring back old colours or numbers, D-329)."""
+        self._tags_asked += 1
+        number = self._tags_asked
+
+        def arrived(result: tuple[TagInfo, ...]) -> None:
+            if number == self._tags_asked:
+                self._tags_arrived(result)
+
+        self._backend.ask(TAG_LIST, NoParameters(), arrived, lambda error: None, owner=self)
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
@@ -835,7 +849,7 @@ class CalendarPage(PimPage):
         kind, item = str(change.kind), change.message_id
         wanted = change.new_message_id if kind == "item_moved" else item
         target = change.to_folder if kind == "item_moved" else change.folder
-        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the numbers of the tags (D-327)
+        self._ask_tags()  # the numbers of the tags (D-327)
         stays = kind not in ("item_removed", "item_moved") and target in set(self.panel.visible_ids())
         if kind in ("item_removed", "item_moved"):
             self._forget_titles(item)  # gone: a title typed for it is nobody's (D-325)

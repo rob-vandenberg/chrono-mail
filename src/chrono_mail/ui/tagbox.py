@@ -1,21 +1,37 @@
 from functools import partial
+from typing import override
 
 from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPalette
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QMenu, QRadioButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.ui.colours import theme
+from chrono_mail.ui.deletekey import DeleteKey
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagbox.py 4.4.573"
+__version__ = "tagbox.py 4.4.574"
 
 # --- Version history ----------------------------------------------------
+# v4.4.574: A click on a tag's line selects it (highlighted), Delete removes it; the box has the dark field colour of the attendee list (D-329)
 # v4.4.573: Initial Tags box of the appointment window: each tag a rounded label in its colour, a radio button chooses the tag that colours the appointment (D-329)
 
 LONGEST_LABEL: int = 120  # the widest a tag's name is shown in the box, at the size factor of the windows
 COLOUR_TIP: str = "This tag gives the appointment its colour"
 CHOOSE_TIP: str = "Click to let this tag give the appointment its colour"
+
+
+class TagRow(QWidget):
+    """One tag's line: a click on it (not on its radio button) selects it."""
+
+    pressed = Signal()
+
+    @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.pressed.emit()
+        super().mousePressEvent(event)
 
 
 class TagBox(QScrollArea):
@@ -24,6 +40,7 @@ class TagBox(QScrollArea):
     gets it. tags() gives the colour tag first, as the appointment keeps them."""
 
     changed = Signal()
+    selection_changed = Signal()  # another tag's line was selected, or none
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -33,9 +50,18 @@ class TagBox(QScrollArea):
         self._names: list[str] = []  # in the order they were added
         self._colour_tag: str = ""
         self._enabled: bool = True
+        self._selected: str = ""  # the tag whose line is selected ('' for none)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._delete_key = DeleteKey(self, self.remove_selected)  # Delete removes the selected tag while the box has the keyboard (OR-16)
+        self.viewport().setBackgroundRole(QPalette.ColorRole.Base)  # the dark field colour of the attendee list, never the window's grey
+        self.viewport().setAutoFillBackground(True)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._inner = QWidget()
+        self._inner.setAutoFillBackground(False)
+        self._inner.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._inner.setObjectName("tagLines")
+        self._inner.setStyleSheet("QWidget#tagLines { background: transparent; }")  # only the holder of the lines: the field shows through
         self._rows = QVBoxLayout(self._inner)
         self._rows.setContentsMargins(wpx(6), wpx(4), wpx(6), wpx(4))
         self._rows.setSpacing(wpx(3))
@@ -51,6 +77,9 @@ class TagBox(QScrollArea):
         """The appointment's tags as it keeps them: its colour tag first."""
         self._names = list(dict.fromkeys(tags))
         self._colour_tag = self._names[0] if self._names else ""
+        if self._selected not in self._names:
+            self._selected = ""
+            self.selection_changed.emit()
         self._show()
 
     def tags(self) -> list[str]:
@@ -62,6 +91,21 @@ class TagBox(QScrollArea):
 
     def colour_tag(self) -> str:
         return self._colour_tag
+
+    def selected(self) -> str:
+        """The tag whose line is selected ('' for none)."""
+        return self._selected
+
+    def select(self, name: str) -> None:
+        if name != self._selected and (not name or name in self._names):
+            self._selected = name
+            self._show()
+            self.selection_changed.emit()
+
+    def remove_selected(self) -> None:
+        """Remove tag, or Delete: the selected tag goes."""
+        if self._selected and self._enabled:
+            self.remove(self._selected)
 
     def add(self, name: str) -> None:
         if any(name.casefold() == known.casefold() for known in self._names):
@@ -76,6 +120,9 @@ class TagBox(QScrollArea):
         if name not in self._names:
             return
         self._names.remove(name)
+        if name == self._selected:
+            self._selected = ""
+            self.selection_changed.emit()
         if name == self._colour_tag:
             self._colour_tag = self._names[0] if self._names else ""  # the first tag left gives the colour now
         self._show()
@@ -108,8 +155,12 @@ class TagBox(QScrollArea):
     def _row(self, name: str) -> QWidget:
         colour = self._colours.colour(name)
         text = TagColourBook.text_colour(colour)
-        row = QWidget(self._inner)
+        row = TagRow(self._inner)
         row.setObjectName("tagRow")
+        if name == self._selected:  # highlighted like a selected line elsewhere
+            row.setAutoFillBackground(True)
+            row.setBackgroundRole(QPalette.ColorRole.Highlight)
+        row.pressed.connect(partial(self._row_pressed, name))
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(wpx(6))
@@ -138,6 +189,10 @@ class TagBox(QScrollArea):
         row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         row.customContextMenuRequested.connect(partial(self._menu, name, row))
         return row
+
+    def _row_pressed(self, name: str) -> None:
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.select(name)
 
     def _menu(self, name: str, row: QWidget, position: QPoint) -> None:
         menu = QMenu(self)
