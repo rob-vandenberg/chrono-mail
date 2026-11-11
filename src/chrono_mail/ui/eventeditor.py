@@ -33,9 +33,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.575"
+__version__ = "eventeditor.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: Every appointment opens ready to change; only one of a read-only calendar is just read, with the reason and Close; no Edit button (the owner)
 # v4.4.575: Opens 780 pixels wide in Qt's own units, then at the size it was closed at; a wider window widens the left column and the Tags box alike (D-329)
 # v4.4.574: Add tag… lists the tags not on the appointment and closes at a click; Remove tag beside it removes the selected tag; opens 780 pixels wide on the owner's screen (D-329)
 # v4.4.573: No Colour field: the Tags box beside Show as and the attendees, each tag in its colour, a radio button chooses the tag that colours the appointment; Description starts lower (D-329)
@@ -57,6 +58,7 @@ __version__ = "eventeditor.py 4.4.575"
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
 # v0.0.64: Initial editor for an event
 
+READ_ONLY_REASON: str = "This calendar can only be read, so this appointment cannot be changed here."
 OPENING_WIDTH: int = 780  # the first opening width, in Qt's own units, as the owner measures it (no size factor, no screen scale)
 GEOMETRY_KEY: str = "event_editor_geometry"  # its size and place as it was last closed
 DESCRIPTION_LINES: int = 3
@@ -82,7 +84,7 @@ class EventEditor(QDialog):
 
     def __init__(
         self, backend: Backend, calendars: list[CollectionSummary], known_tags: list[TagInfo], event: EventInfo | None = None, collection: str = "", occurrence: str = "",
-        start: str = "", end: str = "", parent: QWidget | None = None, settings: QSettings | None = None, reading: bool = False, ask_scope: Callable[[], str] | None = None,
+        start: str = "", end: str = "", parent: QWidget | None = None, settings: QSettings | None = None, reading: bool = False,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -90,8 +92,7 @@ class EventEditor(QDialog):
         self._original: EventInfo | None = event
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
-        self._reading: bool = reading  # a saved appointment read: nothing can be changed until Edit
-        self._ask_scope: Callable[[], str] | None = ask_scope  # a repeating event read: Edit asks whether this occurrence or all of them
+        self._reading: bool = reading  # an appointment of a read-only calendar: it can only be read (the others open ready to change)
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
         self.tag_box = TagBox()
         form = forms.fill(self, "event_editor", {"tagBox": self._place_tag_box})  # D-276
@@ -158,8 +159,6 @@ class EventEditor(QDialog):
         buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        self.edit_button: QPushButton = buttons.addButton("Edit", QDialogButtonBox.ButtonRole.ActionRole)
-        self.edit_button.clicked.connect(self.start_editing)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         fields = form.findChild(QGridLayout, "fields")
@@ -220,10 +219,11 @@ class EventEditor(QDialog):
         self.set_people([Person(person.address, person.name, person.address) for person in event.attendees])
         self.tag_box.set_tags(list(event.tags))  # its colour tag first
 
-    # --- reading, and Edit ------------------------------------------------------------------------
+    # --- reading (a read-only calendar) ------------------------------------------------------------
 
     def _show_reading(self) -> None:
-        """Read-only until Edit: the texts can still be selected, the rest is greyed; the buttons are Edit and Close, then Save and Cancel."""
+        """An appointment of a read-only calendar is only read: the texts can still be selected, the rest is greyed, the reason is said, the
+        button is Close. Every other appointment opens ready to change, with Save and Cancel (the owner)."""
         reading = self._reading
         for text in (self.location, self.description):
             text.setReadOnly(reading)
@@ -234,35 +234,13 @@ class EventEditor(QDialog):
         self._show_remove_tag()
         self.reminders.set_enabled(not reading)
         self.repeat.setEnabled(not reading and not self._occurrence)  # one occurrence has no rule of its own
-        calendar = self._current_calendar()
-        self.edit_button.setVisible(reading)
-        self.edit_button.setEnabled(calendar is None or not calendar.read_only)
-        self.edit_button.setToolTip("This calendar can only be read." if not self.edit_button.isEnabled() else "")
         self.save_button.setVisible(not reading)
         self.cancel_button.setText("Close" if reading else "Cancel")
         if reading:
-            self.edit_button.setDefault(True)
+            self.result_label.setText(READ_ONLY_REASON)
+            self.cancel_button.setDefault(True)
         else:
             self.save_button.setDefault(True)
-
-    def start_editing(self) -> None:
-        """Edit: this same window becomes the editor. A repeating event first asks what the change is for."""
-        event = self._original
-        if self._ask_scope is not None and event is not None:
-            scope = self._ask_scope()
-            if not scope:
-                return
-            if scope == "series":
-                self._occurrence = ""
-                self._fill(event, "", "")
-                self.setWindowTitle(f"Event: {event.summary}")
-                self._show_tags()
-                self._show_when()
-            self._ask_scope = None
-        self._reading = False
-        self._show_reading()
-        self._told_before = self._told_fields(self.parameters())
-        self.summary.setFocus()
 
     # --- attendees --------------------------------------------------------------------------------
 

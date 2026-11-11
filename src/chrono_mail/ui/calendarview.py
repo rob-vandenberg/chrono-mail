@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.575"
+__version__ = "calendarview.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: A double click, Enter, Edit… (first in every appointment's menu) and the toolbar's Edit open an appointment ready to change; one of a read-only calendar only to read (the owner, D-318)
 # v4.4.575: The calendar sidebar knows when Month is shown, for its Fill colour tick (D-297); the Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.573: An appointment takes the colour of its first tag, and knows its tags' colours (D-329)
@@ -583,8 +584,8 @@ class CalendarPage(PimPage):
             self.status("Calendar: every calendar is read only, so none takes new appointments")
         return False
 
-    def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "", reading: bool = False, ask_scope: Callable[[], str] | None = None) -> None:
-        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings, reading, ask_scope)
+    def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "", reading: bool = False) -> None:
+        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings, reading)
         editor.saved.connect(self._saved)
         editor.mail_ready.connect(self.mail_ready)
         editor.exec()
@@ -608,7 +609,7 @@ class CalendarPage(PimPage):
     def _entry_activated(self, entry: object) -> None:
         if isinstance(entry, Entry):
             self._entry_clicked(entry)
-            self.read_selected()
+            self.edit_selected()
 
     def _ask_scope(self, verb: str) -> str:
         """For a repeating event: 'occurrence' (only this one), 'series' (all of them) or '' (cancel)."""
@@ -624,38 +625,29 @@ class CalendarPage(PimPage):
         return "occurrence" if clicked is only else ("series" if clicked is everything else "")
 
     def open_event(self, item: str) -> None:
-        """An event opened from the Tag overview (D-328): read-only, as a double click opens it here; a repeating one as its whole series. A Cancelled
-        event does not open until it is Restored (D-310)."""
+        """An event opened from the Tag overview (D-328): ready to change, a repeating one as its whole series (the overview lists the series); one of a
+        read-only calendar only read. A Cancelled event does not open until it is Restored (D-310)."""
 
         def opened(result: EventInfo) -> None:
             if result.status == "CANCELLED":
                 self.status("Calendar: a cancelled appointment opens once it is restored")
                 return
-            self._editor(result, result.collection, reading=True)
+            calendar = self.panel.info(result.collection)
+            self._editor(result, result.collection, reading=calendar is not None and calendar.read_only)
 
         self._backend.ask(EVENT_SHOW, EventItem(item), opened, self._failed, owner=self)
 
-    def read_selected(self) -> None:
-        """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for. A Cancelled event does not open
-        until it is Restored (D-310), nor while its title waits for the server (D-325)."""
+    def edit_selected(self) -> None:
+        """A double click, Enter, Edit… or the toolbar's Edit: the appointment opens ready to change (the owner); a repeating one asks first whether
+        the change is for this date or all of them. One of a read-only calendar opens only to be read. A Cancelled event does not open until it is
+        Restored (D-310), nor while its title waits for the server (the window would show the old one, D-325)."""
         entry = self.selected
         if entry is None or entry.row.cancelled or self._title_waiting(entry):
             return
         row = entry.row
-
-        def opened(result: EventInfo) -> None:
-            if row.repeats:
-                self._editor(result, result.collection, row.occurrence, *_moments(entry), reading=True, ask_scope=lambda: self._ask_scope("Change"))
-            else:
-                self._editor(result, result.collection, reading=True)
-
-        self._backend.ask(EVENT_SHOW, EventItem(row.item), opened, self._failed, owner=self)
-
-    def edit_selected(self) -> None:
-        entry = self.selected
-        if entry is None or entry.row.cancelled or self._title_waiting(entry):  # (a title on its way: the window would show the old one, D-325)
+        if row.read_only:
+            self._backend.ask(EVENT_SHOW, EventItem(row.item), lambda result: self._editor(result, result.collection, reading=True), self._failed, owner=self)
             return
-        row = entry.row
         scope = self._ask_scope("Change") if row.repeats else "series"
         if not scope:
             return
@@ -910,6 +902,12 @@ class CalendarPage(PimPage):
         """The two menus of an event, invited and self-created, greyed by the date right-clicked (D-318). The commands refuse the same (OR-4)."""
         row = entry.row
         writable = not row.read_only
+        edit = menu.addAction("Edit…", lambda: self._edit_from_menu(entry))  # first, on every appointment (the owner)
+        edit.setEnabled(writable and not row.cancelled)
+        if row.cancelled and writable:
+            edit.setToolTip("Restore it first")
+            menu.setToolTipsVisible(True)
+        menu.addSeparator()
         if row.invited:
             open_to_answers = writable and not row.cancelled
             menu.addAction("Accept", lambda: self._answer_wanted(entry, "Accept", "ACCEPTED")).setEnabled(open_to_answers and row.answer != "ACCEPTED")
@@ -925,6 +923,11 @@ class CalendarPage(PimPage):
             menu.setToolTipsVisible(True)
             for action in menu.actions():
                 action.setToolTip(READ_ONLY_TIP)
+
+    def _edit_from_menu(self, entry: Entry) -> None:
+        """Edit… of an appointment's menu: the one right-clicked, ready to change."""
+        self._entry_clicked(entry)
+        self.edit_selected()
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)

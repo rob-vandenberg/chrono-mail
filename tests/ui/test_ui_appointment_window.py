@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import dataclasses
 from datetime import date
 
@@ -20,9 +21,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appointment_window.py 4.4.536"
+__version__ = "test_ui_appointment_window.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: An appointment opens ready to change; one of a read-only calendar only to read; a repeating one asks when opened; the Add tag… list (the owner, D-329)
 # v4.4.536: Reminders (round 4)
 # v4.4.535: Initial version: read-only with Edit, attendees, tags, location (round 4)
 
@@ -43,46 +45,58 @@ def double_click_lunch(qtbot: QtBot, page: CalendarPage) -> None:
     QTest.mouseDClick(page.grid.canvas, Qt.MouseButton.LeftButton, pos=QPoint(int(rect.center().x()), int(rect.center().y())))
 
 
-def test_a_double_click_opens_a_saved_appointment_read_only_and_edit_makes_it_the_editor(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_double_click_opens_a_saved_appointment_ready_to_change(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
-    seen: list[tuple[bool, bool, bool, str, bool, bool]] = []
-
-    def look(editor: EventEditor) -> tuple[bool, bool, bool, str, bool, bool]:
-        return editor.summary.isReadOnly(), editor.edit_button.isHidden(), editor.save_button.isHidden(), editor.cancel_button.text(), editor.busy.isEnabled(), editor.attendees_button.isEnabled()
+    seen: list[tuple[bool, bool, str, bool, bool]] = []
 
     def fake_exec(self: EventEditor) -> int:
-        seen.append(look(self))
-        self.edit_button.click()
-        seen.append(look(self))
+        seen.append((self.summary.isReadOnly(), self.save_button.isHidden(), self.cancel_button.text(), self.busy.isEnabled(), self.attendees_button.isEnabled()))
         return 0
 
     monkeypatch.setattr(EventEditor, "exec", fake_exec)
     double_click_lunch(qtbot, page)
-    wait(qtbot, lambda: len(seen) == 2)
-    assert seen[0] == (True, False, True, "Close", False, False)
-    assert seen[1] == (False, True, False, "Cancel", True, True)
+    wait(qtbot, lambda: len(seen) == 1)
+    assert seen[0] == (False, False, "Cancel", True, True)  # no reading step first (the owner)
 
 
-def test_edit_is_greyed_for_a_calendar_that_can_only_be_read(world: World, qtbot: QtBot) -> None:
+def test_an_appointment_of_a_read_only_calendar_opens_only_to_read_with_the_reason(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.eventeditor import READ_ONLY_REASON
+
     page = open_calendar(world, qtbot)
     event = lunch(world, qtbot, page)
     calendars = [dataclasses.replace(info, read_only=True) for info in page._calendars()]  # noqa: SLF001
     editor = EventEditor(world.backend, calendars, [], event, event.collection, reading=True)
     qtbot.addWidget(editor)
-    assert not editor.edit_button.isEnabled() and not editor.edit_button.isHidden()
+    assert editor.summary.isReadOnly() and editor.save_button.isHidden() and editor.cancel_button.text() == "Close"
+    assert editor.result_label.text() == READ_ONLY_REASON
 
 
-def test_a_repeating_event_read_asks_at_edit_and_all_occurrences_shows_the_series(world: World, qtbot: QtBot) -> None:
+def answering(answers: list[str]) -> "Callable[[str], str]":
+    """The question this date or all of them, answered in turn from the list."""
+
+    def asked(verb: str) -> str:
+        return answers.pop(0)
+
+    return asked
+
+
+def test_a_repeating_appointment_asks_when_it_is_opened(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
-    event = lunch(world, qtbot, page)
-    answers = ["", "series"]
-    editor = EventEditor(world.backend, page._calendars(), [], event, event.collection, "occurrence-1", "2030-01-01T10:00", "2030-01-01T11:00", reading=True, ask_scope=lambda: answers.pop(0))  # noqa: SLF001
-    qtbot.addWidget(editor)
-    editor.start_editing()  # the question closed: still reading
-    assert editor.summary.isReadOnly() and not editor.repeat.isEnabled()
-    editor.start_editing()
-    assert not editor.summary.isReadOnly() and editor.repeat.isEnabled() and editor.parameters().occurrence == ""
-    assert not str(editor.parameters().start).startswith("2030")  # the series' own start, not that of the occurrence read
+    opened: list[str] = []
+
+    def fake_exec(self: EventEditor) -> int:
+        opened.append(self.parameters().occurrence)
+        return 0
+
+    monkeypatch.setattr(EventEditor, "exec", fake_exec)
+    answers = ["", "series", "occurrence"]
+    monkeypatch.setattr(page, "_ask_scope", answering(answers))
+    standup = next(entry for entry in page.entries if entry.summary == "Standup")
+    page._entry_activated(standup)  # noqa: SLF001 - the question closed: nothing opens
+    page._entry_activated(standup)  # noqa: SLF001 - all of them: the series
+    page._entry_activated(standup)  # noqa: SLF001 - this one: its date
+    wait(qtbot, lambda: len(opened) == 2)
+    assert sorted(opened) == sorted(["", standup.row.occurrence])  # the series and that date (the answers may come in either order)
 
 
 def test_the_attendees_are_one_per_line_with_the_name_when_known(world: World, qtbot: QtBot) -> None:
@@ -118,17 +132,16 @@ def test_enter_in_the_attendee_field_adds_and_never_closes_the_dialog(world: Wor
     assert dialog.isVisible() and [person.address for person in dialog.people] == ["kim@example.org"]
 
 
-def test_tags_are_picked_from_the_list_and_several_stay_open(world: World, qtbot: QtBot) -> None:
+def test_the_add_tag_list_offers_only_the_tags_it_does_not_have(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot)
     event = lunch(world, qtbot, page)
-    other = page._tags_known  # noqa: SLF001
-    editor = EventEditor(world.backend, page._calendars(), other, event, event.collection)  # noqa: SLF001
+    editor = EventEditor(world.backend, page._calendars(), page._tags_known, event, event.collection)  # noqa: SLF001
     qtbot.addWidget(editor)
     editor.choose_tag("From elsewhere", True)
     editor._fill_tag_menu()  # noqa: SLF001
-    action = next(action for action in editor.tag_menu.actions() if action.text() == "From elsewhere")
-    assert action.isChecked() and "From elsewhere" in editor.tags.text()
-    action.trigger()
+    assert "From elsewhere" not in [action.text() for action in editor.tag_menu.actions()]
+    editor.tag_box.select("From elsewhere")
+    editor.remove_tag.click()
     assert "From elsewhere" not in editor.parameters().tag
 
 

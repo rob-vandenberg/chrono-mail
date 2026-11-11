@@ -25,9 +25,10 @@ from tests.ui.test_ui_calendar import ANCHOR, calendar_id, cancelled, fake_edito
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar_title_in_place.py 4.4.567"
+__version__ = "test_ui_calendar_title_in_place.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: One way of opening: edit_selected (the owner)
 # v4.4.567: The event stays selected after a change, its block never leaves meanwhile, a title typed in place shows with the clock until the server answers (D-325)
 # v4.4.566: Initial: an event's title edited in place by a click on the selected event or F2 (D-324)
 
@@ -500,8 +501,7 @@ def test_the_appointment_window_does_not_open_while_the_title_waits_and_the_agen
         return 0
 
     monkeypatch.setattr(EventEditor, "exec", open_window)
-    page.read_selected()  # a double click
-    page.edit_selected()  # Edit
+    page.edit_selected()  # a double click, Enter or Edit…
     settled(qtbot, world)
     assert opened == []  # it would show the old title
     page.set_view(layout.AGENDA)

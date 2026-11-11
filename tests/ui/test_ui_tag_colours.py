@@ -1,5 +1,6 @@
 import pytest
 import dataclasses
+from collections.abc import Callable
 
 from PySide6.QtCore import QRect, QRectF
 from PySide6.QtGui import QColor, QFont, QImage, QPainter
@@ -21,6 +22,16 @@ __version__ = "test_ui_tag_colours.py 4.4.575"
 # v4.4.575: The window opens 780 wide in Qt's own units and then as it was closed; the width shared alike; Settings > Sidebar's Tags ticks
 # v4.4.574: Add tag… with one click, selecting and removing a tag, the field colour; only the latest answer about the tags counts
 # v4.4.573: Initial tests: the Tags box of the appointment window and its radio buttons, the window's layout, the tag icons and the hover text (D-329)
+
+
+def noting[T](seen: list[T], what: "Callable[[EventEditor], T]") -> "Callable[[EventEditor], int]":
+    """An editor's exec that notes something of the window and opens nothing."""
+
+    def opened(editor: EventEditor) -> int:
+        seen.append(what(editor))
+        return 0
+
+    return opened
 
 
 def checked(box: TagBox) -> list[bool]:
@@ -86,8 +97,8 @@ def test_the_tags_box_is_beside_show_as_and_its_button_on_the_line_of_the_attend
 def test_a_read_only_window_greys_the_tags(world: World, qtbot: QtBot) -> None:
     _, editor = editor_for(world, qtbot, reading=True)
     assert not editor.add_tag.isEnabled() and not any(button.isEnabled() for button in editor.tag_box.findChildren(QRadioButton))
-    editor.start_editing()
-    assert editor.add_tag.isEnabled() and all(button.isEnabled() for button in editor.tag_box.findChildren(QRadioButton))
+    _, ready = editor_for(world, qtbot)
+    assert ready.add_tag.isEnabled() and all(button.isEnabled() for button in ready.tag_box.findChildren(QRadioButton))
 
 
 def test_every_tag_shows_on_the_appointment_and_in_its_hover_text(world: World, qtbot: QtBot) -> None:
@@ -374,3 +385,69 @@ def test_the_tags_tick_of_settings_sidebar_hides_the_tags_of_calendar_and_tasks(
     tasks = world.window.pages[TASKS]
     assert isinstance(tasks, TasksPage) and tasks.tag_filter.isVisibleTo(tasks.side)  # only the Calendar tab's tick was taken off
     assert str(world.window.settings.value("show_tags_events")) == "false"
+
+
+def test_edit_is_the_first_item_of_an_appointment_s_menu_and_opens_it_ready_to_change(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    page = open_calendar(world, qtbot, layout.WEEK)
+    lunch = next(entry for entry in page.entries if entry.summary == "Lunch")
+    menu = QMenu()
+    page._event_actions(menu, lunch)  # noqa: SLF001
+    first = menu.actions()[0]
+    assert first.text() == "Edit…" and first.isEnabled()
+    opened: list[bool] = []
+    monkeypatch.setattr(EventEditor, "exec", noting(opened, lambda editor: editor.summary.isReadOnly()))
+    first.trigger()
+    wait(qtbot, lambda: opened == [False])
+    cancelled = dataclasses.replace(lunch, row=dataclasses.replace(lunch.row, status="CANCELLED"))
+    menu = QMenu()
+    page._event_actions(menu, cancelled)  # noqa: SLF001
+    assert not menu.actions()[0].isEnabled() and menu.actions()[0].toolTip() == "Restore it first"
+    read_only = dataclasses.replace(lunch, row=dataclasses.replace(lunch.row, read_only=True))
+    menu = QMenu()
+    page._event_actions(menu, read_only)  # noqa: SLF001
+    assert not menu.actions()[0].isEnabled() and menu.actions()[0].toolTip() != ""
+
+
+def test_enter_opens_the_selected_appointment_in_week_and_agenda(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    page = open_calendar(world, qtbot, layout.WEEK)
+    opened: list[str] = []
+    monkeypatch.setattr(EventEditor, "exec", noting(opened, lambda editor: editor.summary.text()))
+    lunch = next(entry for entry in page.entries if entry.summary == "Lunch")
+    page._entry_clicked(lunch)  # noqa: SLF001
+    QTest.keyClick(page.grid.canvas, Qt.Key.Key_Return)
+    wait(qtbot, lambda: opened == ["Lunch"])
+    page.set_view(layout.AGENDA)
+    wait(qtbot, lambda: any("Lunch" in page.agenda.item(row).text() for row in range(page.agenda.count())))
+    page.agenda.setCurrentItem(next(page.agenda.item(row) for row in range(page.agenda.count()) if "Lunch" in page.agenda.item(row).text()))
+    QTest.keyClick(page.agenda, Qt.Key.Key_Return)
+    wait(qtbot, lambda: opened == ["Lunch", "Lunch"])
+
+
+def test_the_tag_overview_opens_an_appointment_ready_to_change(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page = open_calendar(world, qtbot, layout.WEEK)
+    opened: list[bool] = []
+    monkeypatch.setattr(EventEditor, "exec", noting(opened, lambda editor: editor.summary.isReadOnly()))
+    page.open_event(next(entry for entry in page.entries if entry.summary == "Lunch").row.item)
+    wait(qtbot, lambda: opened == [False])
+
+
+def test_the_coloured_part_of_a_tag_is_two_pixels_lower_than_its_line(qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from chrono_mail.ui.scale import wpx
+
+    box = TagBox()
+    qtbot.addWidget(box)
+    box.set_tags(["Work"])
+    box.show()
+    qtbot.waitExposed(box)
+    label = next(label for label in box.findChildren(QLabel) if label.text() == "Work")
+    picture = label.grab().toImage()
+    colour = box._colours.colour("Work").name()  # noqa: SLF001
+    rows = [y for y in range(picture.height()) if any(picture.pixelColor(x, y).name() == colour for x in range(picture.width()))]
+    assert rows and len(rows) == label.height() - 2 * wpx(1)  # the pixel above and below lies outside the colour

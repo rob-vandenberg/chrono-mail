@@ -17,14 +17,15 @@ from tests.ui.test_ui_event_status import _LookedAt, entry_of, menu_of
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_event_menus.py 4.4.558"
+__version__ = "test_ui_event_menus.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: Edit… is the first item of both menus, greyed for a cancelled event (the owner, D-318)
 # v4.4.558: Initial tests: the two event menus in every view, their greying, the question of this occurrence or all occurrences (D-318)
 
 ANSWERS = ["Accept", "Tentative", "Delegate…", "Decline"]
-INVITED = ["Accept", "Tentative", "Delegate…", "Decline", "", "Cancel", "Restore", "", "Delete"]
-SELF_CREATED = ["Cancel", "Restore", "", "Delete"]
+INVITED = ["Edit…", "", "Accept", "Tentative", "Delegate…", "Decline", "", "Cancel", "Restore", "", "Delete"]
+SELF_CREATED = ["Edit…", "", "Cancel", "Restore", "", "Delete"]
 MOMENT = "2026-10-14T12:30:00+00:00"
 ICS = """BEGIN:VCALENDAR\r
 VERSION:2.0\r
@@ -104,7 +105,7 @@ def test_a_declined_invited_event_has_the_same_menu(world: World, qtbot: QtBot, 
     assert texts_of(page, changed(entry, hidden=True, answer="DECLINED"), monkeypatch) == INVITED
 
 
-def test_the_self_created_menu_has_no_edit_and_no_new(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_self_created_menu_has_edit_first_and_no_new(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
     assert texts_of(page, entry_of(page, "Lunch"), monkeypatch) == SELF_CREATED
 
@@ -136,12 +137,12 @@ def test_a_right_click_in_the_agenda_opens_the_menu_of_that_event(world: World, 
 def test_the_answer_you_gave_is_greyed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, answer: str, greyed: str) -> None:
     page = open_calendar(world, qtbot)
     actions = menu_of(page, changed(invited(page, world, qtbot), answer=answer), monkeypatch)
-    assert enabled(actions) == {*ANSWERS, "Cancel", "Delete"} - {greyed}
+    assert enabled(actions) == {"Edit…", *ANSWERS, "Cancel", "Delete"} - {greyed}
 
 
 def test_with_no_answer_yet_every_answer_can_be_given(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
-    assert enabled(menu_of(page, invited(page, world, qtbot), monkeypatch)) == {*ANSWERS, "Cancel", "Delete"}
+    assert enabled(menu_of(page, invited(page, world, qtbot), monkeypatch)) == {"Edit…", *ANSWERS, "Cancel", "Delete"}
 
 
 def test_a_cancelled_invited_event_keeps_only_restore_and_delete(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,7 +153,7 @@ def test_a_cancelled_invited_event_keeps_only_restore_and_delete(world: World, q
 def test_a_hidden_event_cannot_be_cancelled(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = open_calendar(world, qtbot)
     actions = menu_of(page, changed(invited(page, world, qtbot), hidden=True, answer="DECLINED"), monkeypatch)
-    assert enabled(actions) == {"Accept", "Tentative", "Delegate…", "Delete"}
+    assert enabled(actions) == {"Edit…", "Accept", "Tentative", "Delegate…", "Delete"}
 
 
 @pytest.mark.parametrize("summary", ["Lunch", "Invited"])

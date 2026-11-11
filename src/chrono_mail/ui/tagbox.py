@@ -1,8 +1,8 @@
 from functools import partial
 from typing import override
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QMouseEvent, QPalette
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QMenu, QRadioButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.ui.colours import theme
@@ -11,12 +11,15 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagbox.py 4.4.574"
+__version__ = "tagbox.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: The coloured part of a tag 2 pixels lower: the pixel above and below the name moved outside the colour (the owner)
 # v4.4.574: A click on a tag's line selects it (highlighted), Delete removes it; the box has the dark field colour of the attendee list (D-329)
 # v4.4.573: Initial Tags box of the appointment window: each tag a rounded label in its colour, a radio button chooses the tag that colours the appointment (D-329)
 
+PILL_PADDING: int = 8  # left and right of a tag's name, inside its colour
+PILL_GAP: int = 1  # above and below a tag's colour, inside its line: the colour 2 pixels lower than the line (the owner)
 LONGEST_LABEL: int = 120  # the widest a tag's name is shown in the box, at the size factor of the windows
 COLOUR_TIP: str = "This tag gives the appointment its colour"
 CHOOSE_TIP: str = "Click to let this tag give the appointment its colour"
@@ -32,6 +35,37 @@ class TagRow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.pressed.emit()
         super().mousePressEvent(event)
+
+
+class TagPill(QLabel):
+    """A tag's name on a rounded shape in its colour, drawn here: the shape is 2 pixels lower than the line, a pixel free above and below it
+    (the owner), with the name in white or black, whichever reads better."""
+
+    def __init__(self, text: str, colour: QColor, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._colour = QColor(colour)
+
+    @override
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(metrics.horizontalAdvance(self.text()) + 2 * wpx(PILL_PADDING), metrics.height() + 2 * wpx(PILL_GAP))
+
+    @override
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    @override
+    def paintEvent(self, arg__1: QPaintEvent, /) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        shape = QRectF(self.rect()).adjusted(0, wpx(PILL_GAP), 0, -wpx(PILL_GAP))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._colour)
+        painter.drawRoundedRect(shape, shape.height() / 2, shape.height() / 2)
+        painter.setPen(TagColourBook.text_colour(self._colour))
+        painter.setFont(self.font())
+        painter.drawText(shape, Qt.AlignmentFlag.AlignCenter, self.text())
+        painter.end()
 
 
 class TagBox(QScrollArea):
@@ -154,7 +188,6 @@ class TagBox(QScrollArea):
 
     def _row(self, name: str) -> QWidget:
         colour = self._colours.colour(name)
-        text = TagColourBook.text_colour(colour)
         row = TagRow(self._inner)
         row.setObjectName("tagRow")
         if name == self._selected:  # highlighted like a selected line elsewhere
@@ -176,12 +209,11 @@ class TagBox(QScrollArea):
         )
         radio.clicked.connect(lambda _checked=False, chosen=name: self.choose(chosen))
         self._group.addButton(radio)
-        label = QLabel(name, row)
+        label = TagPill(name, colour, row)
         shown = label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, wpx(LONGEST_LABEL))
         if shown != name:  # a long name ends in … and shows whole on hover; the box never scrolls sideways
             label.setText(shown)
             label.setToolTip(name)
-        label.setStyleSheet(f"background: {colour.name()}; color: {text.name()}; border-radius: {wpx(9)}px; padding: {wpx(1)}px {wpx(8)}px;")
         label.setEnabled(True)  # its colour stays readable while the window is read only
         layout.addWidget(radio)
         layout.addWidget(label)

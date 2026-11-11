@@ -20,9 +20,10 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.573"
+__version__ = "calendarwidgets.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: Enter on a selected appointment opens it, in Day, Week, Month and Agenda (the owner)
 # v4.4.573: Every tag of an appointment as a small tag in its colour at the end of its title; hovering shows its title, from, to, calendar and tags (D-329)
 # v4.4.567: An event is known by its item and date, so it stays selected after a change; a title typed in place shows at once, with the clock until the server answers (D-325)
 # v4.4.566: A click on the selected event, or F2, edits its title in place, where it is drawn; Enter or a click elsewhere saves, Escape does not (D-324)
@@ -252,6 +253,10 @@ class TitleEditor(QLineEdit):
         if event.key() == Qt.Key.Key_F2:  # already editing: F2 must not reach the view, which would start again from the old title
             event.accept()
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):  # the title is saved; Enter must not reach the view, which would open the appointment
+            self._end(self.text())
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     @override
@@ -419,6 +424,10 @@ class EntryHits(QWidget):
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_F2 and event.modifiers() == Qt.KeyboardModifier.NoModifier and self.selected is not None:
             self.title_edit_wanted.emit(self.selected)
+            event.accept()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.selected is not None:  # Enter opens the selected appointment, as a double click
+            self.entry_activated.emit(self.selected)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -1049,6 +1058,15 @@ class AgendaView(QListWidget):
         entry = self._entry(item)
         if entry is not None:
             self.entry_activated.emit(entry)
+
+    @override
+    def keyPressEvent(self, e: QKeyEvent) -> None:
+        entry = self._entry(self.currentItem())
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and entry is not None:  # Enter opens the appointment of the current line (the owner)
+            self.entry_activated.emit(entry)
+            e.accept()
+            return
+        super().keyPressEvent(e)
 
     @override
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:

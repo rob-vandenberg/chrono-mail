@@ -23,9 +23,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_decline_stays.py 4.4.558"
+__version__ = "test_ui_decline_stays.py 4.4.576"
 
 # --- Version history ----------------------------------------------------
+# v4.4.576: A declined event opens ready to change: no Edit step (the owner)
 # v4.4.558: Delete of a declined series asks this occurrence or all occurrences, as every repeating event (D-318)
 # v4.4.554: Initial tests: the sentence of a declined event, Change my answer leaves it in its calendar, Delegate asks a calendar, a declined event opens with a double click (D-310)
 
@@ -143,20 +144,18 @@ def _declined_row(world: World, qtbot: QtBot, text: str) -> CalendarPage:
     return page
 
 
-def test_a_double_click_opens_a_declined_event_and_its_edit_button_works(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_double_click_opens_a_declined_event_ready_to_change(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page = _declined_row(world, qtbot, ONE_DECLINED)
     seen: list[tuple[bool, bool]] = []
 
     def opened(editor: EventEditor) -> int:
-        seen.append((editor.edit_button.isEnabled(), editor.summary.isReadOnly()))
-        editor.edit_button.click()
         seen.append((editor.save_button.isHidden(), editor.summary.isReadOnly()))
         return 0
 
     monkeypatch.setattr(EventEditor, "exec", opened)
     page._entry_activated(next(entry for entry in page.entries if entry.row.hidden))  # noqa: SLF001
-    wait(qtbot, lambda: len(seen) == 2)
-    assert seen == [(True, True), (False, False)]
+    wait(qtbot, lambda: len(seen) == 1)
+    assert seen == [(False, False)]
 
 
 def test_a_click_selects_a_declined_event_and_the_toolbar_works_on_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, dialogs: Dialogs) -> None:
