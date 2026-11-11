@@ -20,9 +20,10 @@ from tests.ui.test_ui_tasks import open_tasks
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sidebar_lists.py 4.4.578"
+__version__ = "test_ui_sidebar_lists.py 4.4.579"
 
 # --- Version history ----------------------------------------------------
+# v4.4.579: The plus test checks what the design promises: the plus moves and the status line is told once; it never asks which message came last
 # v4.4.578: Settings > Sidebar has a Contacts tab between Calendar and Tasks (the owner, D-331)
 # v4.4.570: Unticking keeps the blue plus; it moves when its calendar is left out in Settings (the owner)
 # v4.4.569: A new appointment or task cannot be put in a read-only calendar or task list (D-326)
@@ -156,12 +157,12 @@ def test_unticking_the_marked_calendar_keeps_the_plus_and_new_appointments_go_th
 
 def test_the_plus_moves_when_its_calendar_is_left_out_in_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page, own, work = with_work(world, qtbot)
-    said: list[str] = []
-    page.status = said.append
     page.panel.use_for_new(work)
+    said: list[str] = []
+    page.status = said.append  # what the status line is told from here on; the counts of the calendar come too, in their own time
     settings_ok(world, qtbot, monkeypatch, {"events": [work]})
-    wait(qtbot, lambda: marked(page.panel) == [own])
-    assert said[-1] == "New appointments now go to Calendar"
+    wait(qtbot, lambda: marked(page.panel) == [own] and "New appointments now go to Calendar" in said)
+    assert said.count("New appointments now go to Calendar") == 1 and not any(text.startswith("New appointments now go to") and text != "New appointments now go to Calendar" for text in said)
 
 
 def test_the_marked_calendar_is_remembered(world: World, qtbot: QtBot) -> None:
