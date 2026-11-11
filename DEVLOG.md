@@ -4218,3 +4218,8 @@ Not tried: on screen with a real server; on Windows.
 
 What landed (the owner, Q12): `tests/ui/test_ui_sidebar_lists.py::test_the_plus_moves_when_its_calendar_is_left_out_in_settings` demanded that "New appointments now go to Calendar" was the last status message; the design never promised that (the event count comes in its own time), so it sometimes failed next to other test files. It now checks what the design promises: the plus moves to the calendar left, and the status line is told so once, for that calendar.
 Tests: it fails when the plus does not move and when the message is not said (both broken on purpose); passes 5 times alone, 6 times shuffled and reversed with other files, each test in its own process; Pyrefly (Linux and win32) 0 errors.
+
+## 2026-11-12 4.4.580 Settings > Tags has the same tab page as Settings > Sidebar (D-331)
+
+What landed (the owner): 4.4.578 matched only the tab names and widths; the Tags tabs stayed a loose row above the list, without Settings > Sidebar's frame and a little further in. Settings > Tags is now the same tab page (`forms/settings_tags.ui`, `tagsdialog.py`): the same frame and tabs in exactly the same place, the list and its buttons inside the frame, moved along to the tab shown.
+Tests: `tests/ui/test_ui_settings_tabs.py` compares the frame and every tab's place on both pages (fails on 4.4.579); `tests/ui/test_ui_tags.py` (the list and buttons inside the frame, replacing tabs as wide as the list) and `tests/ui/test_ui_forms.py` (Tab order) follow the new page; 267 related tests pass, alone, reversed and shuffled; Pyrefly 0 new errors. No reviewers, the owner's choice for this fix.

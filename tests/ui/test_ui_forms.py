@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.4.573"
+__version__ = "test_ui_forms.py 4.4.580"
 
 # --- Version history ----------------------------------------------------
+# v4.4.580: The Tags page is a tab page as Settings > Sidebar: Tab stops at its tabs, then at the list (D-331)
 # v4.4.573: The Event colours window is gone (D-329): it is no longer among the windows whose texts must fit, and its tab order test went
 # v4.2.439: the calendar part is in the Add window (D-298)
 # v4.0.378: the texts of the calendar, contacts and tasks windows fit at the smallest and largest size; Tab goes through a contact's entries
@@ -132,8 +133,14 @@ def test_a_part_of_the_program_takes_the_place_of_its_placeholder_in_the_tab_ord
         chain.append(current)
         current = current.nextInFocusChain()
     assert edits and all(edit in chain for edit in edits) and chain.index(edits[-1]) < chain.index(dialog.reset_keys_button)  # the key fields, then Standard keys
-    tags = stops("Tags")
-    assert tags.index(dialog.tags_panel.tabs) < tags.index(dialog.tags_panel.list)
+    stops("Tags")
+    panel = dialog.tags_panel
+    order: list[QWidget] = []
+    current = panel.nextInFocusChain()
+    while current is not None and current is not panel and len(order) <= len(dialog.findChildren(QWidget)):  # once round
+        order.append(current)
+        current = current.nextInFocusChain()
+    assert order.index(panel.tabs.tabBar()) < order.index(panel.list)  # the tabs of the tab page, then the list in it (D-331)
     labels = [label for label in dialog.findChildren(QLabel) if label.text() == "Show on startup:"]
     assert len(labels) == 1 and labels[0].buddy() is dialog.startup_box
 

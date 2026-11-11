@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QTabBar,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QWidget,
@@ -43,9 +43,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 4.4.578"
+__version__ = "tagsdialog.py 4.4.580"
 
 # --- Version history ----------------------------------------------------
+# v4.4.580: The tabs are the same tab page as Settings > Sidebar: its frame and margins, the list and its buttons inside it (the owner, D-331)
 # v4.4.578: The tabs Mail, Calendar, Contacts and Tasks as wide as their names from the left, as Settings > Sidebar (the owner, D-331)
 # v4.0.377: the tag editor is built from its Qt Designer form (ui/forms/tag_editor.ui, D-276); its sizes follow the size factor
 # v3.6.373: the Tags page is built from the form settings_tags.ui (parts, texts, layout; D-276); nothing visible changed
@@ -166,11 +167,9 @@ class TagsPanel(QWidget):
         self.rows: list[TagRow] = rows_from(tags)
         self._first_order: list[str] = [row.name for row in self.rows]
         self.deleted: list[TagRow] = []
-        form = forms.fill(self, "settings_tags", {"tabs": QTabBar})  # as the Accounts and Rules pages: the list at the left, its buttons at the right (D-276)
-        self.tabs = part(form, QTabBar, "tabs")  # above the list
-        self.tabs.setExpanding(False)  # each tab as wide as its name, from the left: as the tabs of Settings > Sidebar (D-331)
-        for _, label in TABS:
-            self.tabs.addTab(label)
+        form = forms.fill(self, "settings_tags")  # the list at the left, its buttons at the right (D-276), inside the tabs of Settings > Sidebar (D-331)
+        self.tabs = part(form, QTabWidget, "tabs")  # the same tab page as Settings > Sidebar: its frame, its margins, its tabs (the owner, D-331)
+        self.page = part(form, QWidget, "page")  # the list and its buttons: one, shown in the tab chosen
         self.list = part(form, QTreeWidget, "list")
         # Name and Shortcut always fit the list, never a horizontal scroll bar: Name keeps its share of the width (half at
         # first, then where the person drags the line, remembered); Shortcut takes the rest.
@@ -227,6 +226,10 @@ class TagsPanel(QWidget):
         self._fit_columns()  # Shortcut takes the rest; a drag past the room there is goes back to the most that fits
 
     def _tab_changed(self, index: int) -> None:
+        tab = self.tabs.widget(index)
+        layout = tab.layout() if tab is not None else None
+        if layout is not None and self.page.parentWidget() is not tab:
+            layout.addWidget(self.page)  # the one list moves into the tab shown
         self.refresh()
 
     def _double_clicked(self, item: QTreeWidgetItem, column: int) -> None:

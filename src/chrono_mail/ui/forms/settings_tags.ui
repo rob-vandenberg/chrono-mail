@@ -2,13 +2,47 @@
 <ui version="4.0">
  <class>SettingsTags</class>
  <widget class="QWidget" name="SettingsTags">
-  <layout class="QVBoxLayout" name="outer" stretch="1,0">
+  <layout class="QVBoxLayout" name="outer">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item>
-    <layout class="QGridLayout" name="body" rowstretch="0,1" columnstretch="1,0">
-     <item row="0" column="0">
-      <widget class="QWidget" name="tabs"/>
-     </item>
-     <item row="1" column="0">
+    <widget class="QTabWidget" name="tabs">
+     <property name="currentIndex">
+      <number>0</number>
+     </property>
+     <widget class="QWidget" name="mailTab">
+      <attribute name="title">
+       <string>Mail</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="mailTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QWidget" name="page">
+         <layout class="QVBoxLayout" name="pageLayout" stretch="1,0">
+          <item>
+           <layout class="QGridLayout" name="body" columnstretch="1,0">
+            <item row="0" column="0">
       <widget class="QTreeWidget" name="list">
        <property name="horizontalScrollBarPolicy">
         <enum>Qt::ScrollBarAlwaysOff</enum>
@@ -28,7 +62,7 @@
        </column>
       </widget>
      </item>
-     <item row="1" column="1">
+     <item row="0" column="1">
       <layout class="QVBoxLayout" name="side" stretch="0,0,0,0,0,1">
        <item>
         <widget class="QPushButton" name="addButton">
@@ -87,6 +121,70 @@
    </item>
    <item>
     <widget class="QLabel" name="status"/>
+   </item>
+  </layout>
+ </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="calendarTab">
+      <attribute name="title">
+       <string>Calendar</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="calendarTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="contactsTab">
+      <attribute name="title">
+       <string>Contacts</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="contactsTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tasksTab">
+      <attribute name="title">
+       <string>Tasks</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="tasksTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+      </layout>
+     </widget>
+    </widget>
    </item>
   </layout>
  </widget>

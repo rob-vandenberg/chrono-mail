@@ -1,5 +1,5 @@
 import pytest
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import QDialog, QMainWindow, QTabWidget
 from pytestqt.qtbot import QtBot
 
@@ -16,9 +16,10 @@ from tests.ui.test_ui_tag_overview import open_overview
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings_tabs.py 4.4.578"
+__version__ = "test_ui_settings_tabs.py 4.4.580"
 
 # --- Version history ----------------------------------------------------
+# v4.4.580: Settings > Tags has the same tab page as Settings > Sidebar, in the same place, the list inside its frame (the owner)
 # v4.4.578: Initial: Settings > Sidebar and Settings > Tags have the same tabs, Mail, Calendar, Contacts and Tasks; the Contacts tab of
 #           Settings > Sidebar (D-331); the Contact icon of a sender in a left-out address book opens the contact in its own window (the owner); a Tag overview keeps its size when the program quits with it open (D-328)
 
@@ -40,9 +41,22 @@ def test_settings_sidebar_and_settings_tags_have_the_same_tabs_in_the_same_style
     sidebar = sidebar_tabs(dialog)
     assert [sidebar.tabText(number) for number in range(sidebar.count())] == SECTION_NAMES == ["Mail", "Calendar", "Contacts", "Tasks"]
     assert [tags.tabs.tabText(number) for number in range(tags.tabs.count())] == SECTION_NAMES
-    assert [tags.tabs.tabRect(number).width() for number in range(4)] == [sidebar.tabBar().tabRect(number).width() for number in range(4)]  # each as wide as its name
-    wait(qtbot, lambda: tags.tabs.width() > tags.tabs.tabRect(3).right() + 100)  # from the left, never stretched over the list
+    assert type(tags.tabs) is type(sidebar)  # the same tab page: its frame around what the tab holds, as Settings > Sidebar (the owner)
+
+    def place(tabs: QTabWidget) -> tuple[QRect, list[QRect]]:
+        """Where the tab page and each tab are in the Settings window."""
+        corner = tabs.mapTo(dialog, QPoint(0, 0))
+        return QRect(corner, tabs.size()), [tabs.tabBar().tabRect(number).translated(tabs.tabBar().mapTo(dialog, QPoint(0, 0))) for number in range(4)]
+
+    wait(qtbot, lambda: tags.isVisible() and tags.tabs.width() > 0)
+    tags_place = place(tags.tabs)
+    dialog.show_page("Sidebar")
+    wait(qtbot, lambda: sidebar.isVisible())
+    assert place(sidebar) == tags_place  # the same frame and the same tabs, in exactly the same place
+    dialog.show_page("Tags")
+    assert tags.page.parentWidget() is tags.tabs.widget(0)  # the list inside the frame
     tags.tabs.setCurrentIndex(1)
+    assert tags.page.parentWidget() is tags.tabs.widget(1)  # the list goes along to the tab shown
     assert tags.kind() == "events"  # Calendar shows the tags of appointments, as Events did
 
 

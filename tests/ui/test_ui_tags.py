@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from PySide6.QtCore import QItemSelectionModel, QRect, QSettings, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSettings, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
@@ -19,9 +19,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.2.479"
+__version__ = "test_ui_tags.py 4.4.580"
 
 # --- Version history ----------------------------------------------------
+# v4.4.580: The list and its buttons inside the tab page, as Settings > Sidebar (the owner, D-331); no longer tabs as wide as the list (v1.1.186)
 # v4.2.479: the reading pane shows the tags as squares under the date: the test asks their names
 # v1.9.274: A coming message is a real Change with a MessageRow (R-19)
 # v1.9.271: The Tags page's changes are typed steps (R-19)
@@ -197,14 +198,15 @@ def test_menu_tags_opens_the_tags_page_of_settings_and_ok_saves(qtbot: QtBot, wo
     wait(qtbot, lambda: any(str(getattr(tag, "name")) == "Fresh" for tag in window.mail_state.tags))  # noqa: SLF001  the window loaded them again
 
 
-def test_the_tabs_of_the_tags_page_are_as_wide_as_the_list(qtbot: QtBot, world: World) -> None:
+def test_the_list_and_its_buttons_are_inside_the_tab_page(qtbot: QtBot, world: World) -> None:
     panel = TagsPanel(world.backend, ())
     qtbot.addWidget(panel)
     panel.resize(700, 400)
     panel.show()
     qtbot.waitExposed(panel)
-    assert panel.tabs.x() == panel.list.x() and panel.tabs.width() == panel.list.width()
-    assert panel.tabs.geometry().right() < panel.add_button.x()  # never over the buttons
+    frame = panel.tabs.geometry()
+    for part in (panel.list, panel.add_button):  # inside the frame of the tabs, as on Settings > Sidebar (the owner, D-331)
+        assert frame.contains(QRect(part.mapTo(panel, QPoint(0, 0)), part.size()))
 
 
 def test_name_and_shortcut_always_fit_and_the_dragged_width_is_remembered(qtbot: QtBot, world: World, tmp_path: Path) -> None:
