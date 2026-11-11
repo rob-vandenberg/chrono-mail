@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.570"
+__version__ = "collectionpanel.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: No Edit colours…: a calendar's menu has Show timed events in colour in Month, ticked or not, the account's choice (D-329, D-297)
 # v4.4.570: Unticking a calendar or task list never moves the blue plus; Use for new appointments is no longer greyed for an unticked one (the owner, D-326)
 # v4.4.569: grey_read_only: the Calendar or List field of a new item greys a read-only one, with why (D-326)
 # v4.4.568: Calendars and task lists left out in Settings > Sidebar are not in the list; a blue plus marks the one new appointments or tasks go to, chosen with Use for new appointments (D-326)
@@ -615,13 +616,12 @@ class CollectionPanel(QWidget):
                     self._loading = False
                     self._mark_target()  # read only now: it takes no new items
 
-    def edit_colours(self, collection_id: str) -> None:
-        """The palette editor of a calendar; what it saves comes back as a fact."""
-        from chrono_mail.ui.paletteeditor import PaletteEditor
+    def set_timed_background(self, collection_id: str, on: bool) -> None:
+        """Month shows the timed events of this calendar's account in their colour, or as a dot (D-297); the calendars follow the fact."""
+        from chrono_mail.engine.commands_pim import COLLECTION_TIMED_BACKGROUND, TimedBackgroundParameters
 
-        info = self.info(collection_id)
-        if info is not None:
-            PaletteEditor(self._backend, info, self, self._settings).exec()
+        self._backend.ask(COLLECTION_TIMED_BACKGROUND, TimedBackgroundParameters(collection_id, on), lambda result: None,
+                          self._failed, owner=self)
 
     @override
     def changeEvent(self, event: QEvent) -> None:
@@ -675,8 +675,10 @@ class CollectionPanel(QWidget):
             read_only = shown is not None and shown.read_only  # its name and colour are the server's: greyed, not hidden
             menu.addAction("Rename…", lambda: self.rename_collection(collection)).setEnabled(not read_only)
             menu.addAction("Colour…", lambda: self.choose_colour(collection)).setEnabled(not read_only)
-            if self.kind == "events":
-                menu.addAction("Edit colours…", lambda: self.edit_colours(collection)).setEnabled(not read_only)
+            if self.kind == "events":  # Month's way of showing timed events, the account's choice (D-297); the colours are tags now (D-329)
+                timed = menu.addAction("Show timed events in colour in Month", lambda: self.set_timed_background(collection, not (shown is not None and shown.timed_background)))
+                timed.setCheckable(True)
+                timed.setChecked(shown is not None and shown.timed_background)
             delete = menu.addAction("Delete…", lambda: self.delete_collection(collection))
             delete.setEnabled(not read_only)  # the server will not delete it: greyed, never hidden
             if read_only:

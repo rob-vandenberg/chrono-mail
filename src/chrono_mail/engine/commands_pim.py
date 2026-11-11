@@ -17,9 +17,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.2.438"
+__version__ = "commands_pim.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: collection.timed-background: Month's coloured timed events, the account's choice, set on its own (D-329, D-297)
 # v4.2.438: collection.set-palette keeps timed_background with the account's colours; a calendar's summary has it (UR-02, D-297)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed pim.enable, collection.list, -edit, -delete
@@ -211,6 +212,31 @@ COLLECTION_SET_PALETTE: TypedCommand[PaletteParameters, CollectionSummary] = Typ
 
 
 @dataclass(frozen=True, slots=True)
+class TimedBackgroundParameters:
+    collection: str = field(metadata=option("A calendar of the account (see collection.list)"))
+    on: bool = field(metadata=option("Month shows the account's timed events in their colour, not as a dot"))
+
+
+def collection_timed_background(engine: Engine, parameters: TimedBackgroundParameters) -> CollectionSummary:
+    """Month shows the timed events of this calendar's account in their colour, or as a dot (D-297): kept with the account, this computer's view
+    only; every calendar of the account is told."""
+    try:
+        with open_collection(engine, parameters.collection, CollectionKind.EVENTS) as (account, store, info):
+
+            def change(fresh: AppConfig) -> AppConfig:
+                return fresh.with_account(replace(fresh.find(account), calendar_timed_background=parameters.on))
+
+            engine.change_config(change)
+            tell_palettes(engine, account, store)
+            return _summary(engine, account, store, info)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+
+
+COLLECTION_TIMED_BACKGROUND: TypedCommand[TimedBackgroundParameters, CollectionSummary] = TypedCommand("collection.timed-background", TimedBackgroundParameters, CollectionSummary)
+
+
+@dataclass(frozen=True, slots=True)
 class DeleteParameters:
     collection: str = field(metadata=option("The collection id"))
 
@@ -354,6 +380,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(COLLECTION_CREATE.id, "Make a calendar, a task list or an address book (in a server's account: on the server first)", CreateParameters, collection_create, doing="Making a calendar, task list or address book")
     registry.register(COLLECTION_ACCOUNTS.id, "List where a calendar, task list or address book can be made", NoParameters, collection_accounts, doing="Reading where calendars and address books can be made")
     registry.register(COLLECTION_EDIT.id, "Rename a calendar, task list or address book, or give it another colour", EditParameters, collection_edit, doing="Renaming or recolouring a calendar, task list or address book")
+    registry.register(COLLECTION_TIMED_BACKGROUND.id, "Month shows the timed events of a calendar's account in their colour, or as a dot", TimedBackgroundParameters, collection_timed_background, doing="Saving how Month shows events")
     registry.register(COLLECTION_SET_PALETTE.id, "Keep a calendar's colours: its own, then the others in order", PaletteParameters, collection_set_palette, doing="Saving the event colours")
     registry.register(COLLECTION_DELETE.id, "Take a calendar, task list or address book away with everything in it", DeleteParameters, collection_delete, destructive=True, doing="Deleting a calendar, task list or address book")
     registry.register(TAG_LIST.id, "List the tags in use, with colours and counts", NoParameters, tag_list, doing="Reading the tags")

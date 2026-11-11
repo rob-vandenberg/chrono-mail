@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.572"
+__version__ = "calendarview.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: An appointment takes the colour of its first tag, and knows its tags' colours (D-329)
 # v4.4.572: open_event: an event opens read-only from the Tag overview, a Cancelled one not until it is Restored (D-328)
 # v4.4.571: Tags under the calendars in the sidebar: a click on a tag shows only the events with that tag in every view, All events shows every event again (D-327)
 # v4.4.568: New appointments go to the calendar with the blue plus (D-326)
@@ -477,8 +478,11 @@ class CalendarPage(PimPage):
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
+        before = [(tag.name, tag.colour) for tag in self._tags_known]
         self.colours.update(tags)
         self._tags_known = tags
+        if [(tag.name, tag.colour) for tag in tags] != before and self.entries:
+            self._recolour()  # a tag's colour is the colour of the appointments it leads (D-329)
         self.tag_filter.follow([(tag.name, tag.events) for tag in tags if tag.events > 0])
 
     def _scroll_to_morning(self) -> None:
@@ -526,18 +530,26 @@ class CalendarPage(PimPage):
     # --- changing -----------------------------------------------------------------------------
 
     def _coloured(self, entries: list[Entry]) -> list[Entry]:
-        """The entries in their colours as the calendars' palettes are now (D-191), a cancelled one grey (D-316), and whether Month fills their timed ones (D-297)."""
+        """The entries in their colours: the colour of their first tag (D-329), else as the calendars' palettes are now (D-191), a cancelled one grey
+        (D-316), and whether Month fills their timed ones (D-297)."""
         coloured: list[Entry] = []
         for entry in entries:
             calendar = self.panel.info(entry.row.collection)
-            colour = theme().task_grey if entry.row.hidden or entry.row.cancelled else colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
-            coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background))
+            if entry.row.hidden or entry.row.cancelled:
+                colour = theme().task_grey
+            elif entry.row.tags and not (entry.row.colour_id and any(colour.colour_id == entry.row.colour_id for colour in (calendar.palette if calendar is not None else ()))):
+                colour = self.colours.colour(entry.row.tags[0]).name()  # its colour tag: the first of its tags (D-329); a colour not yet made a tag still shows
+            else:
+                colour = colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
+            tags = tuple((name, self.colours.colour(name).name()) for name in entry.row.tags)
+            coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background, tag_colours=tags))
         return coloured
 
     def _recolour(self) -> None:
-        """A calendar's colour or palette changed: the appointments on the screen take their colours again, nothing is fetched."""
+        """A calendar's or a tag's colour changed: the appointments on the screen take their colours again, nothing is fetched; the Agenda keeps
+        its selected line and its place (D-329)."""
         self.entries = self._coloured(self.entries)
-        self._show_data()
+        self._show_data(keep=True)
 
     def _calendars(self) -> list[CollectionSummary]:
         return list(self.panel.collections)

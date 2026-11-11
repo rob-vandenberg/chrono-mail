@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.558"
+__version__ = "test_ui_calendar.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: Appointments take the colour of their first tag (D-329): the tests of the colour row and Event colours went; the hover text is the appointment's own popup
 # v4.4.558: The menus are in tests/ui/test_ui_event_menus.py; Delete of a declined date asks which, as every repeating event (D-318)
 # v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
 # v4.4.553: Delete of a date in an object of only changed dates (D-310)
@@ -170,7 +171,7 @@ def test_a_double_click_on_a_free_place_makes_an_event_there_and_the_editor_chan
     assert free.all_day and (free.start, free.end) == ("2026-10-17", "2026-10-18")
 
     def change(editor: EventEditor) -> None:
-        assert editor.summary.text() == "Planning" and editor.location.toPlainText() == "Room 4" and [row.number.value() for row in editor.reminders.rows] == [15] and editor.tags.text() == "Work"
+        assert editor.summary.text() == "Planning" and editor.location.toPlainText() == "Room 4" and [row.number.value() for row in editor.reminders.rows] == [15] and editor.chosen_tags == ["Work"]
         editor.summary.setText("Planning (moved)")
         editor.set_start(editor.start_moment().addSecs(3600))
         editor.reminders.remove(editor.reminders.rows[0])
@@ -394,93 +395,24 @@ def test_the_wheel_over_the_day_names_goes_a_week_and_over_the_hours_scrolls(wor
     assert page.anchor == ANCHOR + timedelta(days=1)
 
 
-def test_the_editor_has_a_colour_row_with_the_calendars_colours(world: World, qtbot: QtBot) -> None:
-    from PySide6.QtWidgets import QFormLayout, QLabel
-    page = open_calendar(world, qtbot)
-    editor = EventEditor(world.backend, page._calendars(), [], collection=calendar_id(world))  # noqa: SLF001
-    qtbot.addWidget(editor)
-    form = next(item for item in editor.findChildren(QFormLayout) if item.indexOf(editor.colour) >= 0)
-    row, _ = form.getWidgetPosition(editor.colour)
-    label = form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
-    assert isinstance(label, QLabel) and label.text() == "Colour" and form.getWidgetPosition(editor.calendar)[0] == row - 1
-    assert editor.colour.text() == "Default calendar colour"
-    names = [action.text() for action in editor.colour_menu.actions()]
-    assert names[:3] == ["Default calendar colour", "Tomato", "Flamingo"] and names[-1] == "Edit colours…" and len([n for n in names if n]) == 13
-    tomato = editor.colour_menu.actions()[1]
-    tomato.trigger()
-    assert editor.colour.text() == "Tomato" and editor.parameters().colour == "g11"
-    editor.summary.setText("Coloured")
-    editor._save()  # noqa: SLF001
-    wait(qtbot, lambda: any(row.summary == "Coloured" for row in world.call("event.list", from_date="2026-10-01", to_date="2026-12-01").events))
-    row_ = next(row for row in world.call("event.list", from_date="2026-10-01", to_date="2026-12-01").events if row.summary == "Coloured")
-    assert (row_.colour_id, row_.colour) == ("g11", "#d50000")
-
-
-def test_the_palette_editor_keeps_its_own_colour_and_saves_the_rest(world: World, qtbot: QtBot) -> None:
-    from chrono_mail.ui.paletteeditor import PaletteEditor
-    page = open_calendar(world, qtbot)
-    calendar = page.panel.info(calendar_id(world))
-    editor = PaletteEditor(world.backend, calendar)
-    qtbot.addWidget(editor)
-    assert len(editor.rows) == 12 and not editor.rows[0].delete_button.isEnabled() and editor.rows[1].delete_button.isEnabled()
-    (scroll,) = editor.findChildren(QScrollArea)
-    assert scroll.frameShape() == QFrame.Shape.NoFrame  # no outline around the list (the owner, 2.0.290)
-    assert editor.rows_layout.contentsMargins().right() >= 8  # room between the delete buttons and the scrollbar (the owner, 2.0.291)
-    editor.rows[1].name.setText("Rood")
-    editor.remove_row(editor.rows[2])
-    editor.remove_row(editor.rows[0])  # its own colour: never
-    editor.add_button.click()
-    editor.rows[-1].name.setText("Geel")
-    editor._save()  # noqa: SLF001
-    wait(qtbot, lambda: editor.result_summary is not None)
-    names = [entry.name for entry in world.call("collection.list", kind="events")[0].palette]
-    assert names[:2] == ["Default calendar colour", "Rood"] and "Flamingo" not in names and names[-1] == "Geel" and len(names) == 12
-
-
-def test_appointments_take_their_new_colour_at_once(world: World, qtbot: QtBot) -> None:
+def test_an_appointment_takes_the_colour_of_its_first_tag_and_without_tags_its_calendar_s(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot, layout.MONTH)
     cal = calendar_id(world)
-    lunch = next(row for row in world.call("event.list", from_date="2026-10-01", to_date="2026-11-01").events if row.summary == "Lunch")
-    world.call("event.edit", item=lunch.item, colour="g7")  # Peacock
-    wait(qtbot, lambda: any(entry.summary == "Lunch" and entry.colour == "#039be5" for entry in page.entries))
+    world.call("tag.create", name="Food", colour="#225b77")
+    page.reload_tags()
+    wait(qtbot, lambda: any(entry.summary == "Lunch" and entry.colour == "#225b77" for entry in page.entries))  # D-329
     world.call("collection.edit", collection=cal, colour="#123456")
     wait(qtbot, lambda: any(entry.summary == "Dentist" and entry.colour == "#123456" for entry in page.entries))
-    assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#039be5"  # its own colour stays
-    world.call("collection.set-palette", collection=cal, colours=("g7\tPeacock\t#00ffff",))
-    wait(qtbot, lambda: next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#00ffff")
-    menu = page.panel.menu_at(page.panel.tree.visualItemRect(page.panel._entry(cal)).center())  # noqa: SLF001
-    assert "Edit colours…" in [action.text() for action in menu.actions()]
-
-
-def test_the_calendars_of_an_account_share_its_palette_and_a_read_only_one_is_greyed(world: World, qtbot: QtBot) -> None:
-    from chrono_mail.core import LOCAL_ACCOUNT_ID
-    from chrono_mail.engine.pimaccess import open_pim
-    from chrono_mail.ui.paletteeditor import PaletteEditor
-
-    page = open_calendar(world, qtbot, layout.MONTH)
-    cal = calendar_id(world)
-    work = world.call("collection.create", kind="events", name="Work").collection
-    wait(qtbot, lambda: page.panel.info(work) is not None)
-    world.call("event.add", calendar=work, summary="Review", start="2026-10-21T10:00", end="2026-10-21T11:00", colour="g7")
-    wait(qtbot, lambda: any(entry.summary == "Review" and entry.colour == "#039be5" for entry in page.entries))
-    world.call("collection.set-palette", collection=cal, colours=("g7\tPeacock\t#00ffff",))  # from the other calendar of the account
-    wait(qtbot, lambda: any(entry.summary == "Review" and entry.colour == "#00ffff" for entry in page.entries))
-    info = page.panel.info(work)
-    assert info is not None
-    editor = PaletteEditor(world.backend, info)
-    qtbot.addWidget(editor)
-    assert editor.windowTitle() == "Event colours"
-    assert editor.calendar.text() == f"{info.account_name} — Work" and editor.calendar.isReadOnly()  # shown, never chosen here (4.3.502)
-    with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
-        store.update_collection(work, read_only=True)
-    wait(qtbot, lambda: bool(getattr(page.panel.info(work), "read_only", False)))
-    entry = page.panel._entry(work)  # noqa: SLF001
+    assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#225b77"  # its tag's colour stays
+    lunch = next(entry for entry in page.entries if entry.summary == "Lunch")
+    world.call("tag.create", name="Sport", colour="#ff0000")
+    page.reload_tags()
+    world.call("event.edit", item=lunch.row.item, tag=("Sport", "Food"))  # Sport chosen: first among its tags
+    wait(qtbot, lambda: next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#ff0000")
+    entry = page.panel._entry(cal)  # noqa: SLF001
     assert entry is not None
     menu = page.panel.menu_at(page.panel.tree.visualItemRect(entry).center())
-    enabled = {action.text(): action.isEnabled() for action in menu.actions() if action.text()}
-    assert (enabled["Rename…"], enabled["Colour…"], enabled["Edit colours…"], enabled["Delete…"]) == (False, False, False, False)
-    delete = next(action for action in menu.actions() if action.text() == "Delete…")
-    assert "untick it in the account" in delete.toolTip()
+    assert "Edit colours…" not in [action.text() for action in menu.actions()]
 
 
 def test_a_click_on_an_event_in_the_month_or_the_all_day_row_takes_the_keyboard(world: World, qtbot: QtBot) -> None:
@@ -655,6 +587,11 @@ def hover_text(widget: QWidget, position: QPoint, monkeypatch: pytest.MonkeyPatc
     return shown[-1] if shown else ""
 
 
+def is_cancelled_tip(tip: str, calendar: str) -> bool:
+    """The hover text of a cancelled appointment names its status and its calendar (D-316, D-329)."""
+    return "<td>Cancelled</td>" in tip and f"<td>{calendar}</td>" in tip
+
+
 def test_a_cancelled_event_is_grey_and_takes_its_own_colour_again(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot)
     lunch = next(entry for entry in page.entries if entry.summary == "Lunch")
@@ -662,7 +599,7 @@ def test_a_cancelled_event_is_grey_and_takes_its_own_colour_again(world: World, 
     assert own != theme().task_grey
     cancelled(page, world, qtbot, "Lunch")
     assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == theme().task_grey
-    assert next(entry for entry in page.entries if entry.summary == "Dentist").colour == own
+    assert next(entry for entry in page.entries if entry.summary == "Dentist").colour != theme().task_grey
     world.call("event.restore", item=lunch.row.item)
     page.reload()
     wait(qtbot, lambda: any(entry.summary == "Lunch" and entry.colour == own for entry in page.entries))
@@ -685,9 +622,10 @@ def test_hovering_a_cancelled_event_in_the_week_names_it_and_its_calendar(world:
     canvas.repaint()
     wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in canvas.hits))
     rect = next(rect for rect, entry in canvas.hits if entry.row.cancelled)
-    assert hover_text(canvas, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+    assert is_cancelled_tip(hover_text(canvas, rect.center().toPoint(), monkeypatch), calendar)
     other = next(rect for rect, entry in canvas.hits if entry.summary == "Standup")
-    assert hover_text(canvas, other.center().toPoint(), monkeypatch) == ""
+    plain = hover_text(canvas, other.center().toPoint(), monkeypatch)
+    assert "<b>Standup</b>" in plain and "Cancelled" not in plain  # every appointment has its popup; only a cancelled one says so (D-329)
 
 
 def test_hovering_a_cancelled_all_day_event_names_it_and_its_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -697,7 +635,7 @@ def test_hovering_a_cancelled_all_day_event_names_it_and_its_calendar(world: Wor
     header.repaint()
     wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in header.hits))
     rect = next(rect for rect, entry in header.hits if entry.row.cancelled)
-    assert hover_text(header, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+    assert is_cancelled_tip(hover_text(header, rect.center().toPoint(), monkeypatch), calendar)
 
 
 def test_hovering_a_cancelled_event_in_the_month_names_it_and_its_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -707,7 +645,7 @@ def test_hovering_a_cancelled_event_in_the_month_names_it_and_its_calendar(world
     month.repaint()
     wait(qtbot, lambda: any(entry.row.cancelled for _rect, entry in month.hits))
     rect = next(rect for rect, entry in month.hits if entry.row.cancelled)
-    assert hover_text(month, rect.center().toPoint(), monkeypatch) == f"Cancelled\n{calendar}"
+    assert is_cancelled_tip(hover_text(month, rect.center().toPoint(), monkeypatch), calendar)
 
 
 def test_a_cancelled_event_in_the_agenda_is_grey_with_its_hover_text(world: World, qtbot: QtBot) -> None:
@@ -715,5 +653,5 @@ def test_a_cancelled_event_in_the_agenda_is_grey_with_its_hover_text(world: Worl
     calendar = cancelled(page, world, qtbot, "Lunch")
     agenda = page.agenda
     wait(qtbot, lambda: any(agenda.item(row).toolTip() != "" for row in range(agenda.count())))
-    item = next(agenda.item(row) for row in range(agenda.count()) if agenda.item(row).toolTip() != "")
-    assert "Lunch" in item.text() and item.toolTip() == f"Cancelled\n{calendar}" and item.foreground().color().name() == theme().task_grey
+    item = next(agenda.item(row) for row in range(agenda.count()) if "Lunch" in agenda.item(row).text())
+    assert is_cancelled_tip(item.toolTip(), calendar) and item.foreground().color().name() == theme().task_grey

@@ -1,11 +1,12 @@
+import html
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from typing import override
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFocusEvent, QFont, QFontMetrics, QGuiApplication, QHelpEvent, QKeyEvent, QMouseEvent, QPainter, QPalette, QPen, QWheelEvent
-from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QToolTip, QWidget
+from PySide6.QtCore import QEvent, QModelIndex, QPersistentModelIndex, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QIcon, QFocusEvent, QFont, QFontMetrics, QGuiApplication, QHelpEvent, QKeyEvent, QMouseEvent, QPainter, QPalette, QPen, QWheelEvent
+from PySide6.QtWidgets import QApplication, QLineEdit, QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QWidget
 
 from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
@@ -13,13 +14,16 @@ from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, WAITING, mark_icon, paint_mark
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.delegate import _is_selected, _rect, _typed
+from chrono_mail.ui.tagging import tag_path
 
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.567"
+__version__ = "calendarwidgets.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: Every tag of an appointment as a small tag in its colour at the end of its title; hovering shows its title, from, to, calendar and tags (D-329)
 # v4.4.567: An event is known by its item and date, so it stays selected after a change; a title typed in place shows at once, with the clock until the server answers (D-325)
 # v4.4.566: A click on the selected event, or F2, edits its title in place, where it is drawn; Enter or a click elsewhere saves, Escape does not (D-324)
 # v4.4.564: The agenda keeps its selected event and the line at its top when it is filled again for the new day (D-322)
@@ -51,9 +55,47 @@ def one_line(text: str) -> str:
     return ", ".join(line.strip() for line in text.splitlines() if line.strip())
 
 
-def cancelled_tip(entry: Entry) -> str:
-    """The hover text of a cancelled event: it replaces the calendar's colour, so its calendar is named (D-316)."""
-    return f"Cancelled\n{entry.row.calendar}" if entry.row.cancelled else ""
+def event_tip(entry: Entry) -> str:
+    """The hover text of an appointment (D-329): its title, from and to, its calendar, and its tags, each as a label in its colour; a cancelled
+    one says so (D-316)."""
+    def when(moment: datetime) -> str:
+        return moment.strftime("%x") if entry.all_day else moment.strftime("%x %H:%M")
+
+    last = entry.end - timedelta(days=1) if entry.all_day else entry.end
+    rows = [("From", html.escape(when(entry.start))), ("To", html.escape(when(last))), ("Calendar", html.escape(entry.row.calendar))]
+    if entry.row.cancelled:
+        rows.insert(0, ("Status", "Cancelled"))
+    if entry.tag_colours:
+        labels = "<br>".join(
+            f"<span style='background:{colour}; color:{TagColourBook.text_colour(QColor(colour)).name()}'>&nbsp;{html.escape(name)}&nbsp;</span>" for name, colour in entry.tag_colours
+        )
+        rows.append(("Tags", labels))
+    table = "".join(f"<tr><td style='padding-right:12px'><b>{label}:</b></td><td>{value}</td></tr>" for label, value in rows)
+    return f"<b>{html.escape(entry.summary or '(no title)')}</b><table cellspacing=2>{table}</table>"
+
+
+def paint_tags(painter: QPainter, rect: QRectF, y: float, height: float, entry: Entry, fill: QColor, text_colour: QColor) -> float:
+    """The tags of an appointment as small tag shapes at the right end of its first line, each in its colour; the one of the appointment's own
+    colour as an outline in the text's colour, so it stays visible (D-329). Returns where they begin, for the room left to the text."""
+    if not entry.tag_colours:
+        return rect.right()
+    size = max(6, int(height * 0.7))
+    right = rect.right() - 4
+    top = int(y + (height - size) / 2)
+    fits = max(0, int((right - (rect.left() + size * 3)) // (size + 3)))  # a narrow block keeps room for its title
+    for _, colour in reversed(entry.tag_colours[:fits]):  # the first tags, the colour tag above all, are the ones that stay
+        left = int(right - size)
+        shape = tag_path(QRect(left, top + size // 6, size, size - 2 * (size // 6)))
+        own = QColor(colour)
+        if own.name() == fill.name():
+            painter.setPen(QPen(text_colour, 1.2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        else:
+            painter.setPen(QPen(own.darker(130), 1))
+            painter.setBrush(own)
+        painter.drawPath(shape)
+        right = left - 3
+    return right
 
 
 def fill_colour(entry: Entry) -> QColor:
@@ -132,11 +174,14 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
             painter.setBrush(text_colour)
             painter.drawEllipse(QPointF(rect.left() + DOT_CENTRE, y + metrics.height() / 2), DOT_RADIUS, DOT_RADIUS)
             painter.setPen(text_colour)
+        text_right = rect.right()
         if index == 0:
             paint_mark(painter, int(mark_left), int(y + metrics.height() / 2), mark, size)
+            text_right = paint_tags(painter, rect, y, metrics.height(), entry, colour, text_colour)  # the tag icons at the end of the title (D-329)
+            painter.setPen(text_colour)
         text_left = first_left if index == 0 else rect.left() + lead + 5
-        painter.drawText(QRectF(text_left, y, rect.right() - 3 - text_left, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
-                         QFontMetrics(font).elidedText(line, Qt.TextElideMode.ElideRight, int(rect.right() - 3 - text_left)))
+        painter.drawText(QRectF(text_left, y, text_right - 3 - text_left, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
+                         QFontMetrics(font).elidedText(line, Qt.TextElideMode.ElideRight, int(text_right - 3 - text_left)))
         y += metrics.height()
         if y + metrics.height() > rect.bottom():
             break
@@ -415,7 +460,7 @@ class EntryHits(QWidget):
             position = QPointF(event.pos())
             marked = self.mark_at(position)
             entry = self.entry_at(position)
-            tip = MARK_TIPS.get(self.mark_for(marked), "") if marked is not None else cancelled_tip(entry) if entry is not None else ""
+            tip = MARK_TIPS.get(self.mark_for(marked), "") if marked is not None else event_tip(entry) if entry is not None else ""
             if tip:
                 QToolTip.showText(event.globalPos(), tip, self)
             else:
@@ -839,8 +884,12 @@ class MonthView(EntryHits):
                     mark_room = paint_mark(painter, int(left + 16), int(y + line_height / 2 - 1), mark_state, mark_size)  # where the text would start
                     if mark_state:
                         self.mark_hits.append((QRectF(int(left + 16), int(y + line_height / 2 - 1) - mark_size // 2, mark_size, mark_size), entry))
-                    painter.drawText(QRectF(left + 16 + mark_room, y, width - 20 - mark_room, line_height - 1), Qt.AlignmentFlag.AlignVCenter,
-                                     QFontMetrics(small).elidedText(prefix + self.title_shown(entry), Qt.TextElideMode.ElideRight, int(width - 22 - mark_room)))
+                    behind = QColor(palette.color(QPalette.ColorRole.Highlight)) if selected else QColor(base)
+                    tags_left = paint_tags(painter, rect, y, line_height - 1, entry, behind, line_colour)  # the tag icons at the end of the line (D-329)
+                    painter.setPen(line_colour)
+                    text_room = min(width - 20 - mark_room, tags_left - (left + 16 + mark_room) - 2)
+                    painter.drawText(QRectF(left + 16 + mark_room, y, text_room, line_height - 1), Qt.AlignmentFlag.AlignVCenter,
+                                     QFontMetrics(small).elidedText(prefix + self.title_shown(entry), Qt.TextElideMode.ElideRight, int(text_room - 2)))
                     title_left = left + 16 + mark_room + QFontMetrics(small).horizontalAdvance(prefix)  # the title of this line, after its time (D-324)
                     title_height = QFontMetrics(small).height()
                     self.titles.append(TitlePlace(QRectF(title_left, y + (line_height - 1 - title_height) / 2, max(1.0, left + width - 4 - title_left), title_height), entry,
@@ -859,6 +908,40 @@ class MonthView(EntryHits):
         painter.end()
 
 
+class AgendaTags(QStyledItemDelegate):
+    """An Agenda line as Qt draws it, with the appointment's tags as small tags in their colours at its right end (D-329)."""
+
+    @staticmethod
+    def text_room(line: QRect, entry: Entry) -> QRect:
+        """The part of a line its text is drawn and cut off in: all of it but the room of the tags at its right end."""
+        size = max(6, int(line.height() * 0.7))
+        return QRect(line.left(), line.top(), max(0, line.width() - len(entry.tag_colours) * (size + 3) - 6), line.height())
+
+    @override
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        entry = index.data(Qt.ItemDataRole.UserRole)
+        line = QStyleOptionViewItem(option)
+        if isinstance(entry, Entry) and entry.tag_colours:  # the text stops before the tags (D-329)
+            whole = QStyleOptionViewItem(option)
+            self.initStyleOption(whole, index)
+            setattr(whole, "text", "")  # setattr: the stubs type these fields wrongly
+            setattr(whole, "icon", QIcon())
+            widget = _typed(option, "widget", QWidget) if isinstance(getattr(option, "widget", None), QWidget) else None  # getattr: absent when drawn without a view
+            (widget.style() if widget is not None else QApplication.style()).drawControl(QStyle.ControlElement.CE_ItemViewItem, whole, painter, widget)  # the line's background and selection, all of it
+            setattr(line, "rect", self.text_room(_rect(option), entry))
+        super().paint(painter, line, index)
+        if isinstance(entry, Entry) and entry.tag_colours:
+            rect = QRectF(_rect(option))
+            selected = _is_selected(option)
+            colours = _typed(option, "palette", QPalette)
+            behind = colours.color(QPalette.ColorRole.Highlight if selected else QPalette.ColorRole.Base)
+            text = colours.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            paint_tags(painter, rect, rect.top(), rect.height(), entry, behind, text)
+            painter.restore()
+
+
 class AgendaView(QListWidget):
     """The events in order of time, a heading for each day that has some."""
 
@@ -870,6 +953,7 @@ class AgendaView(QListWidget):
         super().__init__(parent)
         self.setFrameShape(QListWidget.Shape.NoFrame)
         self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.setItemDelegate(AgendaTags(self))
         self.itemClicked.connect(self._clicked)
         self.itemDoubleClicked.connect(self._double_clicked)
         self.currentItemChanged.connect(self._current_changed)
@@ -937,7 +1021,7 @@ class AgendaView(QListWidget):
         pending = self.pending.get(event_key(entry))
         mark = WAITING if own != CONFLICT and pending is not None and pending.waiting else own
         item.setIcon(mark_icon(mark))
-        item.setToolTip("\n".join(tip for tip in (cancelled_tip(entry), MARK_TIPS.get(mark, "")) if tip))
+        item.setToolTip(event_tip(entry) + (f"<p>{html.escape(MARK_TIPS[mark])}</p>" if MARK_TIPS.get(mark) else ""))  # D-329
 
     def mark_lines(self) -> None:
         """The marks changed: every line's mark again, in place."""

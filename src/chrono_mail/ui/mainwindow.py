@@ -62,6 +62,7 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
+from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
@@ -70,9 +71,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.572"
+__version__ = "mainwindow.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: At start every appointment colour in use becomes a tag (D-329)
 # v4.4.572: Show everything tagged… on a tag (folder list, Contacts, Tasks, Calendar) opens the Tag overview of that tag, one window per tag (D-328)
 # v4.4.571: Tags saved in Settings reach the Tags lists of Tasks and Calendar: a new colour or name shows at once (D-327)
 # v4.4.568: Settings > Sidebar's Calendar and Tasks tabs take their effect on OK (D-326)
@@ -1401,12 +1403,23 @@ class MainWindow(QMainWindow):
             self.reload_accounts(select_saved=True, then=check)
             self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
             self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
+            self._colours_to_tags()  # once per account: appointment colours become tags (D-329)
             self._started = True
             for path in self._files_waiting:
                 self.open_calendar_file(path)
             self._files_waiting.clear()
 
         self.checking.move_profile_wallet(moved)
+
+    def _colours_to_tags(self) -> None:
+        """Every appointment colour in use becomes a tag of the same name and colour (D-329); the appointments follow their facts. An appointment
+        that could not be changed now is tried again at the next start, without a word: its colour still shows meanwhile."""
+
+        def done(result: ColoursToTags) -> None:
+            if result.appointments:
+                self.report.show(f"The colours of {counted(result.appointments, 'appointment')} are now tags")
+
+        self.backend.ask(EVENT_COLOURS_TO_TAGS, NoParameters(), done, lambda error: None, owner=self)
 
     def _with_key(self, then: Callable[[], None]) -> None:
         """Continue when the encryption key can be read; otherwise ask for it first."""

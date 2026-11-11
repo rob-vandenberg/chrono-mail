@@ -1,39 +1,15 @@
-import html
-from typing import override
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QHideEvent, QIcon, QMouseEvent, QPainter, QPixmap, QShowEvent
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QColorDialog,
-    QDialog,
-    QDialogButtonBox,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QScrollArea,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
-
-from chrono_mail.engine.commands_pim import CollectionSummary
-from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError, PaletteColour
+from chrono_mail.core import PaletteColour
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
-from chrono_mail.core.words import digits
-from chrono_mail.engine.commands_pim import COLLECTION_SET_PALETTE, CollectionSummary, PaletteParameters
-from chrono_mail.ui.infomark import InfoMark, info_marks
-from chrono_mail.ui import forms
-from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.colours import red
-from chrono_mail.ui.forms import part
-from chrono_mail.ui.icons import theme_icon
-from chrono_mail.ui.scale import px_for, wpx
+from chrono_mail.engine.commands_pim import CollectionSummary
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.3.503"
+__version__ = "paletteeditor.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: The Event colours window is gone, appointments take their colour from a tag (D-329); left: the circle of a colour, and an appointment's colour when it has no tag
 # v4.3.503: opens at 550 pixels on the owner's screen until the person gives it another width; never below 500 (the owner)
 # v4.3.502: the Calendar field is read-only text in the normal colour, with its full name as hover text: a long name no longer keeps the
 #           window from being made narrower (a drop-down asks for its whole text's width); it opens at the width last given it (the owner)
@@ -52,12 +28,6 @@ __version__ = "paletteeditor.py 4.3.503"
 # v1.1.222: Title "Event colours"; the Calendar row of the event editor at the top (the owner)
 # v1.1.221: The colours of the calendar's account, named in the title (D-191)
 # v1.1.219: Initial: the colours of one calendar (its own first, which cannot be deleted), each with a name; and how an appointment's colour is found (D-191)
-
-OWN_COLOUR_STAYS: str = "The calendar's own colour cannot be deleted"
-READ_ONLY_COLOURS: str = "This calendar is read only: its colours are shown, but cannot be changed."
-LIST_RIGHT_MARGIN: int = 8  # pixels between the delete buttons and the scrollbar, at the windows' size
-
-OTHER_COLOUR_NAME: str = "Other colour"  # an appointment coloured by another program, with no colour of the palette
 
 
 def circle_icon(colour: str, size: int = 14) -> QIcon:
@@ -88,166 +58,3 @@ def colour_from(calendar: CollectionSummary | None, colour_id: str, other: str) 
     if other:
         return other
     return palette[0].colour if palette else ((calendar.colour if calendar is not None else "") or COLLECTION_WITHOUT_COLOUR)
-
-
-class TextWorksTick(QObject):
-    """A click on the text beside a tick works the tick, as a tick's own text does; the text wraps where a tick's own text cannot."""
-
-    def __init__(self, label: QLabel, tick: QCheckBox) -> None:
-        super().__init__(label)
-        self._tick: QCheckBox = tick
-        label.installEventFilter(self)  # this one label only
-
-    @override
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if (event.type() == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton
-                and self._tick.isEnabled() and isinstance(watched, QWidget) and watched.rect().contains(event.position().toPoint())):  # let go on the text
-            self._tick.toggle()
-            return True
-        return False
-
-
-class ColourRow(QWidget):
-    """One colour in the palette editor: its colour (a click picks another), its name, and a bin (greyed for the calendar's own colour)."""
-
-    def __init__(self, entry: PaletteColour, editor: "PaletteEditor", parent: QWidget | None = None) -> None:
-        super().__init__(parent or editor)
-        self.colour_id: str = entry.colour_id
-        self.colour: str = entry.colour
-        form = forms.fill(self, "palette_colour", info_marks("deleteInfo", keep_place=True))  # one colour of the editor (D-276); the rows stay lined up
-        self.colour_button: QPushButton = part(form, QPushButton, "colour")
-        self.name: QLineEdit = part(form, QLineEdit, "name")
-        self.name.setText(entry.name)
-        self.name.setClearButtonEnabled(True)
-        self.delete_button: QToolButton = part(form, QToolButton, "delete")
-        self.delete_button.setIcon(theme_icon("edit-delete", "user-trash"))
-        own = entry.colour_id == OWN_COLOUR_ID
-        self.delete_button.setEnabled(not own)  # the calendar's own colour can be changed, never deleted
-        self.delete_info: InfoMark = part(form, InfoMark, "deleteInfo")
-        self.delete_info.explain("Delete this colour", OWN_COLOUR_STAYS if own else "", self.delete_button)  # D-294: no hover text beside the (i)
-        self._show_colour()
-        self.colour_button.clicked.connect(self._pick)
-        self.delete_button.clicked.connect(lambda: editor.remove_row(self))
-
-    def _show_colour(self) -> None:
-        self.colour_button.setIcon(circle_icon(self.colour, 18))
-
-    def _pick(self) -> None:
-        chosen = QColorDialog.getColor(QColor(self.colour), self, "Colour")
-        if chosen.isValid():
-            self.colour = chosen.name()
-            self._show_colour()
-
-
-WIDTH: int = forms.owner_width(500)  # the owner: Event colours never goes below 500 pixels on his screen
-OPENING_WIDTH: int = forms.owner_width(550)  # and opens at 550, until the person gives it another width
-WIDTH_KEY: str = "event_colours_width"  # the width the person gave the window last: it opens at it (the owner)
-
-
-class PaletteEditor(QDialog):
-    """The appointment colours of a calendar's account: a row per colour (the calendar's own first, then the account's, shared by all its calendars),
-    + to add one, Cancel and Save (D-191). Save keeps them with the account; the summary that comes back is in `result_summary`."""
-
-    def __init__(self, backend: Backend, calendar: CollectionSummary, parent: QWidget | None = None, settings: QSettings | None = None) -> None:
-        super().__init__(parent)
-        self._backend: Backend = backend
-        self._settings: QSettings | None = settings
-        self._opened_width: int | None = None
-        self._calendar: CollectionSummary = calendar
-        self.result_summary: CollectionSummary | None = None
-        self.rows: list[ColourRow] = []
-        form = forms.fill(self, "palette_editor", {"rows": self._holder, **info_marks("addInfo")})  # D-276
-        self.calendar: QLineEdit = part(form, QLineEdit, "calendar")  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
-        self.calendar.setText(f"{calendar.account_name} — {calendar.name}")  # read-only, in the normal colour: shown, never chosen here (the owner)
-        self.calendar.setToolTip(self.calendar.text())  # the whole name, also when the field cuts it off
-        self.calendar.setCursorPosition(0)  # its start in view
-        self.calendar.setFocusPolicy(Qt.FocusPolicy.ClickFocus)  # Tab passes it, as it passed the greyed drop-down; a click can select its text
-        part(form, QScrollArea, "scroll").setMinimumHeight(wpx(320))
-        self.timed_background: QCheckBox = part(form, QCheckBox, "timedBackground")  # the account's choice, with its colours (D-297)
-        self.timed_background.setChecked(calendar.timed_background)
-        self.timed_background_text: QLabel = part(form, QLabel, "timedBackgroundText")
-        TextWorksTick(self.timed_background_text, self.timed_background)
-        self.result_label: QLabel = part(form, QLabel, "result")
-        self.add_button: QToolButton = part(form, QToolButton, "add")
-        self.add_button.setIcon(theme_icon("list-add"))
-        self.add_button.clicked.connect(self._new_row)
-        box = part(form, QDialogButtonBox, "buttons")
-        self.save_button = box.button(QDialogButtonBox.StandardButton.Save)
-        box.accepted.connect(self._save)
-        box.rejected.connect(self.reject)
-        forms.open_at(self, WIDTH, OPENING_WIDTH)  # its texts are never cut off, also at the largest size
-        saved = settings.value(WIDTH_KEY) if settings is not None else None
-        if isinstance(saved, (int, str)) and digits(str(saved)):  # the width the person gave it last, within the screen (the owner); a strange value is passed by
-            screen = self.screen()
-            room = screen.availableGeometry().width() if screen is not None else wpx(WIDTH)
-            self.resize(max(self.minimumWidth(), min(int(saved), room)), self.height())
-        if self.rows:
-            self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
-        if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
-            for widget in (self.add_button, self.save_button, self.timed_background, self.timed_background_text,
-                           *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
-                widget.setEnabled(False)
-            part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS, self.add_button)  # D-294: no hover text beside the (i)
-
-    @override
-    def showEvent(self, event: QShowEvent) -> None:
-        super().showEvent(event)
-        self._opened_width = self.width()
-
-    @override
-    def hideEvent(self, event: QHideEvent) -> None:
-        if self._settings is not None and self._opened_width is not None and self.width() != self._opened_width and not self.isMaximized():  # the person gave it another width
-            self._settings.setValue(WIDTH_KEY, self.width())
-        super().hideEvent(event)
-
-    def _holder(self, parent: QWidget) -> QWidget:
-        """The list of colours with a row each, made at its place in the form (so Tab reaches the rows before the buttons below them)."""
-        self.holder = QWidget(parent)
-        self.rows_layout = QVBoxLayout(self.holder)
-        self.rows_layout.setContentsMargins(0, 0, px_for(self, LIST_RIGHT_MARGIN), 0)  # room between the delete buttons and the scrollbar (the owner)
-        self.rows_layout.addStretch(1)
-        for entry in palette_of_summary(self._calendar):
-            self._add_row(entry)
-        return self.holder
-
-    def _add_row(self, entry: PaletteColour) -> ColourRow:
-        row = ColourRow(entry, self, self.holder)
-        self.rows_layout.insertWidget(self.rows_layout.count() - 1, row)
-        self.rows.append(row)
-        return row
-
-    def _new_row(self) -> None:
-        last = self.rows[-1].delete_button if self.rows else self.calendar
-        row = self._add_row(PaletteColour("", "", COLLECTION_WITHOUT_COLOUR))
-        for widget in (row.colour_button, row.name, row.delete_button):  # Tab reaches it after the colours above it, not after Save and Cancel
-            QWidget.setTabOrder(last, widget)
-            last = widget
-        row.name.setFocus()
-
-    def remove_row(self, row: ColourRow) -> None:
-        if row.colour_id == OWN_COLOUR_ID:
-            return
-        self.rows.remove(row)
-        self.rows_layout.removeWidget(row)
-        row.deleteLater()
-
-    def parameters(self) -> PaletteParameters:
-        own = next(row for row in self.rows if row.colour_id == OWN_COLOUR_ID)
-        others = tuple(f"{row.colour_id}\t{row.name.text().strip()}\t{row.colour}" for row in self.rows if row.colour_id != OWN_COLOUR_ID)
-        return PaletteParameters(self._calendar.collection, own.name.text().strip(), own.colour, others, self.timed_background.isChecked())
-
-    def _save(self) -> None:
-        if any(not row.name.text().strip() for row in self.rows):
-            self.result_label.setText(f"<span style='color:{red()}'>Every colour needs a name.</span>")
-            return
-        self.save_button.setEnabled(False)
-
-        def saved(summary: CollectionSummary) -> None:
-            self.result_summary = summary
-            self.accept()
-
-        def failed(error: ChronoMailError) -> None:
-            self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
-
-        self._backend.ask(COLLECTION_SET_PALETTE, self.parameters(), saved, failed, owner=self)

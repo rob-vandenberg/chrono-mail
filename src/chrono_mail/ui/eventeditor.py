@@ -7,13 +7,13 @@ from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
 
 from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
 from chrono_mail.pim.times import in_local_zone, local_zone
 from chrono_mail.engine.commands_contacts import CONTACT_SUGGEST, Suggestion, SuggestParameters
 from chrono_mail.engine.commands_pim import CollectionSummary, TagInfo
-from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError
+from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.engine.commands_calendar import EVENT_ADD, EVENT_EDIT, EventInfo
@@ -27,13 +27,16 @@ from chrono_mail.ui.eventattendees import AttendeesDialog, Person
 from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.eventrepeat import RepeatDialog
 from chrono_mail.ui.forms import part
-from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
+from chrono_mail.ui.paletteeditor import circle_icon
+from chrono_mail.ui.tagbox import TagBox
+from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.569"
+__version__ = "eventeditor.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: No Colour field: the Tags box beside Show as and the attendees, each tag in its colour, a radio button chooses the tag that colours the appointment; Description starts lower (D-329)
 # v4.4.569: The Calendar field of a new appointment greys a read-only calendar, with why (D-326)
 # v4.4.536: Reminders: up to 5, each Notification or Email with a number and a unit (round 4)
 # v4.4.535: A saved appointment opens read-only with an Edit button; attendees one per line, changed in a dialog of their own; tags picked from a list; the location has several lines; the repeat list follows the date, with Custom; date and times are separate fields (round 4)
@@ -52,6 +55,8 @@ __version__ = "eventeditor.py 4.4.569"
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
 # v0.0.64: Initial editor for an event
 
+NARROW: int = 300  # Repeat, Show as and the attendees: the Tags box is on their right (D-329)
+DESCRIPTION_LINES: int = 3
 CUSTOM: str = "custom"  # the last line of the repeat list: it opens the Custom window
 DATE_FORMAT: str = "yyyy-MM-dd"
 TIME_FORMAT: str = "HH:mm"
@@ -90,14 +95,15 @@ class EventEditor(QDialog):
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
-        self._settings: QSettings | None = settings  # handed to Event colours
+        self._settings: QSettings | None = settings
         self._original: EventInfo | None = event
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
         self._reading: bool = reading  # a saved appointment read: nothing can be changed until Edit
         self._ask_scope: Callable[[], str] | None = ask_scope  # a repeating event read: Edit asks whether this occurrence or all of them
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
-        form = forms.fill(self, "event_editor")  # D-276
+        self.tag_box = TagBox()
+        form = forms.fill(self, "event_editor", {"tagBox": self._place_tag_box})  # D-276
         self.summary: QLineEdit = part(form, QLineEdit, "summary")
         self.calendar: QComboBox = part(form, QComboBox, "calendar")
         for info in calendars:
@@ -107,14 +113,6 @@ class EventEditor(QDialog):
         if event is None:  # a new appointment: a read-only calendar takes none (D-326)
             grey_read_only(self.calendar, list(calendars), "calendar", "appointments")
         self._calendars: list[CollectionSummary] = list(calendars)
-        self.colour: QToolButton = part(form, QToolButton, "colour")  # "● name ▾": the colour of the appointment, one of its calendar's (D-191)
-        self.colour.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.colour.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.colour_menu = QMenu(self.colour)
-        self.colour.setMenu(self.colour_menu)
-        self._original_colour: str = event.colour_id if event is not None else ""
-        self._other_colour: str = event.other_colour if event is not None else ""
-        self.colour_id: str = self._original_colour or (OWN_COLOUR_ID if not self._other_colour else "")
         self.location: QPlainTextEdit = part(form, QPlainTextEdit, "location")  # Enter gives a new line here, it never accepts the window
         self.location.setTabChangesFocus(True)
         self.location.setFixedHeight(wpx(54))
@@ -135,6 +133,7 @@ class EventEditor(QDialog):
         self.set_end(self.start_moment().addSecs(3600))
         self._start_seen: QDateTime = self.start_moment()  # a move of the start moves the end by as much
         self.repeat: QComboBox = part(form, QComboBox, "repeat")
+        self.repeat.setMaximumWidth(wpx(NARROW))  # room for the Tags box on the right (D-329)
         self._rule_before: str = ""  # the rule as the event has it: said in other words it stays as it is
         self._all_day_before: bool = False
         self._custom_rule: str = ""  # a rule that is none of the choices has a line of its own
@@ -144,23 +143,26 @@ class EventEditor(QDialog):
         self.repeat.activated.connect(self._repeat_chosen)
         self.reminders = ReminderList(part(form, QVBoxLayout, "reminderRows"), part(form, QPushButton, "addReminder"))
         self.busy: QComboBox = part(form, QComboBox, "busy")
+        self.busy.setMaximumWidth(wpx(NARROW))
         self.busy.addItem("Busy", True)
         self.busy.addItem("Free", False)
         self.attendees: QListWidget = part(form, QListWidget, "attendees")  # one per line, the name when it is known
         self.attendees.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.attendees.setFixedHeight(wpx(72))
+        self.attendees.setMaximumWidth(wpx(NARROW))
         self.attendees_button: QPushButton = part(form, QPushButton, "attendeesButton")
         self.attendees_button.clicked.connect(self._change_attendees)
         self.people: list[Person] = []
         self._names_asked: set[str] = set()
-        self.tags: QToolButton = part(form, QToolButton, "tags")  # picked from a list, like the colour
-        self.tags.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.tag_menu = TickMenu(self.tags)
-        self.tags.setMenu(self.tag_menu)
+        self.add_tag: QPushButton = part(form, QPushButton, "addTag")  # its list ticks the tags: a tick adds, taking it away removes
+        self.tag_menu = TickMenu(self.add_tag)
+        self.add_tag.setMenu(self.tag_menu)
         self._known_tags: list[TagInfo] = [tag for tag in known_tags if "events" in tag.kinds]
-        self.chosen_tags: list[str] = []
+        tag_colours = TagColourBook()
+        tag_colours.update(known_tags)
+        self.tag_box.set_colours(tag_colours)
         self.description: QPlainTextEdit = part(form, QPlainTextEdit, "description")
-        self.description.setMinimumHeight(wpx(90))
+        self.description.setMinimumHeight(wpx(DESCRIPTION_LINES * 18))  # three lines; a taller window gives it the rest (D-329)
         self.result_label: QLabel = part(form, QLabel, "result")
         buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -170,8 +172,6 @@ class EventEditor(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         forms.smallest(self, 540)  # its texts are never cut off, also at the largest size
-        self.calendar.currentIndexChanged.connect(self._calendar_changed)
-        self._show_colours()
         self.all_day.toggled.connect(self._show_when)
         self.several_days.toggled.connect(self._several_days_changed)
         self.start_date.dateChanged.connect(self._start_moved)
@@ -213,7 +213,7 @@ class EventEditor(QDialog):
         self.reminders.show_reminders(tuple(event.reminders))
         self.busy.setCurrentIndex(0 if event.busy else 1)
         self.set_people([Person(person.address, person.name, person.address) for person in event.attendees])
-        self.chosen_tags = list(event.tags)
+        self.tag_box.set_tags(list(event.tags))  # its colour tag first
 
     # --- reading, and Edit ------------------------------------------------------------------------
 
@@ -223,11 +223,11 @@ class EventEditor(QDialog):
         for text in (self.location, self.description):
             text.setReadOnly(reading)
         self.summary.setReadOnly(reading)
-        for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.busy, self.attendees_button, self.tags):
+        for field in (self.all_day, self.several_days, self.start_date, self.start_time, self.end_date, self.end_time, self.busy, self.attendees_button, self.add_tag):
             field.setEnabled(not reading)
+        self.tag_box.set_enabled(not reading)
         self.reminders.set_enabled(not reading)
         self.repeat.setEnabled(not reading and not self._occurrence)  # one occurrence has no rule of its own
-        self._show_colours()
         calendar = self._current_calendar()
         self.edit_button.setVisible(reading)
         self.edit_button.setEnabled(calendar is None or not calendar.read_only)
@@ -284,86 +284,47 @@ class EventEditor(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.set_people(dialog.people)
 
-    # --- tags -------------------------------------------------------------------------------------
+    # --- tags (D-329) -------------------------------------------------------------------------------
+
+    def _place_tag_box(self, parent: QWidget) -> QWidget:
+        self.tag_box.setParent(parent)
+        return self.tag_box
+
+    @property
+    def chosen_tags(self) -> list[str]:
+        """The tags in the order they were added (the colour tag is the one with its radio button checked)."""
+        return self.tag_box.names()
 
     def _show_tags(self) -> None:
-        """The button names the tags of the event; its list, filled as it opens, holds every tag for events and those another program gave it."""
-        self.tags.setText(", ".join(self.chosen_tags) or "No tags")
+        """The box shows the tags of the event as they are now."""
+        self.tag_box.set_tags(self.tag_box.tags())
 
     def _fill_tag_menu(self) -> None:
         self.tag_menu.clear()
         colours = {tag.name: tag.colour for tag in self._known_tags}
-        for name in [*colours, *(tag for tag in self.chosen_tags if tag not in colours)]:
+        chosen = self.chosen_tags
+        for name in [*colours, *(tag for tag in chosen if tag not in colours)]:
             action = self.tag_menu.addAction(circle_icon(colours[name]), name) if name in colours else self.tag_menu.addAction(name)
             action.setCheckable(True)
-            action.setChecked(name in self.chosen_tags)
+            action.setChecked(name in chosen)
             action.toggled.connect(lambda on=False, tag=name: self.choose_tag(tag, on))
         self.tag_menu.addSeparator()
         self.tag_menu.addAction("New tag…", self._new_tag)
 
     def choose_tag(self, name: str, on: bool) -> None:
-        if on and name not in self.chosen_tags:
-            self.chosen_tags.append(name)
-        elif not on and name in self.chosen_tags:
-            self.chosen_tags.remove(name)
-        self.tags.setText(", ".join(self.chosen_tags) or "No tags")
+        if on:
+            self.tag_box.add(name)
+        else:
+            self.tag_box.remove(name)
 
     def _new_tag(self) -> None:
         name, ok = QInputDialog.getText(self, "New tag", "Name of the new tag:")
         if ok and " ".join(name.split()):
             self.choose_tag(" ".join(name.split()), True)
 
-    # --- the colour (D-191) -------------------------------------------------------------------------
-
     def _current_calendar(self) -> CollectionSummary | None:
         wanted = str(self.calendar.currentData())
         return next((info for info in self._calendars if info.collection == wanted), None)
-
-    def _show_colours(self) -> None:
-        """The button shows the chosen colour and its name; its list holds the calendar's colours (an "Other colour" first when another
-        program coloured the appointment and no colour was picked here), then Edit colours…."""
-        calendar = self._current_calendar()
-        palette = palette_of_summary(calendar)
-        if self.colour_id and all(entry.colour_id != self.colour_id for entry in palette):
-            self.colour_id = OWN_COLOUR_ID  # a colour this calendar does not have: its own (another calendar was chosen, or it was deleted)
-        self.colour_menu.clear()
-        if not self.colour_id and self._other_colour:
-            other = self.colour_menu.addAction(circle_icon(self._other_colour), OTHER_COLOUR_NAME)
-            other.setCheckable(True)
-            other.setChecked(True)
-            self.colour_menu.addSeparator()
-            self.colour.setIcon(circle_icon(self._other_colour))
-            self.colour.setText(OTHER_COLOUR_NAME)
-        for entry in palette:
-            action = self.colour_menu.addAction(circle_icon(entry.colour), entry.name)
-            action.setCheckable(True)
-            action.setChecked(entry.colour_id == self.colour_id)
-            action.triggered.connect(lambda _checked=False, chosen=entry.colour_id: self._choose_colour(chosen))
-            if entry.colour_id == self.colour_id:
-                self.colour.setIcon(circle_icon(entry.colour))
-                self.colour.setText(entry.name)
-        self.colour_menu.addSeparator()
-        edit = self.colour_menu.addAction("Edit colours…", self._edit_colours)
-        read_only = calendar is not None and calendar.read_only
-        edit.setEnabled(not read_only)
-        self.colour.setEnabled(not read_only and not self._reading and bool(palette))  # greyed, never hidden
-
-    def _choose_colour(self, colour_id: str) -> None:
-        self.colour_id = colour_id
-        self._show_colours()
-
-    def _calendar_changed(self) -> None:
-        self._show_colours()
-
-    def _edit_colours(self) -> None:
-        calendar = self._current_calendar()
-        if calendar is None:
-            return
-        editor = PaletteEditor(self._backend, calendar, self, self._settings)
-        if editor.exec() == PaletteEditor.DialogCode.Accepted and editor.result_summary is not None:
-            fresh = editor.result_summary
-            self._calendars = [fresh if info.collection == fresh.collection else info for info in self._calendars]
-            self._show_colours()
 
     # --- date and time ---------------------------------------------------------------------------
 
@@ -467,7 +428,7 @@ class EventEditor(QDialog):
             start = self.start_moment().toString("yyyy-MM-dd'T'HH:mm")
             end = self.end_moment().toString("yyyy-MM-dd'T'HH:mm")
         attendees = tuple(person.given for person in self.people)
-        tags = tuple(self.chosen_tags)
+        tags = tuple(self.tag_box.tags())  # the colour tag first: its place says which one it is (D-329)
         original = self._original
         reminder = self.reminders.values() if self.reminders.changed() else ()  # sent only when changed; one left alone is kept whole (keep:, RV-18)
         clear: list[str] = []
@@ -475,12 +436,9 @@ class EventEditor(QDialog):
                                         ("reminder", reminder, original is not None and bool(original.reminders) and self.reminders.changed())):
             if not entries and had:
                 clear.append(parameter)
-        chosen = "" if self.colour_id == OWN_COLOUR_ID else self.colour_id
-        picked = bool(self.colour_id) and (original is None and bool(chosen) or original is not None and chosen != self._original_colour)
         return EventEdit(
             summary=self.summary.text().strip(), start=start, end=end, location=self.location.toPlainText().strip(), description=self.description.toPlainText().strip(),
             busy=bool(self.busy.currentData()), rrule=None if self._occurrence else self._rule(), attendee=attendees, tag=tags, reminder=reminder,
-            colour=chosen if picked else None,  # only when picked here: an "Other colour" left as it is stays as another program wrote it
             item=self._item or "", occurrence=self._occurrence or "", clear=tuple(clear),
         )
 

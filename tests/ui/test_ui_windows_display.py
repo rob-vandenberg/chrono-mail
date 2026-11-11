@@ -12,7 +12,6 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance
 from chrono_mail.ui.colours import selection_grey
-from chrono_mail.ui.paletteeditor import PaletteEditor
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from tests.ui.test_ui_calendar import calendar_id, open_calendar
 from tests.ui.test_ui_theme import settle
@@ -20,9 +19,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_windows_display.py 2.0.297"
+__version__ = "test_ui_windows_display.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: The Event colours window is gone (D-329): its test with it
 # v2.0.297: Taken into the project (the Linux computer): the colour helper typed (QAbstractItemView, QModelIndex), QPalette.ColorRole; the calendar checked before use
 # v2.0.296: Initial (the Windows computer): what only Windows shows. Every run on Windows: the window tests have real fonts (offscreen
 #           Qt has none of its own there, 2.0.293), Event colours fits its rows with the Windows font and keeps a margin to the scrollbar.
@@ -45,26 +45,6 @@ def test_the_window_tests_have_real_fonts(qapp: QApplication, world: World) -> N
     assert QFontInfo(qapp.font()).family() == qapp.font().family() != ""  # the family asked for is the family drawn (not a fallback)
 
 
-def test_event_colours_fit_their_rows_and_keep_a_margin_to_the_scrollbar(world: World, qtbot: QtBot) -> None:
-    page = open_calendar(world, qtbot)
-    calendar = page.panel.info(calendar_id(world))
-    assert calendar is not None
-    editor = PaletteEditor(world.backend, calendar)
-    qtbot.addWidget(editor)
-    editor.show()
-    qtbot.waitExposed(editor)
-    scroll = editor.findChild(QScrollArea)
-    assert isinstance(scroll, QScrollArea)
-    qtbot.waitUntil(lambda: not scroll.horizontalScrollBar().isVisible())  # every row fits, the delete buttons included (F4)
-    for _ in range(4):
-        editor.add_button.click()
-    qtbot.waitUntil(lambda: scroll.verticalScrollBar().isVisible() and not scroll.horizontalScrollBar().isVisible())
-    button = editor.rows[0].delete_button
-    right = button.mapTo(scroll.viewport(), button.rect().topRight()).x()
-    assert scroll.viewport().width() - 1 - right >= 6  # the margin of 2.0.291 between the delete buttons and the scrollbar
-
-
-@real_display
 def test_the_narrowest_window_is_768_pixels_in_every_section(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window

@@ -1,10 +1,10 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <ui version="4.0">
  <class>EventEditor</class>
  <widget class="QWidget" name="EventEditor">
   <layout class="QVBoxLayout" name="layout">
    <item>
-    <layout class="QFormLayout" name="fields">
+    <layout class="QGridLayout" name="fields">
      <item row="0" column="0">
       <widget class="QLabel" name="summaryLabel">
        <property name="text">
@@ -15,7 +15,7 @@
        </property>
       </widget>
      </item>
-     <item row="0" column="1">
+     <item row="0" column="1" colspan="3">
       <widget class="QLineEdit" name="summary" />
      </item>
      <item row="1" column="0">
@@ -28,23 +28,10 @@
        </property>
       </widget>
      </item>
-     <item row="1" column="1">
+     <item row="1" column="1" colspan="3">
       <widget class="QComboBox" name="calendar" />
      </item>
      <item row="2" column="0">
-      <widget class="QLabel" name="colourLabel">
-       <property name="text">
-        <string>Colour</string>
-       </property>
-       <property name="buddy">
-        <cstring>colour</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="2" column="1">
-      <widget class="QToolButton" name="colour" />
-     </item>
-     <item row="3" column="0">
       <widget class="QLabel" name="locationLabel">
        <property name="text">
         <string>Location</string>
@@ -54,10 +41,10 @@
        </property>
       </widget>
      </item>
-     <item row="3" column="1">
+     <item row="2" column="1" colspan="3">
       <widget class="QPlainTextEdit" name="location" />
      </item>
-     <item row="4" column="1">
+     <item row="3" column="1" colspan="3">
       <layout class="QHBoxLayout" name="dayTicks">
        <item>
         <widget class="QCheckBox" name="allDay">
@@ -82,7 +69,7 @@
        </item>
       </layout>
      </item>
-     <item row="5" column="0">
+     <item row="4" column="0">
       <widget class="QLabel" name="whenLabel">
        <property name="text">
         <string>When</string>
@@ -92,7 +79,7 @@
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
+     <item row="4" column="1" colspan="3">
       <layout class="QHBoxLayout" name="when">
        <item>
         <widget class="QDateEdit" name="startDate" />
@@ -122,7 +109,7 @@
        </item>
       </layout>
      </item>
-     <item row="6" column="0">
+     <item row="5" column="0">
       <widget class="QLabel" name="repeatLabel">
        <property name="text">
         <string>Repeat</string>
@@ -132,10 +119,10 @@
        </property>
       </widget>
      </item>
-     <item row="6" column="1">
+     <item row="5" column="1" colspan="3">
       <widget class="QComboBox" name="repeat" />
      </item>
-     <item row="7" column="0">
+     <item row="6" column="0">
       <widget class="QLabel" name="reminderLabel">
        <property name="text">
         <string>Reminder</string>
@@ -145,7 +132,7 @@
        </property>
       </widget>
      </item>
-     <item row="7" column="1">
+     <item row="6" column="1" colspan="3">
       <layout class="QVBoxLayout" name="reminderPart">
        <item>
         <layout class="QVBoxLayout" name="reminderRows" />
@@ -170,7 +157,7 @@
        </item>
       </layout>
      </item>
-     <item row="8" column="0">
+     <item row="7" column="0">
       <widget class="QLabel" name="busyLabel">
        <property name="text">
         <string>Show as</string>
@@ -180,10 +167,10 @@
        </property>
       </widget>
      </item>
-     <item row="8" column="1">
+     <item row="7" column="1">
       <widget class="QComboBox" name="busy" />
      </item>
-     <item row="9" column="0">
+     <item row="8" column="0" alignment="Qt::AlignTop">
       <widget class="QLabel" name="attendeesLabel">
        <property name="text">
         <string>Attendees</string>
@@ -193,43 +180,57 @@
        </property>
       </widget>
      </item>
+     <item row="8" column="1">
+      <widget class="QListWidget" name="attendees" />
+     </item>
      <item row="9" column="1">
-      <layout class="QVBoxLayout" name="attendeesPart">
+      <layout class="QHBoxLayout" name="attendeesButtons">
        <item>
-        <widget class="QListWidget" name="attendees" />
+        <widget class="QPushButton" name="attendeesButton">
+         <property name="text">
+          <string>Add or remove attendees…</string>
+         </property>
+        </widget>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="attendeesButtons">
-         <item>
-          <widget class="QPushButton" name="attendeesButton">
-           <property name="text">
-            <string>Add or remove attendees…</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="attendeesRest">
-           <property name="orientation">
-            <enum>Qt::Horizontal</enum>
-           </property>
-          </spacer>
-         </item>
-        </layout>
+        <spacer name="attendeesRest">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </spacer>
        </item>
       </layout>
      </item>
-     <item row="10" column="0">
+     <item row="7" column="2" rowspan="1" alignment="Qt::AlignTop">
       <widget class="QLabel" name="tagsLabel">
        <property name="text">
         <string>Tags</string>
        </property>
        <property name="buddy">
-        <cstring>tags</cstring>
+        <cstring>tagBox</cstring>
        </property>
       </widget>
      </item>
-     <item row="10" column="1">
-      <widget class="QToolButton" name="tags" />
+     <item row="7" column="3" rowspan="2">
+      <widget class="QWidget" name="tagBox" />
+     </item>
+     <item row="9" column="3">
+      <layout class="QHBoxLayout" name="tagsButtons">
+       <item>
+        <widget class="QPushButton" name="addTag">
+         <property name="text">
+          <string>Add tag…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="tagsRest">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>

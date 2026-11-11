@@ -21,9 +21,10 @@ from tests.enginefactory import make_engine
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_infomark.py 4.2.431"
+__version__ = "test_ui_infomark.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: The Event colours window is gone (D-329): its two tests of the (i) went
 # v4.2.431: an option has no hover text while its (i) shows, its own back afterwards (D-294)
 # v4.2.424: Initial: the (i) after a greyed option says why, at a hover and in a small window; the eight places that have one (D-294)
 
@@ -145,34 +146,3 @@ def test_run_in_background_says_why_it_is_greyed(qtbot: QtBot) -> None:
     assert window.background_info.isHidden()
 
 
-def test_the_calendar_s_own_colour_says_why_it_cannot_be_deleted(world: World, qtbot: QtBot) -> None:
-    from chrono_mail.ui.paletteeditor import OWN_COLOUR_STAYS, PaletteEditor
-    from tests.ui.test_ui_calendar import calendar_id, open_calendar
-
-    page = open_calendar(world, qtbot)
-    calendar = page.panel.info(calendar_id(world))
-    assert calendar is not None
-    editor = PaletteEditor(world.backend, calendar)
-    qtbot.addWidget(editor)
-    own, other = editor.rows[0], editor.rows[1]
-    assert own.delete_info.reason == OWN_COLOUR_STAYS and not own.delete_info.isHidden()
-    assert other.delete_info.isHidden()
-    policy = other.delete_info.sizePolicy()
-    assert policy.retainSizeWhenHidden()  # the rows stay lined up
-
-
-
-def test_a_read_only_calendar_s_colours_say_why_and_their_marks_stay_usable(world: World, qtbot: QtBot) -> None:
-    import dataclasses
-
-    from chrono_mail.ui.paletteeditor import READ_ONLY_COLOURS, PaletteEditor
-    from tests.ui.test_ui_calendar import calendar_id, open_calendar
-
-    page = open_calendar(world, qtbot)
-    calendar = page.panel.info(calendar_id(world))
-    assert calendar is not None
-    editor = PaletteEditor(world.backend, dataclasses.replace(calendar, read_only=True))
-    qtbot.addWidget(editor)
-    assert info(editor, "addInfo").reason == READ_ONLY_COLOURS and not info(editor, "addInfo").isHidden()
-    assert not editor.add_button.isEnabled() and not editor.rows[1].delete_button.isEnabled() and not editor.rows[1].name.isEnabled()
-    assert editor.rows[0].delete_info.isEnabled()  # never greyed with the row

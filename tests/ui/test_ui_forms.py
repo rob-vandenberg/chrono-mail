@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.2.439"
+__version__ = "test_ui_forms.py 4.4.573"
 
 # --- Version history ----------------------------------------------------
+# v4.4.573: The Event colours window is gone (D-329): it is no longer among the windows whose texts must fit, and its tab order test went
 # v4.2.439: the calendar part is in the Add window (D-298)
 # v4.0.378: the texts of the calendar, contacts and tasks windows fit at the smallest and largest size; Tab goes through a contact's entries
 #           and addresses, and a colour added, where they are on screen
@@ -562,7 +563,6 @@ def test_every_text_of_the_calendar_contacts_and_tasks_windows_fits(world: World
     from chrono_mail.ui.contacteditor import ContactEditor
     from chrono_mail.ui.eventeditor import EventEditor
     from chrono_mail.ui.newcollection import NewCollectionDialog
-    from chrono_mail.ui.paletteeditor import PaletteEditor
     from chrono_mail.ui.taskeditor import TaskEditor
 
     calendar = _calendar_summary()
@@ -576,7 +576,6 @@ def test_every_text_of_the_calendar_contacts_and_tasks_windows_fits(world: World
         windows: list[QWidget] = [
             EventEditor(world.backend, [calendar], [], None, "cal1", "", "2026-10-28T10:00", "2026-10-28T11:00", world.window),
             TaskEditor(world.backend, lists, [], None, "t1", world.window), contact, NewCollectionDialog(world.backend, "New calendar", "", world.window),
-            PaletteEditor(world.backend, calendar, world.window),
         ]
         for window in windows:
             qtbot.addWidget(window)
@@ -613,15 +612,3 @@ def test_tab_goes_through_the_contact_s_entries_and_addresses_where_they_are_on_
     assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)
 
 
-def test_a_colour_added_comes_after_the_others_in_the_tab_order(world: World, qtbot: QtBot) -> None:
-    from chrono_mail.engine.commands_pim import CollectionSummary
-    from chrono_mail.ui.paletteeditor import PaletteEditor
-
-    calendar = _calendar_summary()
-    assert isinstance(calendar, CollectionSummary)
-    editor = PaletteEditor(world.backend, calendar, world.window)
-    qtbot.addWidget(editor)
-    editor.add_button.click()
-    chain = _chain(editor.rows[0].colour_button)
-    order = [editor.rows[0].name, editor.rows[1].name, editor.rows[2].name, editor.add_button, editor.save_button]
-    assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)
