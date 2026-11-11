@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.569"
+__version__ = "collectionpanel.py 4.4.570"
 
 # --- Version history ----------------------------------------------------
+# v4.4.570: Unticking a calendar or task list never moves the blue plus; Use for new appointments is no longer greyed for an unticked one (the owner, D-326)
 # v4.4.569: grey_read_only: the Calendar or List field of a new item greys a read-only one, with why (D-326)
 # v4.4.568: Calendars and task lists left out in Settings > Sidebar are not in the list; a blue plus marks the one new appointments or tasks go to, chosen with Use for new appointments (D-326)
 # v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
@@ -243,9 +244,10 @@ class CollectionPanel(QWidget):
     # --- the blue plus: where new appointments or tasks go (D-326) -------------------------------
 
     def _takers(self) -> list[str]:
-        """The collections that can take new items, in the order of the list: shown (ticked) and not read only."""
+        """The collections that can take new items, in the order of the list: every one in the list that is not read only. A tick only shows or
+        hides its items for a moment: it never moves the blue plus (the owner, 4.4.570)."""
         return [str(item.data(0, ROLE_COLLECTION)) for item in collection_items(self.tree)
-                if item.checkState(0) == Qt.CheckState.Checked and not ((info := self.info(str(item.data(0, ROLE_COLLECTION)))) is not None and info.read_only)]
+                if not ((info := self.info(str(item.data(0, ROLE_COLLECTION)))) is not None and info.read_only)]
 
     def target_id(self) -> str:
         """The collection new appointments or tasks go to: the one with the blue plus."""
@@ -256,7 +258,7 @@ class CollectionPanel(QWidget):
         return stored if stored in takers else (takers[0] if takers else "")
 
     def new_items_id(self) -> str:
-        """Where a new item goes: the blue plus; with none shown that takes items, the first that takes them at all (never a read-only one)."""
+        """Where a new item goes: the blue plus; with none in the list that takes items, the first that takes them at all (never a read-only one)."""
         return self.target_id() or next((info.collection for info in self.collections if not info.read_only), "")
 
     def use_for_new(self, collection: str) -> None:
@@ -266,8 +268,8 @@ class CollectionPanel(QWidget):
             self._mark_target()
 
     def _mark_target(self) -> None:
-        """The blue plus on the collection new items go to, with its hover text; when the one chosen can no longer take them (unticked, left
-        out, deleted, read only) the plus goes to the first that can, and the status line says so."""
+        """The blue plus on the collection new items go to, with its hover text; when the one chosen can no longer take them (left out in
+        Settings > Sidebar, deleted, read only) the plus goes to the first that can, and the status line says so. Unticking never moves it."""
         if not self._multiple or self._loading:
             return
         target = self.target_id()
@@ -633,14 +635,10 @@ class CollectionPanel(QWidget):
         action.setCheckable(True)
         action.setChecked(collection == self.target_id())
         info = self.info(collection)
-        entry = self._entry(collection)
         word = KIND_WORDS[self.kind][1]
         if info is not None and info.read_only:
             action.setEnabled(False)  # greyed, never hidden (OR-15)
             action.setToolTip(f"This {word} is read only: it takes no new {NEW_ITEMS[self.kind]}")
-        elif entry is not None and entry.checkState(0) != Qt.CheckState.Checked:
-            action.setEnabled(False)
-            action.setToolTip(f"This {word} is not shown: tick it first")
         menu.setToolTipsVisible(True)
 
     def _menu(self, position: QPoint) -> None:

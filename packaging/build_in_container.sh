@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# build_in_container.sh 2.4.322
+# build_in_container.sh 4.4.570
 # --- Version history ----------------------------------------------------
+# v4.4.570: Runs in the builder image (system packages, Python 3.14, SQLite in it: packaging/builder_setup.sh); the Python
+#           packages come from the wheel folder /cache/wheels, fetched only when one is missing: a build downloads nothing
+# v4.4.570: Python 3.14 from python-build-standalone (GitHub), downloaded once into /cache/python with its SHA-256 checked, instead of Launchpad's deadsnakes archive, whose servers stopped answering and hung the build; the system libraries Qt loads that came with its tools before (glib first); apt retries a slow download; the SQLite check also takes the SQLite built into the sqlite3 module
 # v2.4.322: The AES code of pycryptodomex (Cryptodome), which pyzipper uses for a protected backup (D-244)
 # v2.3.318: Our own SQLite 3.54.1 (checksum checked) instead of Ubuntu 22.04's 3.37.2, which is too old for the index; the build stops when the packed SQLite is older than the program needs
 # v1.5.257: The Public Suffix List file of publicsuffixlist (the main domain of a link, D-215)
@@ -9,57 +12,29 @@
 # v0.5.129: Time-zone files once (tzdata.zoneinfo comes with the package; only the file zones is added)
 # v0.5.127: Initial: runs inside the Ubuntu 22.04 container of build_linux.sh
 #
-# Runs inside the container started by build_linux.sh: /src is the project (read only), /out receives the program folder,
-# /cache keeps downloads between builds (pip and Nuitka's own cache).
+# Runs inside the builder image started by build_linux.sh: /src is the project (read only), /out receives the program folder,
+# /cache keeps what was fetched once between builds (the wheels and Nuitka's own cache).
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export PIP_CACHE_DIR=/cache/pip NUITKA_CACHE_DIR=/cache/nuitka
-
-# Python 3.14 (the program's minimum) from the deadsnakes archive for Ubuntu, a compiler for Nuitka, and the system
-# libraries Qt and its HTML viewer load, so that Nuitka can follow their dependencies.
-apt-get update -qq
-apt-get install -y -qq software-properties-common >/dev/null
-add-apt-repository -y ppa:deadsnakes/ppa >/dev/null
-apt-get update -qq
-apt-get install -y -qq python3.14 python3.14-venv python3.14-dev gcc g++ patchelf ccache \
-    libgl1 libegl1 libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libdbus-1-3 libnss3 libxcomposite1 libxdamage1 \
-    libxrandr2 libxtst6 libxi6 libasound2 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
-    libxcb-image0 libxcb-render-util0 >/dev/null
-
-# SQLite: Ubuntu 22.04 has 3.37.2, too old for the index (contentless FTS5 tables that allow deletes need 3.43, D-025),
-# and the package always uses the copy it carries. So the official source of a fixed version is built here and put
-# before the system's, so that Python and then Nuitka take it. A new version: its SHA3-256 from sqlite.org/download.html.
-SQLITE_URL="https://sqlite.org/2026/sqlite-amalgamation-3540100.zip"
-SQLITE_SHA3="92281c86e2957f9b9305890f9ac04204caa7b677cc868dc326d942689df28e30"
-mkdir -p /cache/sqlite /work/sqlite
-python3.14 - "$SQLITE_URL" "$SQLITE_SHA3" <<'PYTHON'
-import hashlib, pathlib, sys, urllib.request, zipfile
-url, expected = sys.argv[1], sys.argv[2]
-archive = pathlib.Path("/cache/sqlite") / url.rsplit("/", 1)[1]
-if not archive.exists() or hashlib.sha3_256(archive.read_bytes()).hexdigest() != expected:
-    archive.write_bytes(urllib.request.urlopen(url, timeout=120).read())
-if hashlib.sha3_256(archive.read_bytes()).hexdigest() != expected:
-    sys.exit(f"{archive.name}: the checksum does not match sqlite.org's; nothing is built with it.")
-with zipfile.ZipFile(archive) as files:
-    for name in files.namelist():
-        if name.endswith("/sqlite3.c"):
-            pathlib.Path("/work/sqlite/sqlite3.c").write_bytes(files.read(name))
-PYTHON
-gcc -O2 -fPIC -shared -Wl,-soname,libsqlite3.so.0 \
-    -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS3_PARENTHESIS \
-    -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_LOAD_EXTENSION \
-    /work/sqlite/sqlite3.c -o /usr/local/lib/libsqlite3.so.0 -lpthread -lm -ldl
-ldconfig
 
 # Only what the build needs is copied (so that building does not write into the read-only source). Never the whole
 # project folder: it may hold private files (chrono-mail-import-samples/ holds the owner's own mail).
 mkdir -p /work
 tar -C /src --exclude='*/__pycache__' -cf - pyproject.toml README.md LICENSE src packaging | tar -C /work -xf -
 python3.14 -m venv /work/venv
-/work/venv/bin/pip install -q --upgrade pip
 # Nuitka 4.3 corrupts compiled inner functions with PySide6 and Python 3.14 (startup crash, Nuitka issue 4081); 4.2.2 is
 # the last good version. Move on to a newer one only after checking that the issue is fixed.
-/work/venv/bin/pip install -q /work nuitka==4.2.2 ordered-set zstandard
+# The Python packages come from the wheel folder kept in /cache/wheels, without asking PyPI. Only when one is missing (the
+# first build, or a new or changed dependency) is it fetched once and kept; the program's own wheel never stays there.
+WANTED=(nuitka==4.2.2 ordered-set zstandard)
+mkdir -p /cache/wheels
+if ! /work/venv/bin/pip install -q --no-index --find-links /cache/wheels /work "${WANTED[@]}" 2>/dev/null; then
+    /work/venv/bin/pip download -q --dest /cache/wheels "setuptools>=80"  # what building the program's own package needs (pyproject.toml)
+    /work/venv/bin/pip wheel -q --wheel-dir /cache/wheels /work "${WANTED[@]}"
+    rm -f /cache/wheels/chrono_mail-*.whl
+    /work/venv/bin/pip install -q --no-index --find-links /cache/wheels /work "${WANTED[@]}"
+fi
 
 # Python must now use our SQLite, and it must do what the index needs.
 /work/venv/bin/python - <<'PYTHON'
@@ -97,11 +72,15 @@ mv /out/chrono_mail_main.dist /out/chrono-mail.dist
 
 # The program uses the SQLite in its folder, whatever the system has: it must be new enough.
 /work/venv/bin/python - <<'PYTHON'
-import ctypes, sys
+import ctypes, pathlib, sqlite3, sys
 from chrono_mail.index import MINIMUM_SQLITE_VERSION
-packed = ctypes.CDLL("/out/chrono-mail.dist/libsqlite3.so.0")
-packed.sqlite3_libversion.restype = ctypes.c_char_p
-version = packed.sqlite3_libversion().decode()
+library = pathlib.Path("/out/chrono-mail.dist/libsqlite3.so.0")
+if library.exists():
+    packed = ctypes.CDLL(str(library))
+    packed.sqlite3_libversion.restype = ctypes.c_char_p
+    version = packed.sqlite3_libversion().decode()
+else:  # python-build-standalone builds SQLite into the sqlite3 module itself, which goes into the folder as it is
+    version = sqlite3.sqlite_version
 if tuple(int(part) for part in version.split(".")[:3]) < MINIMUM_SQLITE_VERSION:
     sys.exit(f"The program folder carries SQLite {version}, older than the {MINIMUM_SQLITE_VERSION} it needs.")
 print(f"The program folder carries SQLite {version}.")

@@ -4160,3 +4160,8 @@ Open, the owner decides: the editors' Calendar and List fields still offer read-
 What landed: `grey_read_only` (`ui/collectionpanel.py`), used by `ui/eventeditor.py` and `ui/taskeditor.py` for a new item: a read-only calendar or task list in the Calendar or List field is greyed with its hover text and never chosen.
 Tests: two new in `tests/ui/test_ui_sidebar_lists.py` (13), failing on 4.4.568; 138 window tests of the related files pass; Pyrefly (Linux, win32) nothing in the changed files; the layer check passes; isolation proof passed. One Sonnet reviewer: nothing real.
 Not tried: on screen with a real server; on Windows.
+
+## 2026-11-11 4.4.570 Unticking a calendar never moves the blue plus (D-326)
+
+What landed: the owner: a tick in the Calendar or Tasks sidebar only hides or shows items for a moment, so it never moves the blue plus (`CollectionPanel._takers` counts every collection in the list that is not read only); Use for new appointments / tasks is no longer greyed for an unticked one. The plus still moves when its collection is left out in Settings > Sidebar, deleted or read only.
+Tests: `tests/ui/test_ui_sidebar_lists.py` (15): the 4.4.568 test of unticking changed to its opposite, one for Tasks, one for Settings; the three of the new behaviour fail on 4.4.569; 111 window tests of the related files pass; Pyrefly (Linux, win32) nothing in the changed files; the layer check passes; isolation proof passed. One Sonnet reviewer: nothing real.

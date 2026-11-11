@@ -20,9 +20,10 @@ from tests.ui.test_ui_tasks import open_tasks
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sidebar_lists.py 4.4.569"
+__version__ = "test_ui_sidebar_lists.py 4.4.570"
 
 # --- Version history ----------------------------------------------------
+# v4.4.570: Unticking keeps the blue plus; it moves when its calendar is left out in Settings (the owner)
 # v4.4.569: A new appointment or task cannot be put in a read-only calendar or task list (D-326)
 # v4.4.568: Initial: Settings > Sidebar's Calendar and Tasks tabs, the blue plus and Use for new appointments or tasks (D-326)
 
@@ -130,15 +131,36 @@ def test_a_read_only_calendar_never_gets_the_blue_plus(world: World, qtbot: QtBo
     assert not action.isEnabled() and "read only" in action.toolTip()
 
 
-def test_unticking_the_marked_calendar_moves_the_plus_and_says_so(world: World, qtbot: QtBot) -> None:
+def test_unticking_the_marked_calendar_keeps_the_plus_and_new_appointments_go_there(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tick only hides or shows a calendar's appointments for a moment: the blue plus stays (the owner, 4.4.570)."""
     page, own, work = with_work(world, qtbot)
     said: list[str] = []
     page.status = said.append
     page.panel.use_for_new(work)
     entry_of(page.panel, work).setCheckState(0, Qt.CheckState.Unchecked)
-    assert marked(page.panel) == [own] and said[-1] == "New appointments now go to Calendar"
-    action = menu_action(page.panel, work, "Use for new appointments")
-    assert not action.isEnabled() and "tick it first" in action.toolTip()
+    assert marked(page.panel) == [work] and said == []
+    assert menu_action(page.panel, work, "Use for new appointments").isEnabled()
+    entry_of(page.panel, own).setCheckState(0, Qt.CheckState.Unchecked)
+    assert menu_action(page.panel, own, "Use for new appointments").isEnabled()  # an unticked one can get it too
+    opened: list[str] = []
+
+    def open_editor(editor: EventEditor) -> int:
+        opened.append(str(editor.calendar.currentData()))
+        return 0
+
+    monkeypatch.setattr(EventEditor, "exec", open_editor)
+    page.new_item()
+    assert opened == [work]
+
+
+def test_the_plus_moves_when_its_calendar_is_left_out_in_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    page, own, work = with_work(world, qtbot)
+    said: list[str] = []
+    page.status = said.append
+    page.panel.use_for_new(work)
+    settings_ok(world, qtbot, monkeypatch, {"events": [work]})
+    wait(qtbot, lambda: marked(page.panel) == [own])
+    assert said[-1] == "New appointments now go to Calendar"
 
 
 def test_the_marked_calendar_is_remembered(world: World, qtbot: QtBot) -> None:
@@ -196,7 +218,7 @@ def solid_colour(image: QImage) -> int:
     return max(pixels, key=lambda colour: colour.alpha()).rgb()
 
 
-def test_with_every_calendar_unticked_new_still_starts_in_one_that_takes_appointments(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_with_every_calendar_unticked_new_starts_in_the_one_with_the_plus_never_a_read_only_one(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     page, own, work = with_work(world, qtbot)
     with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
         store.update_collection(own, read_only=True)
@@ -204,7 +226,7 @@ def test_with_every_calendar_unticked_new_still_starts_in_one_that_takes_appoint
     wait(qtbot, lambda: bool(getattr(page.panel.info(own), "read_only", False)))
     for collection in (own, work):
         entry_of(page.panel, collection).setCheckState(0, Qt.CheckState.Unchecked)
-    assert marked(page.panel) == []  # no calendar shown takes appointments: no plus
+    assert marked(page.panel) == [work]  # unticked: the plus stays on the one that takes appointments
     opened: list[str] = []
 
     def open_editor(editor: EventEditor) -> int:
@@ -281,3 +303,12 @@ def test_a_new_task_cannot_be_put_in_a_read_only_task_list(world: World, qtbot: 
     monkeypatch.setattr(TaskEditor, "exec", open_editor)
     page.new_item()
     assert seen == [(False, "This task list is read only: it takes no new tasks")]
+
+
+def test_unticking_the_marked_task_list_keeps_the_plus(world: World, qtbot: QtBot) -> None:
+    page = open_tasks(world, qtbot, 0)
+    errands = str(world.call("collection.create", kind="tasks", name="Errands").collection)
+    wait(qtbot, lambda: page.panel._entry(errands) is not None)  # noqa: SLF001
+    page.panel.use_for_new(errands)
+    entry_of(page.panel, errands).setCheckState(0, Qt.CheckState.Unchecked)
+    assert marked(page.panel) == [errands] and page.panel.new_items_id() == errands

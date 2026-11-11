@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# build_linux.sh 0.5.127
+# build_linux.sh 4.4.570
 # --- Version history ----------------------------------------------------
+# v4.4.570: The build runs in the builder image, made once (packaging/Containerfile.builder) and reused: a build downloads nothing
 # v0.5.127: Initial: the Linux program folder, built in an Ubuntu 22.04 container
 #
 # Builds the Linux program folder of Chrono Mail (Python, Qt and the program in one folder; nothing needs to be installed
@@ -12,8 +13,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="docker.io/library/ubuntu:22.04"
 OUT="$ROOT/build/linux"
+
+# The builder image (Ubuntu 22.04, its system packages, Python 3.14, SQLite) is made once and kept by podman; it is made
+# again only when its recipe changes (its name carries a checksum of packaging/Containerfile.builder and builder_setup.sh).
+RECIPE="$(cat "$ROOT/packaging/Containerfile.builder" "$ROOT/packaging/builder_setup.sh" | sha256sum | cut -c1-12)"
+IMAGE="localhost/chrono-mail-builder:$RECIPE"
+if ! podman image exists "$IMAGE"; then
+    echo "Making the builder image once (it downloads Ubuntu's packages, Python 3.14 and SQLite; later builds reuse it)..."
+    podman build --tag "$IMAGE" --file "$ROOT/packaging/Containerfile.builder" "$ROOT/packaging"
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"

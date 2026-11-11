@@ -45,6 +45,15 @@ packs that folder into the .deb and the .rpm; on Windows **Inno Setup** makes th
    official SQLite source of a fixed version (its SHA3-256 from sqlite.org/download.html checked), and the build stops
    when the program folder carries an SQLite older than the program needs. A newer SQLite: change its address and
    checksum there.
+   **Download once, never again (2026-11-11, the owner).** Everything the build needs from outside is fetched once:
+   `packaging/builder_setup.sh` puts Ubuntu's system packages, Python 3.14 and SQLite into the builder image
+   (`packaging/Containerfile.builder`), which `build_linux.sh` makes only when that recipe changed and podman keeps; the
+   Python packages are kept as wheels in `/cache/wheels` (the podman volume `chrono-mail-build-cache`) and fetched only
+   when one is missing. Python 3.14 is python-build-standalone's build (the Pythons of uv, made for old Linux systems,
+   its SHA-256 checked), not Launchpad's deadsnakes archive: Launchpad stopped answering on 2026-11-11 and hung the build.
+   That Python carries its own OpenSSL (3.5.9; it looks for certificates in `/etc/ssl/certs` and `/etc/ssl/cert.pem`)
+   and builds SQLite into its sqlite3 module (3.53.1), so the program folder carries those instead of Ubuntu's.
+   A newer Python, SQLite or system package: change `builder_setup.sh`; the next build makes the image again.
    **The app information** (`packaging/chrono-mail.metainfo.xml`, AppStream, installed in `/usr/share/metainfo`):
    without it Discover and GNOME Software do not list Chrono Mail under Installed, so it cannot be uninstalled there
    (the owner on Fedora, 2.3.317). It must name the package (`<pkgname>chrono-mail</pkgname>`): Discover skips every
