@@ -56,14 +56,15 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
-from chrono_mail.ui.tagfilter import TagFilter
+from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.574"
+__version__ = "tasksview.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.572: open_task: a task opens in its editor from the Tag overview, as with a double click here (D-328)
 # v4.4.571: Tags under the task lists in the sidebar: a click on a tag shows only the tasks with that tag, All tasks shows every task again (D-327)
@@ -468,6 +469,7 @@ class TasksPage(PimListPage):
         side_layout.setSpacing(0)
         side_layout.addWidget(self.panel, 3)
         self.tag_filter = TagFilter("All tasks", self.colours, side)
+        self.tag_filter.setVisible(tags_shown(settings, "tasks"))  # Settings > Sidebar's Tags tick (D-327)
         side_layout.addWidget(self.tag_filter, 2)
         self.side = side
         pane = QWidget()

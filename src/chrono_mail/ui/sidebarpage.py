@@ -16,9 +16,10 @@ from chrono_mail.ui.prefs import StartupView
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebarpage.py 4.4.568"
+__version__ = "sidebarpage.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The Calendar and Tasks tabs have a Tags tick: that sidebar's Tags list shown or not (D-327)
 # v4.4.568: Three tabs: Mail (as before), Calendar and Tasks, which tick the calendars and task lists their sidebars show; the last one shown cannot be left out (D-326)
 # v3.6.373: built from the form settings_sidebar.ui: the heading and the place of the ticks (D-276); nothing visible changed
 # v1.9.270: R-19: commands gives typed steps
@@ -83,6 +84,7 @@ class SidebarPage(QWidget):
         part(form, QScrollArea, "scroller").setFrameShape(QFrame.Shape.NoFrame)
         self._list_places: dict[str, tuple[QWidget, QVBoxLayout]] = {}  # Calendar and Tasks: where their ticks go (D-326)
         self.list_boxes: dict[str, dict[str, QCheckBox]] = {}  # kind -> collection -> its tick; a kind not filled yet is not there
+        self.tags_boxes: dict[str, QCheckBox] = {}  # the Tags tick of the Calendar and Tasks tabs (D-327)
         self._list_left_out: dict[str, set[str]] = {}
         for kind, name in (("events", "calendar"), ("tasks", "tasks")):
             part(form, QScrollArea, f"{name}Scroller").setFrameShape(QFrame.Shape.NoFrame)
@@ -182,10 +184,16 @@ class SidebarPage(QWidget):
 
     # --- Calendar and Tasks (D-326) -----------------------------------------------------------
 
-    def set_collections(self, kind: str, collections: list[CollectionSummary], left_out: set[str]) -> None:
-        """The calendars ("events") or task lists ("tasks") under their accounts, each with a tick: ticked is shown in its sidebar."""
+    def set_collections(self, kind: str, collections: list[CollectionSummary], left_out: set[str], tags: bool = True) -> None:
+        """The Tags tick of that sidebar (D-327), then the calendars ("events") or task lists ("tasks") under their accounts, each with a tick:
+        ticked is shown in its sidebar."""
         inner, layout = self._list_places[kind]
         self._list_left_out[kind] = set(left_out)
+        tags_box = QCheckBox("Tags", inner)
+        tags_box.setChecked(tags)
+        tags_box.setToolTip(f"The list of tags under the {'calendars' if kind == 'events' else 'task lists'}, to show only the items of one tag")
+        layout.addWidget(tags_box)
+        self.tags_boxes[kind] = tags_box
         boxes: dict[str, QCheckBox] = {}
         account = None
         for info in collections:
@@ -222,6 +230,11 @@ class SidebarPage(QWidget):
         for box in boxes.values():
             box.setEnabled(not (len(shown) == 1 and box is shown[0]))
             box.setToolTip(f"The last {'calendar' if kind == 'events' else 'task list'} shown cannot be left out" if not box.isEnabled() else "")
+
+    def tags_shown(self, kind: str) -> bool | None:
+        """Whether that sidebar shows its Tags after OK; None when its tab never came (nothing changes)."""
+        box = self.tags_boxes.get(kind)
+        return box.isChecked() if box is not None else None
 
     def left_out(self, kind: str) -> set[str] | None:
         """What is left out of that sidebar after OK; None when its list never came (nothing changes)."""

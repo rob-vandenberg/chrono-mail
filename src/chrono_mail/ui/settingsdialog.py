@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.engine.commands_pim import COLLECTION_LIST, CollectionSummary, ListParameters as CollectionListParameters, TagInfo
+from chrono_mail.ui.tagfilter import tags_shown
 from chrono_mail.ui.collectionpanel import left_out_key, settings_set
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_autostart import AUTOSTART_SET, AUTOSTART_SHOW, AutostartInfo, AutostartParameters
@@ -60,9 +61,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.568"
+__version__ = "settingsdialog.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The Calendar and Tasks tabs of Settings > Sidebar get their Tags tick as it is now (D-327)
 # v4.4.568: Settings > Sidebar gets every calendar and task list for its Calendar and Tasks tabs (D-326)
 # v4.4.562: Message list: Secondary sort, order by received, newest or oldest first (D-320)
 # v4.4.510: the Calendar page gone: its tick is per account now, in Edit account (D-310)
@@ -371,7 +373,7 @@ class SettingsDialog(QDialog):
         self.sidebar_page.set_startup(str(self.startup_box.currentData() or ""))
 
     def _lists_arrived(self, kind: str, result: tuple[CollectionSummary, ...]) -> None:
-        self.sidebar_page.set_collections(kind, list(result), settings_set(self._settings, left_out_key(kind)))
+        self.sidebar_page.set_collections(kind, list(result), settings_set(self._settings, left_out_key(kind)), tags_shown(self._settings, kind))
 
     def _size_sidebar_text(self, factor: float) -> None:
         """The page list is a little larger than the rest: the desktop's size plus SIDEBAR_EXTRA_POINTS, times the factor;

@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.573"
+__version__ = "collectionpanel.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The Month tick is Fill colour for timed events, in the menu only while Month is shown (the owner, D-297)
 # v4.4.573: No Edit colours…: a calendar's menu has Show timed events in colour in Month, ticked or not, the account's choice (D-329, D-297)
 # v4.4.570: Unticking a calendar or task list never moves the blue plus; Use for new appointments is no longer greyed for an unticked one (the owner, D-326)
 # v4.4.569: grey_read_only: the Calendar or List field of a new item greys a read-only one, with why (D-326)
@@ -175,6 +176,7 @@ class CollectionPanel(QWidget):
         self.collections: list[CollectionSummary] = []  # the ones in the list
         self.group_actions: Callable[[QMenu, GroupRow], None] | None = None  # the menu of a contact group's entry (the Contacts page)
         self.book_actions: Callable[[QMenu, CollectionSummary], None] | None = None  # what the Contacts page adds to an address book's menu
+        self.month_shown: Callable[[], bool] = lambda: False  # the Calendar page: whether Month is shown (its Fill colour tick, D-297)
         self.group_delete: Callable[[GroupRow], None] | None = None  # Delete on a contact group's entry (it asks first)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -675,8 +677,8 @@ class CollectionPanel(QWidget):
             read_only = shown is not None and shown.read_only  # its name and colour are the server's: greyed, not hidden
             menu.addAction("Rename…", lambda: self.rename_collection(collection)).setEnabled(not read_only)
             menu.addAction("Colour…", lambda: self.choose_colour(collection)).setEnabled(not read_only)
-            if self.kind == "events":  # Month's way of showing timed events, the account's choice (D-297); the colours are tags now (D-329)
-                timed = menu.addAction("Show timed events in colour in Month", lambda: self.set_timed_background(collection, not (shown is not None and shown.timed_background)))
+            if self.kind == "events" and self.month_shown():  # Month's way of showing timed events, the account's choice; only while Month is shown (the owner, D-297)
+                timed = menu.addAction("Fill colour for timed events", lambda: self.set_timed_background(collection, not (shown is not None and shown.timed_background)))
                 timed.setCheckable(True)
                 timed.setChecked(shown is not None and shown.timed_background)
             delete = menu.addAction("Delete…", lambda: self.delete_collection(collection))

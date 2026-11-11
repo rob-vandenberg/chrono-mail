@@ -3,9 +3,10 @@ from collections.abc import Callable
 from datetime import date, datetime
 
 from dataclasses import replace
+from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QGridLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
 
 from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
 from chrono_mail.pim.times import in_local_zone, local_zone
@@ -29,11 +30,13 @@ from chrono_mail.ui.paletteeditor import circle_icon
 from chrono_mail.ui.tagbox import TagBox
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.scale import wpx
+from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.574"
+__version__ = "eventeditor.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: Opens 780 pixels wide in Qt's own units, then at the size it was closed at; a wider window widens the left column and the Tags box alike (D-329)
 # v4.4.574: Add tag… lists the tags not on the appointment and closes at a click; Remove tag beside it removes the selected tag; opens 780 pixels wide on the owner's screen (D-329)
 # v4.4.573: No Colour field: the Tags box beside Show as and the attendees, each tag in its colour, a radio button chooses the tag that colours the appointment; Description starts lower (D-329)
 # v4.4.569: The Calendar field of a new appointment greys a read-only calendar, with why (D-326)
@@ -54,8 +57,8 @@ __version__ = "eventeditor.py 4.4.574"
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
 # v0.0.64: Initial editor for an event
 
-OPENING_WIDTH: int = 780  # the owner's pixels on his screen (forms.owner_width)
-NARROW: int = 300  # Repeat, Show as and the attendees: the Tags box is on their right (D-329)
+OPENING_WIDTH: int = 780  # the first opening width, in Qt's own units, as the owner measures it (no size factor, no screen scale)
+GEOMETRY_KEY: str = "event_editor_geometry"  # its size and place as it was last closed
 DESCRIPTION_LINES: int = 3
 CUSTOM: str = "custom"  # the last line of the repeat list: it opens the Custom window
 DATE_FORMAT: str = "yyyy-MM-dd"
@@ -121,7 +124,6 @@ class EventEditor(QDialog):
         self.set_end(self.start_moment().addSecs(3600))
         self._start_seen: QDateTime = self.start_moment()  # a move of the start moves the end by as much
         self.repeat: QComboBox = part(form, QComboBox, "repeat")
-        self.repeat.setMaximumWidth(wpx(NARROW))  # room for the Tags box on the right (D-329)
         self._rule_before: str = ""  # the rule as the event has it: said in other words it stays as it is
         self._all_day_before: bool = False
         self._custom_rule: str = ""  # a rule that is none of the choices has a line of its own
@@ -131,13 +133,11 @@ class EventEditor(QDialog):
         self.repeat.activated.connect(self._repeat_chosen)
         self.reminders = ReminderList(part(form, QVBoxLayout, "reminderRows"), part(form, QPushButton, "addReminder"))
         self.busy: QComboBox = part(form, QComboBox, "busy")
-        self.busy.setMaximumWidth(wpx(NARROW))
         self.busy.addItem("Busy", True)
         self.busy.addItem("Free", False)
         self.attendees: QListWidget = part(form, QListWidget, "attendees")  # one per line, the name when it is known
         self.attendees.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.attendees.setFixedHeight(wpx(72))
-        self.attendees.setMaximumWidth(wpx(NARROW))
         self.attendees_button: QPushButton = part(form, QPushButton, "attendeesButton")
         self.attendees_button.clicked.connect(self._change_attendees)
         self.people: list[Person] = []
@@ -162,7 +162,15 @@ class EventEditor(QDialog):
         self.edit_button.clicked.connect(self.start_editing)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        forms.open_at(self, 540, forms.owner_width(OPENING_WIDTH))  # its texts are never cut off; it opens 780 pixels wide on the owner's screen
+        fields = form.findChild(QGridLayout, "fields")
+        if fields is not None:  # a wider window widens the left column and the Tags box alike (D-329)
+            fields.setColumnStretch(1, 1)
+            fields.setColumnStretch(3, 1)
+        forms.smallest(self, 540)  # its texts are never cut off, also at the largest size
+        if not restore_geometry(self, settings, GEOMETRY_KEY):  # as it was last closed; the first time 780 wide
+            screen = self.screen()
+            room = screen.availableGeometry().width() if screen is not None else OPENING_WIDTH
+            self.resize(max(self.minimumWidth(), min(OPENING_WIDTH, room)), self.sizeHint().height())
         self.all_day.toggled.connect(self._show_when)
         self.several_days.toggled.connect(self._several_days_changed)
         self.start_date.dateChanged.connect(self._start_moved)
@@ -185,6 +193,12 @@ class EventEditor(QDialog):
         self._show_reading()
 
     # --- filling ------------------------------------------------------------------------------
+
+    @override
+    def done(self, arg__1: int, /) -> None:
+        """Save, Cancel, Close or the window's cross: its size and place are kept for the next time (D-329)."""
+        save_geometry(self, self._settings, GEOMETRY_KEY)
+        super().done(arg__1)
 
     def _fill(self, event: EventInfo, start: str, end: str) -> None:
         self.summary.setText(event.summary)

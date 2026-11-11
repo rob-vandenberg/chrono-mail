@@ -47,15 +47,16 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook
-from chrono_mail.ui.tagfilter import TagFilter
+from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.574"
+__version__ = "calendarview.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The calendar sidebar knows when Month is shown, for its Fill colour tick (D-297); the Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.573: An appointment takes the colour of its first tag, and knows its tags' colours (D-329)
 # v4.4.572: open_event: an event opens read-only from the Tag overview, a Cancelled one not until it is Restored (D-328)
@@ -226,6 +227,7 @@ class CalendarPage(PimPage):
         side_layout.setSpacing(0)
         side_layout.addWidget(self.panel, 3)
         self.tag_filter = TagFilter("All events", self.colours, side)
+        self.tag_filter.setVisible(tags_shown(settings, "events"))  # Settings > Sidebar's Tags tick (D-327)
         side_layout.addWidget(self.tag_filter, 2)
         self.mini = RangeCalendar(side)
         side_layout.addWidget(self.mini)
@@ -314,6 +316,7 @@ class CalendarPage(PimPage):
         self.today_button.clicked.connect(self._goto_today)
         self.day_watch.looked.connect(self._look)
         self.tag_filter.chosen.connect(self._tag_chosen)
+        self.panel.month_shown = lambda: self.view == layout.MONTH  # the Fill colour tick shows only then (the owner, D-297)
         self.past_button.toggled.connect(self._past_toggled)
         self.hidden_button.toggled.connect(self._hidden_toggled)
         self.mini.clicked.connect(self._mini_clicked)

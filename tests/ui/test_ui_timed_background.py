@@ -14,14 +14,15 @@ from tests.ui.test_ui_calendar import calendar_id, open_calendar
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_timed_background.py 4.4.573"
+__version__ = "test_ui_timed_background.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The tick is Fill colour for timed events, in the menu only while Month is shown (the owner)
 # v4.4.573: The setting is a tick in a calendar's right-click menu: the Event colours window is gone (D-329)
 # v4.2.438: Initial tests: Month shows timed events in their colour when the account says so (UR-02, D-297); the default name of a
 #           calendar's own colour is never kept as chosen
 
-TICK_TEXT = "Show timed events in colour in Month"
+TICK_TEXT = "Fill colour for timed events"
 
 
 def summary_of(world: World, collection: str) -> CollectionSummary:
@@ -67,6 +68,16 @@ def test_the_tick_is_in_the_calendar_menu_and_off_by_default(world: World, qtbot
     page = open_calendar(world, qtbot, layout.MONTH)
     action = tick(page, calendar_id(world))
     assert action.isCheckable() and not action.isChecked()
+
+
+def test_the_tick_is_in_the_menu_only_while_month_is_shown(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot, layout.WEEK)
+    entry = page.panel._entry(calendar_id(world))  # noqa: SLF001
+    assert entry is not None
+    menu = page.panel.menu_at(page.panel.tree.visualItemRect(entry).center())
+    assert TICK_TEXT not in [action.text() for action in menu.actions()]  # the owner: only Month uses it, so only Month offers it
+    page.set_view(layout.MONTH)
+    assert tick(page, calendar_id(world)).text() == TICK_TEXT
 
 
 def test_the_tick_keeps_the_choice_with_the_account_and_month_fills_its_timed_events(world: World, qtbot: QtBot) -> None:

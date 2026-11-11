@@ -62,6 +62,7 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
+from chrono_mail.ui.tagfilter import tags_shown_key
 from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
@@ -71,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.573"
+__version__ = "mainwindow.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: Settings > Sidebar's Tags tick of Calendar and Tasks shows or hides that sidebar's Tags list (D-327)
 # v4.4.573: At start every appointment colour in use becomes a tag (D-329)
 # v4.4.572: Show everything tagged… on a tag (folder list, Contacts, Tasks, Calendar) opens the Tag overview of that tag, one window per tag (D-328)
 # v4.4.571: Tags saved in Settings reach the Tags lists of Tasks and Calendar: a new colour or name shows at once (D-327)
@@ -1198,6 +1200,12 @@ class MainWindow(QMainWindow):
             page = self.pages.get(section)
             if left_out is not None and isinstance(page, PimPage):
                 page.panel.set_left_out(left_out)
+            shown = dialog.sidebar_page.tags_shown(kind)
+            if shown is not None and isinstance(page, (TasksPage, CalendarPage)):  # the Tags tick of that tab (D-327)
+                self.settings.setValue(tags_shown_key(kind), "true" if shown else "false")
+                if not shown:
+                    page.tag_filter.choose("")  # a hidden list filters nothing: everything shows again
+                page.tag_filter.setVisible(shown)
 
     def _settings_context(self) -> SettingsContext:
         """What the Settings window shows besides the settings, in one piece."""

@@ -1,4 +1,4 @@
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QSettings, Qt, Signal
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
@@ -6,11 +6,22 @@ from chrono_mail.ui.collectionpanel import colour_icon
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.572"
+__version__ = "tagfilter.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: Settings > Sidebar's Tags tick on the Calendar and Tasks tabs: tags_shown, kept on this computer (D-327)
 # v4.4.572: A tag's right-click menu has Show everything tagged…: the Tag overview (D-328)
 # v4.4.571: Initial tag filter of a section's sidebar: "All …" and the tags in use with their counts, followed in place (D-327)
+
+def tags_shown_key(kind: str) -> str:
+    """The setting of Settings > Sidebar's Tags tick on the Calendar ("events") or Tasks ("tasks") tab: whether that sidebar shows its Tags."""
+    return f"show_tags_{kind}"
+
+
+def tags_shown(settings: QSettings, kind: str) -> bool:
+    """Whether the Calendar or Tasks sidebar shows its Tags list (on unless the person took it away), this computer's view only."""
+    return str(settings.value(tags_shown_key(kind), "true")).lower() != "false"
+
 
 TAG_ROLE: int = Qt.ItemDataRole.UserRole + 1
 EVERY_TAG: str = ""  # the first row: no filter

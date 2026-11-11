@@ -11,13 +11,15 @@ from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.calendarwidgets import AgendaTags, event_tip, paint_tags
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.tagbox import TagBox
-from tests.ui.test_ui_calendar import open_calendar
+from tests.ui.test_ui_calendar import open_calendar, summaries
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_colours.py 4.4.573"
+__version__ = "test_ui_tag_colours.py 4.4.575"
 
 # --- Version history ----------------------------------------------------
+# v4.4.575: The window opens 780 wide in Qt's own units and then as it was closed; the width shared alike; Settings > Sidebar's Tags ticks
+# v4.4.574: Add tag… with one click, selecting and removing a tag, the field colour; only the latest answer about the tags counts
 # v4.4.573: Initial tests: the Tags box of the appointment window and its radio buttons, the window's layout, the tag icons and the hover text (D-329)
 
 
@@ -253,16 +255,6 @@ def test_the_tags_box_has_the_dark_field_colour_of_the_attendee_list(world: Worl
     assert picture.pixelColor(box.x() - 20, box.y() - 6) == picture.pixelColor(attendees.x() - 20, attendees.y() - 6)
 
 
-def test_the_window_opens_780_pixels_wide_on_the_owner_s_screen(world: World, qtbot: QtBot) -> None:
-    from chrono_mail.ui import forms
-    from chrono_mail.ui.scale import wpx
-
-    _, editor = editor_for(world, qtbot)
-    screen = editor.screen()
-    room = screen.availableGeometry().width() if screen is not None else 10_000
-    assert editor.width() == max(editor.minimumWidth(), min(wpx(forms.owner_width(780)), room))
-
-
 def test_a_click_on_a_tag_selects_it_and_remove_tag_or_delete_removes_it(world: World, qtbot: QtBot) -> None:
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -321,3 +313,64 @@ def test_an_older_answer_about_the_tags_never_brings_back_old_colours(world: Wor
     answers[1](new)
     answers[0](old)  # the older answer comes last
     assert next(entry for entry in page.entries if entry.summary == "Lunch").colour == "#e01b84"
+
+
+def test_the_window_opens_780_wide_on_screen_and_then_as_it_was_closed(world: World, qtbot: QtBot) -> None:
+    page, editor = editor_for(world, qtbot)
+    editor = EventEditor(world.backend, list(page.panel.collections), list(world.call("tag.list")), None, page.panel.collections[0].collection, settings=world.window.settings)
+    qtbot.addWidget(editor)
+    editor.show()
+    qtbot.waitExposed(editor)
+    screen = editor.screen()
+    room = screen.availableGeometry().width() if screen is not None else 780
+    assert editor.width() == max(editor.minimumWidth(), min(780, room))  # once on screen, in Qt's own units
+    editor.resize(editor.width() - 40, editor.height() + 30)
+    narrower = editor.size()
+    editor.reject()
+    again = EventEditor(world.backend, list(page.panel.collections), list(world.call("tag.list")), None, page.panel.collections[0].collection, settings=world.window.settings)
+    qtbot.addWidget(again)
+    again.show()
+    qtbot.waitExposed(again)
+    assert again.size() == narrower  # as it was closed
+
+
+def test_a_wider_window_widens_the_left_column_and_the_tags_box_alike(world: World, qtbot: QtBot) -> None:
+    _, editor = editor_for(world, qtbot)
+    editor.show()
+    qtbot.waitExposed(editor)
+    editor.resize(700, editor.height())
+    qtbot.wait(50)
+    busy, box, repeat = editor.busy.width(), editor.tag_box.width(), editor.repeat.width()
+    editor.resize(900, editor.height())
+    qtbot.wait(50)
+    grown_left, grown_box = editor.busy.width() - busy, editor.tag_box.width() - box
+    assert grown_left > 60 and grown_box > 60 and abs(grown_left - grown_box) <= 4  # the 200 extra pixels shared alike
+    assert editor.repeat.width() == editor.busy.width() and editor.repeat.width() - repeat == grown_left  # Repeat lined up with Show as
+
+
+def test_the_tags_tick_of_settings_sidebar_hides_the_tags_of_calendar_and_tasks(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    from chrono_mail.ui.sections import TASKS
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+    from chrono_mail.ui.tasksview import TasksPage
+
+    page = open_calendar(world, qtbot, layout.WEEK)
+    assert page.tag_filter.isVisibleTo(page.side)
+    wait(qtbot, lambda: page.tag_filter.list.count() > 1)
+    page.tag_filter.choose("Food")
+    wait(qtbot, lambda: summaries(page) == ["Lunch"])
+
+    def untick_and_ok(dialog: SettingsDialog) -> QDialog.DialogCode:
+        wait(qtbot, lambda: "events" in dialog.sidebar_page.tags_boxes and "tasks" in dialog.sidebar_page.tags_boxes)
+        assert dialog.sidebar_page.tags_boxes["events"].isChecked()  # on by default
+        dialog.sidebar_page.tags_boxes["events"].setChecked(False)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SettingsDialog, "exec", untick_and_ok)
+    world.window.open_settings("Sidebar")
+    assert not page.tag_filter.isVisibleTo(page.side)
+    wait(qtbot, lambda: page.tag_filter.tag() == "" and "Dentist" in summaries(page))  # a hidden list filters nothing
+    tasks = world.window.pages[TASKS]
+    assert isinstance(tasks, TasksPage) and tasks.tag_filter.isVisibleTo(tasks.side)  # only the Calendar tab's tick was taken off
+    assert str(world.window.settings.value("show_tags_events")) == "false"
