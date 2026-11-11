@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import Change
 from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
@@ -37,10 +38,10 @@ from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.paletteeditor import colour_from
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.syncmarks import SyncMarks, mark_icon
+from chrono_mail.ui.syncmarks import SyncMarks
 from chrono_mail.ui.calendarlayout import Entry
 from chrono_mail.ui.dayheadings import DayWatch
-from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, GridCanvas, MonthView, item_of
+from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, GridCanvas, MonthView, PendingTitle, event_key, followed
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
@@ -51,9 +52,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.566"
+__version__ = "calendarview.py 4.4.567"
 
 # --- Version history ----------------------------------------------------
+# v4.4.567: An event stays selected after a change and its blocks stay until its new version comes; a title typed in place shows at once with the clock until the server answers, a refusal brings the old one back (D-325)
 # v4.4.566: The title of an event edited in place goes to the server with event.edit: this date only, no mail from Chrono Mail (D-324)
 # v4.4.564: After midnight the calendar looks as after a restart: today is the new day in every view, and a calendar that showed today shows the new today (D-322)
 # v4.4.558: The two final event menus in every view: invited and self-created, greyed by the date right-clicked; New only on an empty space, Edit off the menu; every action asks this occurrence or all occurrences after the click
@@ -206,6 +208,8 @@ class CalendarPage(PimPage):
         self.hide_past: bool = str(settings.value("calendar_hide_past", "false")).lower() == "true"
         self.show_hidden: bool = str(settings.value("calendar_show_hidden", "false")).lower() == "true"
         self._generation: int = 0
+        self._fetches: int = 0  # how many fetches of events were asked: a title on its way counts only the ones after it (D-325)
+        self._pending: dict[tuple[str, str], PendingTitle] = {}  # titles typed in place on their way to the server, shared with the views (D-325)
         self._tags_known: list[TagInfo] = []
         self._scrolled: bool = False
         # sidebar: the calendars, and the small month
@@ -313,6 +317,8 @@ class CalendarPage(PimPage):
             widget.period_step.connect(self.step)
             widget.title_edit_wanted.connect(self._title_edit_wanted)
             widget.title_edited.connect(self._title_edited)
+            widget.pending = self._pending
+        self.agenda.pending = self._pending
         self.panel.infos_changed.connect(self._recolour)
         self.month.day_activated.connect(self._day_activated)
         self.agenda.entry_clicked.connect(self._entry_clicked)
@@ -437,11 +443,15 @@ class CalendarPage(PimPage):
             self._show_data()
             return
 
+        self._fetches += 1
+        number = self._fetches
+
         def arrived(result: EventList) -> None:
             if generation != self._generation:
                 return
             self._day_shown = today
             self.entries = self._coloured(layout.entries_from(list(result.events), self.zone))
+            self._fetched(None, number)
             self._show_data(keep=quiet)
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
@@ -465,7 +475,7 @@ class CalendarPage(PimPage):
         if self.view == layout.MONTH:
             self.month.set_data(days, self.entries, self.anchor.month, today, self.first_weekday)
         elif self.view == layout.AGENDA:
-            self.agenda.set_data(layout.agenda_groups(self.entries, days, self.hide_past, now), today, keep)
+            self.agenda.set_data(layout.agenda_groups(self.entries, days, self.hide_past, now), today, keep, self.selected)
         else:
             self.grid.header.set_data(days, self.entries, today)
             self.grid.canvas.now = now
@@ -480,7 +490,7 @@ class CalendarPage(PimPage):
     def _same(self, entry: Entry | None) -> Entry | None:
         if entry is None:
             return None
-        return next((candidate for candidate in self.entries if candidate.row == entry.row and candidate.start == entry.start), None)
+        return followed(entry, self.entries)  # its new version after a change (D-325)
 
     def _entry_clicked(self, entry: object) -> None:
         self.selected = entry if isinstance(entry, Entry) else None
@@ -561,9 +571,9 @@ class CalendarPage(PimPage):
 
     def read_selected(self) -> None:
         """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for. A Cancelled event does not open
-        until it is Restored (D-310)."""
+        until it is Restored (D-310), nor while its title waits for the server (D-325)."""
         entry = self.selected
-        if entry is None or entry.row.cancelled:
+        if entry is None or entry.row.cancelled or self._title_waiting(entry):
             return
         row = entry.row
 
@@ -577,7 +587,7 @@ class CalendarPage(PimPage):
 
     def edit_selected(self) -> None:
         entry = self.selected
-        if entry is None or entry.row.cancelled:
+        if entry is None or entry.row.cancelled or self._title_waiting(entry):  # (a title on its way: the window would show the old one, D-325)
             return
         row = entry.row
         scope = self._ask_scope("Change") if row.repeats else "series"
@@ -598,6 +608,8 @@ class CalendarPage(PimPage):
         row = entry.row
         if row.read_only or row.cancelled or row.hidden:
             return
+        if self._title_waiting(entry):  # its clock shows: the server has not answered the title before (D-146, D-325)
+            return
         for widget in (self.grid.header, self.grid.canvas) if self.view != layout.MONTH else (self.month,):
             if widget.edit_title(entry):
                 if widget is self.grid.canvas and widget.title_editor is not None:
@@ -605,12 +617,58 @@ class CalendarPage(PimPage):
                 return
 
     def _title_edited(self, entry: object, title: str) -> None:
-        """The new title, on the server first (D-193): this date only for a repeating event, and Chrono Mail mails no one (D-324). The blocks
-        follow the fact; a refusal says so and the title stays."""
+        """The new title, on the server first (D-193): this date only for a repeating event, and Chrono Mail mails no one (D-324). It shows at
+        once with the clock before it; the server's yes takes the clock away and the title stays, its no brings the old title back and the
+        status line says why (D-325). Offline the engine keeps it here and says yes: the sync mark's clock then stays until it is sent (D-194)."""
         if not isinstance(entry, Entry):
             return
         row = entry.row
-        self._backend.ask(EVENT_EDIT, EventEdit(item=row.item, occurrence=row.occurrence, summary=title), lambda result: None, self._failed, owner=self)
+        key = event_key(entry)
+        pending = PendingTitle(title, sent=self._fetches)
+        self._pending[key] = pending
+        self._repaint_views()
+
+        def done(result: EventInfo) -> None:
+            pending.waiting = False
+            pending.answered = self._fetches
+            if pending.fetched and self._pending.get(key) is pending:
+                del self._pending[key]  # its new version is in the view already
+            self._repaint_views()
+
+        def refused(error: ChronoMailError) -> None:
+            if self._pending.get(key) is pending:
+                del self._pending[key]
+            self._repaint_views()
+            self._failed(error)
+
+        self._backend.ask(EVENT_EDIT, EventEdit(item=row.item, occurrence=row.occurrence, summary=title), done, refused, owner=self)
+
+    def _forget_titles(self, item: str) -> None:
+        """Titles typed for this event that the server said yes to (one still waiting keeps its clock until the answer)."""
+        for key, pending in list(self._pending.items()):
+            if key[0] == item and not pending.waiting:
+                del self._pending[key]
+
+    def _title_waiting(self, entry: Entry) -> bool:
+        pending = self._pending.get(event_key(entry))
+        return pending is not None and pending.waiting
+
+    def _repaint_views(self) -> None:
+        """A title on its way changed: the views draw it again; the Agenda's lines are written when it is filled, so it is filled again."""
+        for widget in (self.grid.header, self.grid.canvas, self.month):
+            widget.update()
+        if self.view == layout.AGENDA:
+            self._show_data(keep=True)
+
+    def _fetched(self, item: str | None, number: int) -> None:
+        """The events came as they are now: a title the server said yes to is now theirs (D-325). The fetch of its own event is asked at the
+        fact of its change, so one asked after the title was sent has it; a fetch of all events has it only when asked after the server's yes.
+        Any other shows the event as it was, and counts for nothing."""
+        for key, pending in list(self._pending.items()):
+            if (key[0] == item and number > pending.sent) or (item is None and not pending.waiting and number > pending.answered):
+                pending.fetched = True
+                if not pending.waiting:
+                    del self._pending[key]
 
     @override
     def delete_selected(self) -> None:
@@ -722,33 +780,54 @@ class CalendarPage(PimPage):
 
     @override
     def apply_item(self, change: Change) -> None:
-        """An event was added, changed, deleted or moved: its blocks go, and when it is in a calendar shown its
-        occurrences in the days shown are asked for and put in (only that event, D-146)."""
+        """An event was added, changed, deleted or moved: when it is in a calendar shown its occurrences in the days shown are asked for and
+        replace its blocks (only that event, D-146). Until they come its blocks stay as they were, so nothing blinks, the selection stays and a
+        title edited in place stays open (D-324, D-325); a deleted event, or one gone to another or an unticked calendar, goes at once."""
         kind, item = str(change.kind), change.message_id
         wanted = change.new_message_id if kind == "item_moved" else item
         target = change.to_folder if kind == "item_moved" else change.folder
-        edited = kind not in ("item_removed", "item_moved") and item in {widget.editing_item() for widget in (self.grid.header, self.grid.canvas, self.month)}
-        if not edited:  # its title being edited in place: its blocks stay until its new version comes, so the edit stays open on it (D-324)
+        stays = kind not in ("item_removed", "item_moved") and target in set(self.panel.visible_ids())
+        if kind in ("item_removed", "item_moved"):
+            self._forget_titles(item)  # gone: a title typed for it is nobody's (D-325)
+        moved = self.selected if kind == "item_moved" and self.selected is not None and self.selected.row.item == item else None  # selected again there
+        if not stays:
             before = len(self.entries)
             self.entries = [entry for entry in self.entries if entry.row.item not in (item, wanted)]
             if len(self.entries) != before:
-                self._show_data()
+                self._show_data(keep=True)
         if kind == "item_removed" or target not in set(self.panel.visible_ids()):
             return
         first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
         generation = self._generation
+        self._fetches += 1
+        number = self._fetches
 
         def arrived(result: EventList) -> None:
+            self._fetched(wanted, number)  # asked after the change was stored: its new version, whatever is shown now (D-325)
             if generation != self._generation:
+                self._repaint_views()
                 return  # another week or view is shown now: it was fetched for that one
             kept = [entry for entry in self.entries if entry.row.item != wanted]
-            self.entries = sorted(kept + self._coloured(layout.entries_from(list(result.events), self.zone)), key=lambda entry: (entry.start, entry.summary.casefold()))
-            self._show_data()
+            arriving = self._coloured(layout.entries_from(list(result.events), self.zone))
+            self.entries = sorted(kept + arriving, key=lambda entry: (entry.start, entry.summary.casefold()))
+            if moved is not None and self.selected is None:  # moved to another calendar shown: it is selected again, its own date (D-325)
+                self.selected = next((entry for entry in arriving if entry.row.occurrence == moved.row.occurrence and entry.first_day == moved.first_day), None)
+            self._show_data(keep=True)  # the Agenda keeps its selected event and its place too
+            if moved is not None and self.selected is not None:
+                for widget in (self.grid.header, self.grid.canvas, self.month):
+                    widget.select(self.selected)
             if result.cut:
                 self.status(f"Calendar: {CUT_WARNING}")
 
+        def not_fetched(error: ChronoMailError) -> None:
+            self._forget_titles(wanted)
+            if generation == self._generation:  # its blocks as they were must not stay: they go, as a reload would show (D-325)
+                self.entries = [entry for entry in self.entries if entry.row.item != wanted]
+                self._show_data(keep=True)
+            self._failed(error)
+
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted, hidden=self.show_hidden)
-        self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
+        self._backend.ask(EVENT_LIST, parameters, arrived, not_fetched, owner=self)
 
     def _answer_wanted(self, entry: Entry, verb: str, answer: str) -> None:
         occurrence = self._date_meant(entry, verb)
@@ -802,9 +881,5 @@ class CalendarPage(PimPage):
             widget.mark_of = marks.state
             widget.update()
         self.agenda.mark_of = marks.state
-        for row in range(self.agenda.count()):
-            item = self.agenda.item(row)
-            entry = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-            if item is not None and isinstance(entry, Entry):
-                item.setIcon(mark_icon(marks.state(item_of(entry))))
+        self.agenda.mark_lines()  # with the clock of a title on its way (D-325)
 

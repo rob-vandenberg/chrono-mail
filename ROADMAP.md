@@ -251,6 +251,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.4.546) A task without a due date has only a set-time reminder: the Reminder list of the task editor always offers At a set time…, and the choices counted from the due date are greyed without one (D-316).
 - DONE (4.4.559) Delegate on all occurrences replaces the separate answers on single dates, as Accept, Tentative and Decline (Q309, D-310).
 - DONE (4.4.560) A click in the Flag or Unread column of the message list toggles that mark on that one message (D-319).
+- DONE (4.4.567) An appointment stays selected after any change and never disappears meanwhile; a title typed in place shows at once with the clock until the server answers, a refusal brings the old one back (D-325).
 - DONE (4.4.566) The title of an appointment is edited in place in Day, Week and Month: a click on the selected appointment or F2, Enter or a click elsewhere saves on the server first, this date only, no mail (D-324).
 - DONE (4.4.562) Settings > Message list > Secondary sort: messages with the same value in any sort but Received by when they were received, newest or oldest first, in every list; index format 21 with two sort indexes per sort (D-320).
 - DONE (4.4.558) The two right-click menus of an event in every view, greyed by the date right-clicked, the commands refusing the same; the question after the click; an answer on one date of a series declined in Local Folders moves the whole series (event menus, worker 5b, D-318).

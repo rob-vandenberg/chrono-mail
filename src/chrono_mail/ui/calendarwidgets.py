@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, tzinfo
 from typing import override
@@ -11,15 +11,16 @@ from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
 from chrono_mail.ui.colours import theme
-from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, mark_icon, paint_mark
+from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, WAITING, mark_icon, paint_mark
 from chrono_mail.ui.tagchips import TagColourBook
 
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.566"
+__version__ = "calendarwidgets.py 4.4.567"
 
 # --- Version history ----------------------------------------------------
+# v4.4.567: An event is known by its item and date, so it stays selected after a change; a title typed in place shows at once, with the clock until the server answers (D-325)
 # v4.4.566: A click on the selected event, or F2, edits its title in place, where it is drawn; Enter or a click elsewhere saves, Escape does not (D-324)
 # v4.4.564: The agenda keeps its selected event and the line at its top when it is filled again for the new day (D-322)
 # v4.4.558: The agenda has the right-click menus of the other views
@@ -73,8 +74,9 @@ DOT_ROOM: int = 9
 
 
 def same_event(one: Entry | None, other: Entry | None) -> bool:
-    """The same occurrence of the same event, whatever changed in it (its title, D-324)."""
-    return one is not None and other is not None and (one.row.item, one.row.occurrence, one.start) == (other.row.item, other.row.occurrence, other.start)
+    """The same occurrence of the same event, whatever changed in it: its title, its time or its day (D-324, D-325). An event is its item; a date of a
+    series, or of an object of only changed dates, is its occurrence (the date it had first, which a change never moves)."""
+    return one is not None and other is not None and (one.row.item, one.row.occurrence) == (other.row.item, other.row.occurrence)
 
 
 def first_line(rect: QRectF, font: QFont, mark: str, dot: bool) -> tuple[float, float, int, float]:
@@ -140,6 +142,36 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
             break
     painter.restore()
     return mark_area
+
+
+@dataclass(slots=True)
+class PendingTitle:
+    """A title typed in place on its way to the server (D-325): shown at once, with the clock while the server has not answered; after its yes it
+    stays shown until the event's new version is in the view."""
+
+    title: str
+    sent: int = 0  # how many fetches of events the page had asked when it was sent: only a later fetch of its own event brings its new version
+    answered: int = 0  # the same at the server's yes: only a later fetch of all events brings it (one asked before read the event as it was)
+    waiting: bool = True  # the server has not answered yet: the clock, and no new edit
+    fetched: bool = False  # the event's new version came into the view meanwhile
+
+
+def followed(entry: Entry | None, candidates: Iterable[Entry]) -> Entry | None:
+    """The event among the candidates that is this one after a change (D-325): the same date of the same event; when a change of the series
+    moved its dates (they are known by the time they first had), its date on the same day. Never another day: a date deleted on its own must
+    not hand its selection to the next date of the series."""
+    if entry is None:
+        return None
+    own = [candidate for candidate in candidates if candidate.row.item == entry.row.item]
+    exact = next((candidate for candidate in own if same_event(candidate, entry)), None)
+    if exact is not None:
+        return exact
+    return next((candidate for candidate in own if candidate.first_day == entry.first_day), None)
+
+
+def event_key(entry: Entry) -> tuple[str, str]:
+    """An event's own identity (same_event): its item and the date of the series it is."""
+    return entry.row.item, entry.row.occurrence
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +247,7 @@ class EntryHits(QWidget):
         self.mark_hits: list[tuple[QRectF, Entry]] = []  # where the marks were drawn: a click on a triangle opens its conflict, a hover explains
         self.title_editor: TitleEditor | None = None
         self._editing: Entry | None = None
+        self.pending: dict[tuple[str, str], PendingTitle] = {}  # titles on their way to the server; the page shares one with every view (D-325)
         self._title_click = QTimer(self)  # a click on the selected event edits its title once no second click made it a double click
         self._title_click.setSingleShot(True)
         self._title_click.timeout.connect(self._title_click_ended)
@@ -238,7 +271,7 @@ class EntryHits(QWidget):
             return False
         self.close_title()
         editor = TitleEditor(self)
-        editor.setText(entry.row.summary)
+        editor.setText(self.current_title(entry))
         editor.selectAll()
         editor.finished.connect(self._title_finished)
         self.title_editor = editor
@@ -307,15 +340,30 @@ class EntryHits(QWidget):
                 self._ended_by_click = True
                 QTimer.singleShot(0, self, self._click_handled)
         title = text.strip() if isinstance(text, str) else ""
-        if entry is not None and title and title != entry.row.summary:  # an empty or unchanged title saves nothing
+        if entry is not None and title and title != self.current_title(entry):  # an empty or unchanged title saves nothing
             self.title_edited.emit(entry, title)
 
     def _click_handled(self) -> None:
         self._ended_by_click = False
 
     def title_shown(self, entry: Entry) -> str:
-        """The title to draw: none for the event whose title is being edited, the edit stands there (D-324)."""
-        return "" if self.title_editor is not None and same_event(entry, self._editing) else entry.summary
+        """The title to draw: none for the event whose title is being edited, the edit stands there (D-324); a title on its way to the server
+        as typed (D-325)."""
+        if self.title_editor is not None and same_event(entry, self._editing):
+            return ""
+        pending = self.pending.get(event_key(entry))
+        return pending.title if pending is not None else entry.summary
+
+    def current_title(self, entry: Entry) -> str:
+        """The title the event has as far as the person can see: a title on its way, else its own (empty when it has none)."""
+        pending = self.pending.get(event_key(entry))
+        return pending.title if pending is not None else entry.row.summary
+
+    def mark_for(self, entry: Entry) -> str:
+        """The mark before the title: the clock while its title waits for the server's answer (D-325), else its sync mark (D-194)."""
+        own = self.mark_of(item_of(entry))
+        pending = self.pending.get(event_key(entry))
+        return WAITING if own != CONFLICT and pending is not None and pending.waiting else own
 
     def _title_click_ended(self) -> None:
         entry, self._clicked_again = self._clicked_again, None
@@ -367,7 +415,7 @@ class EntryHits(QWidget):
             position = QPointF(event.pos())
             marked = self.mark_at(position)
             entry = self.entry_at(position)
-            tip = MARK_TIPS.get(self.mark_of(item_of(marked)), "") if marked is not None else cancelled_tip(entry) if entry is not None else ""
+            tip = MARK_TIPS.get(self.mark_for(marked), "") if marked is not None else cancelled_tip(entry) if entry is not None else ""
             if tip:
                 QToolTip.showText(event.globalPos(), tip, self)
             else:
@@ -379,7 +427,7 @@ class EntryHits(QWidget):
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
         marked = self.mark_at(event.position())
-        if marked is not None and self.mark_of(item_of(marked)) == CONFLICT:  # the triangle: what a person would guess, its conflict opens
+        if marked is not None and self.mark_for(marked) == CONFLICT:  # the triangle: what a person would guess, its conflict opens
             self.select(marked)
             self.conflict_clicked.emit(item_of(marked))
             return
@@ -442,7 +490,7 @@ class GridCanvas(EntryHits):
         self.zone = zone
         self.today = today
         self.segments = {day: layout.day_segments(entries, day, zone) for day in days}
-        self.selected = next((entry for entry in entries if self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start), None)
+        self.selected = followed(self.selected, entries)
         self.setFixedHeight(24 * self.hour_height)
         self.update()
 
@@ -534,8 +582,8 @@ class GridCanvas(EntryHits):
                     lines.append(layout.time_text(entry))
                 if height > 46 and entry.row.location:
                     lines.append(one_line(entry.row.location))
-                mark = self.mark_of(item_of(entry))
-                self.note_mark(paint_block(painter, rect, entry, self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start, font, lines,
+                mark = self.mark_for(entry)
+                self.note_mark(paint_block(painter, rect, entry, same_event(entry, self.selected), font, lines,
                                            faded=not entry.row.busy, mark=mark), entry)
                 fill, text_colour = block_colours(entry, not entry.row.busy)
                 self.note_title(rect, entry, font, mark, False, text_colour, fill)
@@ -571,7 +619,7 @@ class DayHeader(EntryHits):
         self.bars = layout.bars(entries, days, include_timed_spanning=True)
         rows = max((bar.row for bar in self.bars), default=-1) + 1
         self.setFixedHeight(DAY_ROW + 6 + max(1, rows) * (BAR_HEIGHT + BAR_GAP))
-        self.selected = next((entry for entry in entries if self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start), None)
+        self.selected = followed(self.selected, entries)
         self.update()
 
     def column_width(self) -> float:
@@ -631,8 +679,8 @@ class DayHeader(EntryHits):
         for bar in self.bars:
             left = GUTTER + bar.first * width + 1
             rect = QRectF(left, DAY_ROW + 4 + bar.row * (BAR_HEIGHT + BAR_GAP), (bar.last - bar.first + 1) * width - 3, BAR_HEIGHT)
-            mark = self.mark_of(item_of(bar.entry))
-            self.note_mark(paint_block(painter, rect, bar.entry, self.selected is not None and bar.entry.row == self.selected.row and bar.entry.start == self.selected.start, font,
+            mark = self.mark_for(bar.entry)
+            self.note_mark(paint_block(painter, rect, bar.entry, same_event(bar.entry, self.selected), font,
                                        [self.title_shown(bar.entry)], mark=mark), bar.entry)
             fill, text_colour = block_colours(bar.entry)
             self.note_title(rect, bar.entry, font, mark, False, text_colour, fill)
@@ -665,7 +713,7 @@ class MonthView(EntryHits):
         self.month = month
         self.today = today
         self.first_weekday = first_weekday
-        self.selected = next((entry for entry in entries if self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start), None)
+        self.selected = followed(self.selected, entries)
         self.update()
 
     def _cell_size(self) -> tuple[float, float]:
@@ -751,8 +799,8 @@ class MonthView(EntryHits):
                 if bar.row >= room:
                     continue
                 rect = QRectF(bar.first * width + 2, top + 22 + bar.row * line_height, (bar.last - bar.first + 1) * width - 4, line_height - 2)
-                mark = self.mark_of(item_of(bar.entry))
-                self.note_mark(paint_block(painter, rect, bar.entry, self.selected is not None and bar.entry.row == self.selected.row and bar.entry.start == self.selected.start, small,
+                mark = self.mark_for(bar.entry)
+                self.note_mark(paint_block(painter, rect, bar.entry, same_event(bar.entry, self.selected), small,
                                            [self.title_shown(bar.entry)], mark=mark), bar.entry)
                 fill, text_colour = block_colours(bar.entry)
                 self.note_title(rect, bar.entry, small, mark, False, text_colour, fill)
@@ -768,8 +816,8 @@ class MonthView(EntryHits):
                     prefix = f"{entry.start.strftime('%H:%M')} "
                     if entry.filled:  # in its colour as an all-day event, its dot in the text's colour (D-297)
                         rect = QRectF(left + 2, y, width - 4, line_height - 2)
-                        selected = self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start
-                        mark = self.mark_of(item_of(entry))
+                        selected = same_event(entry, self.selected)
+                        mark = self.mark_for(entry)
                         self.note_mark(paint_block(painter, rect, entry, selected, small, [prefix + self.title_shown(entry)], mark=mark, dot=True), entry)
                         fill, text_colour = block_colours(entry)
                         self.note_title(rect, entry, small, mark, True, text_colour, fill, prefix)
@@ -780,14 +828,14 @@ class MonthView(EntryHits):
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(marker)
                     painter.drawEllipse(QPointF(left + 9, y + line_height / 2 - 1), 3.5, 3.5)
-                    selected = self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start
+                    selected = same_event(entry, self.selected)
                     if selected:
                         painter.setBrush(QColor(palette.color(QPalette.ColorRole.Highlight)))
                         painter.drawRoundedRect(rect, 3, 3)
                     line_colour = palette.color(QPalette.ColorRole.HighlightedText) if selected else text
                     painter.setPen(line_colour)
                     mark_size = min(MARK_SIZE, line_height - 3)
-                    mark_state = self.mark_of(item_of(entry))
+                    mark_state = self.mark_for(entry)
                     mark_room = paint_mark(painter, int(left + 16), int(y + line_height / 2 - 1), mark_state, mark_size)  # where the text would start
                     if mark_state:
                         self.mark_hits.append((QRectF(int(left + 16), int(y + line_height / 2 - 1) - mark_size // 2, mark_size, mark_size), entry))
@@ -826,6 +874,7 @@ class AgendaView(QListWidget):
         self.itemDoubleClicked.connect(self._double_clicked)
         self.currentItemChanged.connect(self._current_changed)
         self.mark_of: Callable[[str], str] = no_mark  # an event's sync mark (D-194)
+        self.pending: dict[tuple[str, str], PendingTitle] = {}  # titles typed in place on their way to the server, the page's (D-325)
 
     def _key(self, item: QListWidgetItem | None) -> tuple[object, ...] | None:
         """What a line stands for, the same after the list is filled again: an event's occurrence, or a day's heading."""
@@ -833,15 +882,21 @@ class AgendaView(QListWidget):
             return None
         entry = self._entry(item)
         if entry is not None:
-            return ("event", entry.row, entry.start)
+            return ("event", entry.row.item, entry.row.occurrence)  # the same after a change of the event (D-325)
         day = item.data(Qt.ItemDataRole.UserRole)
         return ("day", day) if isinstance(day, date) else None
 
-    def set_data(self, groups: list[tuple[date, list[Entry]]], today: date, keep: bool = False) -> None:
-        """Filled; it starts at the top. keep (the new day, D-322): the selected event and the line at the top stay where they still are."""
+    def set_data(self, groups: list[tuple[date, list[Entry]]], today: date, keep: bool = False, chosen: Entry | None = None) -> None:
+        """Filled; it starts at the top, with no line selected. keep (the new day, D-322; a change, D-325): the line selected here stays
+        selected, an event or a day's heading; with none, the event selected in another view (chosen); the line at the top stays where it is,
+        to the pixel."""
         self.blockSignals(True)
-        chosen = self._key(self.currentItem()) if keep else None
-        top = self._key(self.itemAt(0, 0)) if keep and self.verticalScrollBar().value() > 0 else None
+        current = self.currentItem() if keep else None
+        heading = self._key(current) if current is not None and self._entry(current) is None else None
+        chosen = (self._entry(current) if current is not None else chosen) if keep else None
+        top_line = self.itemAt(0, 0) if keep and self.verticalScrollBar().value() > 0 else None
+        top = self._key(top_line)
+        hidden = -self.visualItemRect(top_line).top() if top_line is not None else 0  # the part of the top line scrolled out of sight
         self.clear()
         for day, entries in groups:
             title = f"{day.strftime('%A')}, {day.strftime('%B')} {day.day}, {day.year}" + ("   — Today" if day == today else "")
@@ -854,22 +909,43 @@ class AgendaView(QListWidget):
             self.addItem(header)
             for entry in entries:
                 place = one_line(entry.row.location)
-                item = QListWidgetItem(f"   {layout.time_text(entry):<14}{entry.summary}" + (f"   ·  {place}" if place else "") + f"   ({entry.row.calendar})")
+                pending = self.pending.get(event_key(entry))  # a title typed in place shows as typed, with the clock until the server answers (D-325)
+                title = pending.title if pending is not None else entry.summary
+                item = QListWidgetItem(f"   {layout.time_text(entry):<14}{title}" + (f"   ·  {place}" if place else "") + f"   ({entry.row.calendar})")
                 item.setData(Qt.ItemDataRole.UserRole, entry)
                 item.setForeground(fill_colour(entry))
-                item.setIcon(mark_icon(self.mark_of(item_of(entry))))
-                item.setToolTip("\n".join(tip for tip in (cancelled_tip(entry), MARK_TIPS.get(self.mark_of(item_of(entry)), "")) if tip))
+                self._mark_line(item, entry)
                 self.addItem(item)
         if not groups:
             placeholder = QListWidgetItem("No events")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self.addItem(placeholder)
         lines = [self.item(row) for row in range(self.count())]
-        if chosen is not None and (again := next((line for line in lines if self._key(line) == chosen), None)) is not None:
-            self.setCurrentItem(again)
+        again = followed(chosen, [entry for line in lines if (entry := self._entry(line)) is not None])
+        if again is not None:
+            self.setCurrentItem(next(line for line in lines if self._entry(line) is again))
+        elif heading is not None and (same_heading := next((line for line in lines if self._key(line) == heading), None)) is not None:
+            self.setCurrentItem(same_heading)
         if top is not None and (first := next((line for line in lines if self._key(line) == top), None)) is not None:
             self.scrollToItem(first, QListWidget.ScrollHint.PositionAtTop)
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + hidden)
         self.blockSignals(False)
+
+    def _mark_line(self, item: QListWidgetItem, entry: Entry) -> None:
+        """A line's mark and hover text: the clock while its title waits for the server (D-325), else its sync mark (D-194)."""
+        own = self.mark_of(item_of(entry))
+        pending = self.pending.get(event_key(entry))
+        mark = WAITING if own != CONFLICT and pending is not None and pending.waiting else own
+        item.setIcon(mark_icon(mark))
+        item.setToolTip("\n".join(tip for tip in (cancelled_tip(entry), MARK_TIPS.get(mark, "")) if tip))
+
+    def mark_lines(self) -> None:
+        """The marks changed: every line's mark again, in place."""
+        for row in range(self.count()):
+            item = self.item(row)
+            entry = self._entry(item)
+            if item is not None and entry is not None:
+                self._mark_line(item, entry)
 
     def _entry(self, item: QListWidgetItem | None) -> Entry | None:
         data = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
