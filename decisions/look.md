@@ -14,6 +14,7 @@ See also: [[mail-window]]
 - [[D-225]] Which count a folder shows
 - [[D-090]] Selection colour and headers
 - [[D-188]] Pane separators
+- [[D-330]] A separator above the Tags list, its place kept per section
 - [[D-158]] The program's own colours
 - [[D-142]] Replaced by the colour decision
 - [[D-066]] HTML mail on a white page

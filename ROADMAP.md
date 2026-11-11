@@ -251,6 +251,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.4.546) A task without a due date has only a set-time reminder: the Reminder list of the task editor always offers At a set time…, and the choices counted from the due date are greyed without one (D-316).
 - DONE (4.4.559) Delegate on all occurrences replaces the separate answers on single dates, as Accept, Tentative and Decline (Q309, D-310).
 - DONE (4.4.560) A click in the Flag or Unread column of the message list toggles that mark on that one message (D-319).
+- DONE (4.4.577) A separator to drag above the Tags list of Calendar, Tasks and Contacts, its place kept per section (D-330).
 - DONE (4.4.576) Edit… first in an appointment's menu; every way of opening an appointment opens it ready to change; the tag labels 2 pixels lower (D-312, D-318, D-329).
 - DONE (4.4.575) The appointment window opens 780 wide and remembers its size; its width shared by both columns; Fill colour for timed events only in Month; Settings > Sidebar's Tags ticks for Calendar and Tasks (D-297, D-327, D-329).
 - DONE (4.4.574) Add tag… adds with one click and closes; Remove tag and Delete remove the selected tag; the Tags box in the field colour; the appointment window opens 780 pixels wide (D-329).

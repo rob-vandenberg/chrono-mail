@@ -43,7 +43,7 @@ from chrono_mail.engine.commands_groups import (
 )
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_addressbook import ListParameters as ContactListParameters
-from chrono_mail.ui.splitter import PaneSplitter
+from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, paint_mark
 from chrono_mail.ui.collectionpanel import ROLE_GROUP, colour_icon
@@ -59,9 +59,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.572"
+__version__ = "contactsview.py 4.4.577"
 
 # --- Version history ----------------------------------------------------
+# v4.4.577: A separator to drag between the address books and the Tags list, its place remembered for this section (D-330)
 # v4.4.572: A tag in the Tags list has Show everything tagged… in its right-click menu (D-328)
 # v4.4.572: open_contact: a contact opens in its editor from the Tag overview, as with a double click here (D-328)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -276,18 +277,23 @@ class ContactsPage(PimListPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        side_layout.addWidget(self.panel, 3)
-        self.tag_title = QLabel("Tags", side)
+        tags = QWidget(side)  # the Tags heading and its list, below the separator (D-330)
+        tags_layout = QVBoxLayout(tags)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        tags_layout.setSpacing(0)
+        self.tag_title = QLabel("Tags", tags)
         font = self.tag_title.font()
         font.setBold(True)
         self.tag_title.setFont(font)
         self.tag_title.setContentsMargins(10, 6, 10, 4)
-        side_layout.addWidget(self.tag_title)
-        self.tag_list = QListWidget(side)
+        tags_layout.addWidget(self.tag_title)
+        self.tag_list = QListWidget(tags)
         self.tag_list.setFrameShape(QListWidget.Shape.NoFrame)
         self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self._tag_menu)
-        side_layout.addWidget(self.tag_list, 2)
+        tags_layout.addWidget(self.tag_list, 1)
+        self.side_splitter = SideSplitter("contacts_side_splitter", settings, self.panel, tags, side)  # its own place (D-330)
+        side_layout.addWidget(self.side_splitter, 1)
         self.side = side
 
         self.model = ContactListModel()

@@ -45,7 +45,7 @@ from chrono_mail.engine.commands_tasklist import ItemParameters as TaskItem
 from chrono_mail.engine.commands_tasklist import MoveParameters as TaskMove
 from chrono_mail.engine.commands_tasklist import ListParameters as TaskListParameters
 from chrono_mail.engine.commands_tasklist import PlacesParameters as TaskPlacesParameters
-from chrono_mail.ui.splitter import PaneSplitter
+from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, paint_mark
 from chrono_mail.core.colours import NEW_TAG
@@ -61,9 +61,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.575"
+__version__ = "tasksview.py 4.4.577"
 
 # --- Version history ----------------------------------------------------
+# v4.4.577: A separator to drag between the task lists and the Tags list, its place remembered for this section (D-330)
 # v4.4.575: The Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
 # v4.4.572: open_task: a task opens in its editor from the Tag overview, as with a double click here (D-328)
@@ -467,10 +468,10 @@ class TasksPage(PimListPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        side_layout.addWidget(self.panel, 3)
         self.tag_filter = TagFilter("All tasks", self.colours, side)
+        self.side_splitter = SideSplitter("tasks_side_splitter", settings, self.panel, self.tag_filter, side)  # its own place (D-330)
         self.tag_filter.setVisible(tags_shown(settings, "tasks"))  # Settings > Sidebar's Tags tick (D-327)
-        side_layout.addWidget(self.tag_filter, 2)
+        side_layout.addWidget(self.side_splitter, 1)
         self.side = side
         pane = QWidget()
         pane_layout = QVBoxLayout(pane)

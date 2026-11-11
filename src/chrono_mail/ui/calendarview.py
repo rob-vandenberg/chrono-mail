@@ -46,6 +46,7 @@ from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.searchfield import SearchField
+from chrono_mail.ui.splitter import SideSplitter
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.toolbar import view_button
@@ -53,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.576"
+__version__ = "calendarview.py 4.4.577"
 
 # --- Version history ----------------------------------------------------
+# v4.4.577: A separator to drag between the calendars and the Tags list, its place remembered for this section (D-330)
 # v4.4.576: A double click, Enter, Edit… (first in every appointment's menu) and the toolbar's Edit open an appointment ready to change; one of a read-only calendar only to read (the owner, D-318)
 # v4.4.575: The calendar sidebar knows when Month is shown, for its Fill colour tick (D-297); the Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
@@ -226,10 +228,10 @@ class CalendarPage(PimPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        side_layout.addWidget(self.panel, 3)
         self.tag_filter = TagFilter("All events", self.colours, side)
+        self.side_splitter = SideSplitter("calendar_side_splitter", settings, self.panel, self.tag_filter, side)  # its own place (D-330)
         self.tag_filter.setVisible(tags_shown(settings, "events"))  # Settings > Sidebar's Tags tick (D-327)
-        side_layout.addWidget(self.tag_filter, 2)
+        side_layout.addWidget(self.side_splitter, 1)
         self.mini = RangeCalendar(side)
         side_layout.addWidget(self.mini)
         self.side = side

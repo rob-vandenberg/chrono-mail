@@ -52,3 +52,4 @@ See also: [[sync-conflicts]]
 - [[D-327]] A tag filter in every section
 - [[D-328]] Everything of one tag in one overview
 - [[D-329]] Tags give appointments their colour
+- [[D-330]] A separator above the Tags list, its place kept per section

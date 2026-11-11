@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.575"
+__version__ = "mainwindow.py 4.4.577"
 
 # --- Version history ----------------------------------------------------
+# v4.4.577: Quitting keeps the place of the separator above the Tags list of Calendar, Tasks and Contacts, each its own (D-330)
 # v4.4.575: Settings > Sidebar's Tags tick of Calendar and Tasks shows or hides that sidebar's Tags list (D-327)
 # v4.4.573: At start every appointment colour in use becomes a tag (D-329)
 # v4.4.572: Show everything tagged… on a tag (folder list, Contacts, Tasks, Calendar) opens the Tag overview of that tag, one window per tag (D-328)
@@ -944,6 +945,9 @@ class MainWindow(QMainWindow):
         self.memory.remember_sizes("splitter2", self.splitter.sizes())
         if self.reading.place != "off":
             self.memory.remember_sizes("content_splitter", self.content_splitter.sizes())
+        for page in self.pages.values():  # the separator above each section's Tags list, each its own place (D-330)
+            if isinstance(page, (CalendarPage, TasksPage, ContactsPage)):
+                page.side_splitter.remember()
         self.prefs.keep(changed(self.prefs.read(), auto_check=self.act_auto.isChecked()))
         view = self.mail_state.view
         self.memory.remember_view(view.account or "", view.path, view.key_kind)
