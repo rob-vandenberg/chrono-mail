@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.engine.commands_addressbook import ContactRow
 from chrono_mail.engine.changes import Change
-from chrono_mail.engine.commands_pim import CollectionSummary
+from chrono_mail.engine.commands_pim import COLLECTION_LIST, CollectionSummary
+from chrono_mail.engine.commands_pim import ListParameters as CollectionListParameters
 from chrono_mail.core import ChronoMailError
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR, NEW_TAG
 from chrono_mail.engine.commands_accounts import NoParameters
@@ -56,12 +57,14 @@ from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import tag_icon
+from chrono_mail.ui.tagfilter import tags_shown
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.577"
+__version__ = "contactsview.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: The Tags list follows Settings > Sidebar's Tags tick of Contacts; hidden, it filters nothing; a contact's window asks for the address books and tags itself and names its own also when it is left out (D-331)
 # v4.4.577: A separator to drag between the address books and the Tags list, its place remembered for this section (D-330)
 # v4.4.572: A tag in the Tags list has Show everything tagged… in its right-click menu (D-328)
 # v4.4.572: open_contact: a contact opens in its editor from the Tag overview, as with a double click here (D-328)
@@ -292,7 +295,9 @@ class ContactsPage(PimListPage):
         self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self._tag_menu)
         tags_layout.addWidget(self.tag_list, 1)
+        self.tag_side = tags
         self.side_splitter = SideSplitter("contacts_side_splitter", settings, self.panel, tags, side)  # its own place (D-330)
+        tags.setVisible(tags_shown(settings, "contacts"))  # Settings > Sidebar's Tags tick (D-331)
         side_layout.addWidget(self.side_splitter, 1)
         self.side = side
 
@@ -471,6 +476,12 @@ class ContactsPage(PimListPage):
                 item.setText(text)
             item.setIcon(colour_icon(self.colours.colour(name).name() or COLLECTION_WITHOUT_COLOUR))
 
+    def show_tags(self, shown: bool) -> None:
+        """Settings > Sidebar's Tags tick (D-331): the Tags list shown or not; hidden, it filters nothing and every contact shows again."""
+        if not shown and self._tag():
+            self.tag_list.setCurrentRow(0)  # All contacts
+        self.tag_side.setVisible(shown)
+
     def _tag(self) -> str:
         item = self.tag_list.currentItem()
         return str(item.data(ROW_ROLE) or "") if item is not None else ""
@@ -577,9 +588,19 @@ class ContactsPage(PimListPage):
         """This contact in its editor (a double click here, or in the Tag overview, D-328)."""
 
         def opened(result: ContactInfo) -> None:
-            editor = ContactEditor(self._backend, self._books(), self._tag_names(), result, result.collection, self.content)
-            editor.saved.connect(self._after_save)
-            editor.exec()
+            def books_arrived(every: tuple[CollectionSummary, ...]) -> None:
+                left_out = self.panel.left_out()
+                books = [info for info in every if info.collection not in left_out or info.collection == result.collection]  # its own book also when left out (D-331)
+
+                def show(tag_names: list[str]) -> None:
+                    editor = ContactEditor(self._backend, books, tag_names, result, result.collection, self.content)
+                    editor.saved.connect(self._after_save)
+                    editor.exec()
+
+                self._backend.ask(TAG_LIST, NoParameters(), lambda tags: show([tag.name for tag in tags if tag.contacts > 0]), lambda error: show(self._tag_names()), owner=self)
+
+            # the address books and the tags asked here: Contacts may not have been opened yet in this run, its lists then still empty (D-331)
+            self._backend.ask(COLLECTION_LIST, CollectionListParameters("contacts"), books_arrived, self._failed, owner=self)
 
         self._backend.ask(CONTACT_SHOW, ContactItem(item), opened, self._failed, owner=self)
 

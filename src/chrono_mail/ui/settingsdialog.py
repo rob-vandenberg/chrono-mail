@@ -61,9 +61,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.575"
+__version__ = "settingsdialog.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: Settings > Sidebar's Contacts tab gets the address books and its Tags tick (D-331)
 # v4.4.575: The Calendar and Tasks tabs of Settings > Sidebar get their Tags tick as it is now (D-327)
 # v4.4.568: Settings > Sidebar gets every calendar and task list for its Calendar and Tasks tabs (D-326)
 # v4.4.562: Message list: Secondary sort, order by received, newest or oldest first (D-320)
@@ -345,7 +346,7 @@ class SettingsDialog(QDialog):
             str(self.startup_box.currentData() or ""), self, local_folders=list(known.local_folders), hidden_local=set(known.hidden_local),
         )
         self._add_page("Sidebar", self.sidebar_page)
-        for kind in ("events", "tasks"):  # the Calendar and Tasks tabs: every calendar and task list, from the engine (D-326)
+        for kind in ("events", "contacts", "tasks"):  # the Calendar, Contacts and Tasks tabs: every calendar, address book and task list, from the engine (D-326, D-331)
             self._backend.ask(COLLECTION_LIST, CollectionListParameters(kind), lambda result, chosen=kind: self._lists_arrived(chosen, result), lambda error: None, owner=self)
         self.startup_box.currentIndexChanged.connect(self._startup_changed)
         self._add_page("Message list", self._list_page())

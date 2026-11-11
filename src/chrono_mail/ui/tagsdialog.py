@@ -1,4 +1,4 @@
-"""Settings > Tags (Menu > Tags opens it): tabs Mails, Events, Contacts and Tasks; Add, Edit, Delete, Up and Down; a list
+"""Settings > Tags (Menu > Tags opens it): tabs Mail, Calendar, Contacts and Tasks (the sections, D-331); Add, Edit, Delete, Up and Down; a list
 with the coloured tag, the name and the shortcut. The editor has Name, Colour (Change…), Shortcut and Use for. Changes are
 made on a copy and sent as commands when the Settings window's OK is pressed; Cancel throws them away."""
 
@@ -43,9 +43,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 4.0.377"
+__version__ = "tagsdialog.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: The tabs Mail, Calendar, Contacts and Tasks as wide as their names from the left, as Settings > Sidebar (the owner, D-331)
 # v4.0.377: the tag editor is built from its Qt Designer form (ui/forms/tag_editor.ui, D-276); its sizes follow the size factor
 # v3.6.373: the Tags page is built from the form settings_tags.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
@@ -72,7 +73,7 @@ def _share(value: object) -> float:
     return min(max(share, 0.05), 0.95)
 
 
-TABS: tuple[tuple[str, str], ...] = (("mail", "Mails"), ("events", "Events"), ("contacts", "Contacts"), ("tasks", "Tasks"))
+TABS: tuple[tuple[str, str], ...] = (("mail", "Mail"), ("events", "Calendar"), ("contacts", "Contacts"), ("tasks", "Tasks"))  # the sections' names and order (D-331)
 KIND_BOXES: tuple[tuple[str, str], ...] = (("mail", "kindMail"), ("events", "kindEvents"), ("tasks", "kindTasks"), ("contacts", "kindContacts"))  # the editor's ticks
 
 
@@ -166,8 +167,8 @@ class TagsPanel(QWidget):
         self._first_order: list[str] = [row.name for row in self.rows]
         self.deleted: list[TagRow] = []
         form = forms.fill(self, "settings_tags", {"tabs": QTabBar})  # as the Accounts and Rules pages: the list at the left, its buttons at the right (D-276)
-        self.tabs = part(form, QTabBar, "tabs")  # above the list and exactly as wide as it
-        self.tabs.setExpanding(True)  # the four tabs share the width of the list
+        self.tabs = part(form, QTabBar, "tabs")  # above the list
+        self.tabs.setExpanding(False)  # each tab as wide as its name, from the left: as the tabs of Settings > Sidebar (D-331)
         for _, label in TABS:
             self.tabs.addTab(label)
         self.list = part(form, QTreeWidget, "list")

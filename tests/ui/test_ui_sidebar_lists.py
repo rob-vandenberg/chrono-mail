@@ -20,9 +20,10 @@ from tests.ui.test_ui_tasks import open_tasks
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sidebar_lists.py 4.4.570"
+__version__ = "test_ui_sidebar_lists.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: Settings > Sidebar has a Contacts tab between Calendar and Tasks (the owner, D-331)
 # v4.4.570: Unticking keeps the blue plus; it moves when its calendar is left out in Settings (the owner)
 # v4.4.569: A new appointment or task cannot be put in a read-only calendar or task list (D-326)
 # v4.4.568: Initial: Settings > Sidebar's Calendar and Tasks tabs, the blue plus and Use for new appointments or tasks (D-326)
@@ -77,7 +78,7 @@ def test_settings_sidebar_has_tabs_and_a_calendar_left_out_leaves_the_sidebar(wo
     world.call("event.add", calendar=work, summary="Planning", start="2026-10-14T09:00", end="2026-10-14T10:00", time_zone="UTC")
     wait(qtbot, lambda: any(entry.summary == "Planning" for entry in page.entries))
     seen = settings_ok(world, qtbot, monkeypatch, {"events": [work]})
-    assert seen == [["Mail", "Calendar", "Tasks"]]
+    assert seen == [["Mail", "Calendar", "Contacts", "Tasks"]]  # the sections' names and order (D-331)
     wait(qtbot, lambda: page.panel._entry(work) is None)  # noqa: SLF001 - out of the sidebar
     wait(qtbot, lambda: not any(entry.summary == "Planning" for entry in page.entries))  # its appointments are not shown
     assert [info.collection for info in page.panel.collections] == [own]  # never offered for new appointments

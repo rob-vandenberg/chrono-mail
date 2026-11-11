@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QAbstractListModel, QDate, QLocale, QModelIndex, QPersistentModelIndex, QSettings, Qt, QTime, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtGui import QCloseEvent, QFont, QMoveEvent, QResizeEvent
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QLabel, QLineEdit, QListView, QMainWindow, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -38,9 +38,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagoverview.py 4.4.572"
+__version__ = "tagoverview.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: The size and place are kept at every move or resize, so quitting with the window open keeps them (the owner, D-328)
 # v4.4.572: Initial Tag overview: everything with one tag in one list of four foldable groups, a reading pane, a search field; it follows every change (D-328)
 
 CONTACTS, EVENTS, TASKS, MAIL = "contacts", "events", "tasks", "mail"
@@ -301,6 +302,22 @@ class TagOverviewWindow(QMainWindow):
 
     def _search_changed(self, text: str) -> None:
         self._search_timer.start()
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._keep_geometry()
+
+    @override
+    def moveEvent(self, event: QMoveEvent) -> None:
+        super().moveEvent(event)
+        self._keep_geometry()
+
+    def _keep_geometry(self) -> None:
+        """Kept at once, never only at closing: Quit leaves an open overview without closing it (the owner). Not before it is on screen: the
+        sizes of its making are not the person's."""
+        if self.isVisible():
+            save_geometry(self, self._settings, "tag_overview_geometry")
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

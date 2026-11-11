@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.575"
+__version__ = "collectionpanel.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: Address books left out in Settings > Sidebar are not in the Contacts list; the one shown when it is left out gives way to the first (D-331)
 # v4.4.575: The Month tick is Fill colour for timed events, in the menu only while Month is shown (the owner, D-297)
 # v4.4.573: No Edit colours…: a calendar's menu has Show timed events in colour in Month, ticked or not, the account's choice (D-329, D-297)
 # v4.4.570: Unticking a calendar or task list never moves the blue plus; Use for new appointments is no longer greyed for an unticked one (the owner, D-326)
@@ -102,7 +103,7 @@ def settings_set(settings: QSettings, key: str) -> set[str]:
 
 
 def left_out_key(kind: str) -> str:
-    """The setting of the calendars ("events") or task lists ("tasks") left out of their sidebar in Settings > Sidebar (D-326)."""
+    """The setting of the calendars ("events"), address books ("contacts") or task lists ("tasks") left out of their sidebar in Settings > Sidebar (D-326)."""
     return f"left_out_{kind}"
 
 
@@ -397,7 +398,7 @@ class CollectionPanel(QWidget):
 
     def reload(self, then_choose: str = "") -> None:
         def listed(result: tuple[CollectionSummary, ...]) -> None:
-            left_out = self.left_out() if self._multiple else set()
+            left_out = self.left_out()  # left out in Settings > Sidebar (D-326, D-331)
             self.every = list(result)
             self.collections = [info for info in self.every if info.collection not in left_out]
             keep = then_choose or self.prefer or self.current_id()
@@ -432,6 +433,8 @@ class CollectionPanel(QWidget):
                 accounts[account].addChild(item)
                 if collection == keep or (chosen is None and not self._multiple and not keep):
                     chosen = item
+            if chosen is None and not self._multiple and keep in left_out:  # the address book shown was left out: the first one shown instead (D-331)
+                chosen = next(iter(collection_items(self.tree)), None)
             if chosen is not None:
                 self.tree.setCurrentItem(chosen)
             self._loading = False
@@ -530,7 +533,7 @@ class CollectionPanel(QWidget):
         if self._entry(info.collection) is not None:
             return
         self.every.append(info)
-        if self._multiple and info.collection in self.left_out():
+        if info.collection in self.left_out():
             return  # left out of the list in Settings > Sidebar (D-326)
         account = info.account
         node = next((self.tree.topLevelItem(top) for top in range(self.tree.topLevelItemCount()) if (found := self.tree.topLevelItem(top)) is not None and str(found.data(0, ROLE_ACCOUNT)) == account), None)

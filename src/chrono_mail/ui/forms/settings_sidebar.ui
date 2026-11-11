@@ -168,6 +168,80 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="contactsTab">
+      <attribute name="title">
+       <string>Contacts</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="contactsTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QScrollArea" name="contactsScroller">
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <widget class="QWidget" name="contactsInner">
+          <layout class="QVBoxLayout" name="contactsInnerLayout" stretch="0,0,1">
+           <item>
+            <widget class="QLabel" name="contactsHeading">
+             <property name="text">
+              <string>Address books shown in the sidebar:</string>
+             </property>
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QWidget" name="contactsTicks">
+             <layout class="QVBoxLayout" name="contactsTicksLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="contactsInnerEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </widget>
+       </item>
+      </layout>
+     </widget>
      <widget class="QWidget" name="tasksTab">
       <attribute name="title">
        <string>Tasks</string>

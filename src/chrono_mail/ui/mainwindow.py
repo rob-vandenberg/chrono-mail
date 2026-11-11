@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.577"
+__version__ = "mainwindow.py 4.4.578"
 
 # --- Version history ----------------------------------------------------
+# v4.4.578: Settings > Sidebar's Contacts tab: the address books left out and the Tags tick reach Contacts; the Contact icon of a sender in a left-out address book opens the contact in its own window (D-331)
 # v4.4.577: Quitting keeps the place of the separator above the Tags list of Calendar, Tasks and Contacts, each its own (D-330)
 # v4.4.575: Settings > Sidebar's Tags tick of Calendar and Tasks shows or hides that sidebar's Tags list (D-327)
 # v4.4.573: At start every appointment colour in use becomes a tag (D-329)
@@ -1199,7 +1200,7 @@ class MainWindow(QMainWindow):
         dialog.save()
         self.apply_preferences()
         self.folders.change_favorites(dialog.sidebar_page.commands())
-        for section, kind in ((CALENDAR, "events"), (TASKS, "tasks")):  # the Calendar and Tasks tabs of Settings > Sidebar (D-326)
+        for section, kind in ((CALENDAR, "events"), (CONTACTS, "contacts"), (TASKS, "tasks")):  # the Calendar, Contacts and Tasks tabs of Settings > Sidebar (D-326, D-331)
             left_out = dialog.sidebar_page.left_out(kind)
             page = self.pages.get(section)
             if left_out is not None and isinstance(page, PimPage):
@@ -1210,6 +1211,9 @@ class MainWindow(QMainWindow):
                 if not shown:
                     page.tag_filter.choose("")  # a hidden list filters nothing: everything shows again
                 page.tag_filter.setVisible(shown)
+            if shown is not None and isinstance(page, ContactsPage):  # Contacts' Tags tick (D-331)
+                self.settings.setValue(tags_shown_key(kind), "true" if shown else "false")
+                page.show_tags(shown)
 
     def _settings_context(self) -> SettingsContext:
         """What the Settings window shows besides the settings, in one piece."""
@@ -1727,6 +1731,9 @@ class MainWindow(QMainWindow):
             return
         found = self.list_model.index(row, 0).data(CONTACT_ROLE)
         if column_id == "contact" and isinstance(found, tuple) and len(found) == 2:
+            if str(found[1]) in self.contacts_page.panel.left_out():  # its address book is left out of the sidebar: the contact in its own window (the owner, D-331)
+                self.contacts_page.open_contact(str(found[0]))
+                return
             self.contacts_page.show_contact(str(found[0]), str(found[1]))
             self.switch_section(CONTACTS)
 

@@ -15,6 +15,7 @@ See also: [[mail-window]]
 - [[D-090]] Selection colour and headers
 - [[D-188]] Pane separators
 - [[D-330]] A separator above the Tags list, its place kept per section
+- [[D-331]] The same tabs on Settings > Sidebar and Settings > Tags
 - [[D-158]] The program's own colours
 - [[D-142]] Replaced by the colour decision
 - [[D-066]] HTML mail on a white page
