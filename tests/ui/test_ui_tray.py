@@ -6,6 +6,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon, QWidget
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.core import program_version
 from chrono_mail.ui import mainwindow
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.prefs import read_preferences
@@ -15,9 +16,10 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 4.2.449"
+__version__ = "test_ui_tray.py 4.4.565"
 
 # --- Version history ----------------------------------------------------
+# v4.4.565: the tray menu starts with "Chrono Mail <version>", greyed, then a line (D-323)
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.405: Wayland (simulated): a tray click brings back a window without the focus and hides one with it (or with a dialog that has
 #           it); a second start shows the window again, never under its dialog nor while it has the focus (D-286)
@@ -71,6 +73,14 @@ def test_the_tray_has_a_menu_and_reports_clicks(qtbot: QtBot, shown: list[tuple[
     tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
     tray._activated(QSystemTrayIcon.ActivationReason.Context)  # noqa: SLF001 - the menu, not a toggle
     assert clicks == ["toggle", "check", "settings", "quit", "toggle"]
+
+
+def test_the_tray_menu_starts_with_the_name_and_version_greyed(qtbot: QtBot, shown: list[tuple[str, str]]) -> None:
+    tray = TrayController()
+    assert tray._menu is not None  # noqa: SLF001
+    first, second, third = tray._menu.actions()[:3]  # noqa: SLF001
+    assert first.text() == f"Chrono Mail {program_version()}" and not first.isEnabled()
+    assert second.isSeparator() and third is tray.show_action
 
 
 def test_the_title_and_tooltip_show_the_unread_count(shown: list[tuple[str, str]], world: World, qtbot: QtBot) -> None:

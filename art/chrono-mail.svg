@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+  <title>chrono-mail.svg</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M52 0 L204 0 C232.718 0 256 23.282 256 52 L256 204 C256 232.718 232.718 256 204 256 L52 256 C23.282 256 0 232.718 0 204 L0 52 C0 23.282 23.282 0 52 0 Z" fill="#2b7bd6"/>
+    <path d="M36 82 C36 72.058 44.058 64 54 64 L198 64 C207.942 64 216 72.058 216 82 L216 174 C216 183.942 207.942 192 198 192 L54 192 C44.058 192 36 183.942 36 174 Z M203.773 75.3 L126 139.463 L48.227 75.3 C46.736 74.07 44.53 74.282 43.3 75.773 C42.07 77.264 42.282 79.47 43.773 80.7 L123.773 146.7 C125.066 147.767 126.934 147.767 128.227 146.7 L208.227 80.7 C209.718 79.47 209.93 77.264 208.7 75.773 C207.47 74.282 205.264 74.07 203.773 75.3 Z" fill="#ffffff"/>
+    <circle cx="186" cy="186" r="42" fill="#f28c28" stroke="#ffffff" stroke-width="12"/>
+    <polyline points="186,160 186,186 202,197" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -27,3 +27,4 @@ See also: [[mail-window]]
 - [[D-156]] One toolbar
 - [[D-159]] Smallest main window width
 - [[D-164]] Accent colour per theme
+- [[D-323]] The tray menu starts with the name and version
