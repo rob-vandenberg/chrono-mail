@@ -46,3 +46,4 @@ See also: [[sync-conflicts]]
 - [[D-317]] Cancel and Restore of a calendar event
 - [[D-318]] The right-click menus of a calendar event
 - [[D-322]] The calendar and the tasks follow the day
+- [[D-324]] An appointment's title is edited in place

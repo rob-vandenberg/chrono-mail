@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 4.2.473"
+__version__ = "theme.py 4.4.566"
 
 # --- Version history ----------------------------------------------------
+# v4.4.566: The title of an event edited in place has no border, background or padding: it stands where the title was drawn (D-324)
 # v4.2.473: Menus take the theme's menu colour instead of the window's
 # v4.2.472: The Menu and Send buttons under the pointer take the hover shade of the blue (worked out from the accent), not the link colour (D-164)
 # v3.6.373: form_role_look: the look of a part of a dialog form by its role (heading: bold), never written in the form itself (D-276)
@@ -80,6 +81,7 @@ QToolBar[folding="true"] QToolButton#viewButton:checked {{ background: transpare
 QToolBar[folding="true"] QToolButton#viewButton:checked:hover {{ background: {HOVER}; }}
 QFrame#searchPill {{ border: 1px solid palette(mid); background: palette(base); }}
 QFrame#searchPill QLineEdit {{ border: 0; background: transparent; padding: 5px 2px; }}
+QLineEdit#titleInPlace {{ border: 0; background: transparent; padding: 0px; margin: 0px; }}
 QFrame#searchPill QToolButton#searchScope {{ border: 0; background: transparent; padding: 2px 20px 2px 6px; }}
 QFrame#searchPill QToolButton#searchScope::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 5px; }}
 QFrame#searchPill QLabel {{ border: 0; background: transparent; }}

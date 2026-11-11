@@ -1,24 +1,26 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, tzinfo
 from typing import override
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QFontMetrics, QHelpEvent, QMouseEvent, QPainter, QPalette, QPen, QWheelEvent
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QToolTip, QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QFocusEvent, QFont, QFontMetrics, QGuiApplication, QHelpEvent, QKeyEvent, QMouseEvent, QPainter, QPalette, QPen, QWheelEvent
+from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QToolTip, QWidget
 
 from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
 from chrono_mail.ui.colours import theme
-from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, mark_icon, paint_mark
+from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, mark_icon, paint_mark
 from chrono_mail.ui.tagchips import TagColourBook
 
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.564"
+__version__ = "calendarwidgets.py 4.4.566"
 
 # --- Version history ----------------------------------------------------
+# v4.4.566: A click on the selected event, or F2, edits its title in place, where it is drawn; Enter or a click elsewhere saves, Escape does not (D-324)
 # v4.4.564: The agenda keeps its selected event and the line at its top when it is filled again for the new day (D-322)
 # v4.4.558: The agenda has the right-click menus of the other views
 # v4.4.550: Hovering a cancelled event says Cancelled and its calendar, in every view (D-316)
@@ -70,31 +72,56 @@ DOT_RADIUS: float = 3.5
 DOT_ROOM: int = 9
 
 
+def same_event(one: Entry | None, other: Entry | None) -> bool:
+    """The same occurrence of the same event, whatever changed in it (its title, D-324)."""
+    return one is not None and other is not None and (one.row.item, one.row.occurrence, one.start) == (other.row.item, other.row.occurrence, other.start)
+
+
+def first_line(rect: QRectF, font: QFont, mark: str, dot: bool) -> tuple[float, float, int, float]:
+    """Where paint_block puts the first line of a block: its top, the left of its sync mark, the mark's size, and the left of its text.
+    The title edited in place lies exactly there (D-324)."""
+    metrics = QFontMetrics(bold_of(font))
+    y = rect.top() + (2 if rect.height() >= 2 * metrics.height() else max(0.0, (rect.height() - metrics.height()) / 2))  # a short block: the title in the middle
+    size = min(MARK_SIZE, metrics.height())
+    lead = DOT_ROOM if dot else 0  # the dot comes first, then the mark and the text, as in a timed event without a background
+    mark_left = rect.left() + (lead + 5 if dot else 4)  # with the dot the mark and the text start where they do on a line without a background
+    text_left = mark_left + size + MARK_GAP if mark else rect.left() + lead + 5  # after a mark the same small gap as after the dot (the owner)
+    return y, mark_left, size, text_left
+
+
+def block_colours(entry: Entry, faded: bool = False) -> tuple[QColor, QColor]:
+    """A block's colour (lighter for a free event) and its text's: white or black, whichever reads better on it; the dot follows the text (D-297)."""
+    colour = fill_colour(entry)
+    if faded:
+        colour = QColor(colour)
+        colour.setAlpha(150)
+    return colour, TagColourBook.text_colour(colour)
+
+
+def bold_of(font: QFont) -> QFont:
+    bold = QFont(font)
+    bold.setBold(True)
+    return bold
+
+
 def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, font: QFont, lines: list[str], faded: bool = False, mark: str = "",
                 dot: bool = False) -> QRectF | None:
     """An event as a rounded block in the colour of its calendar, with its text; selected ones get an outline; a dot in the text's colour first
     when asked (a timed event in Month, D-297), then its sync mark (D-194) before the first line. Returns where the mark was drawn (None
     without one), so a click or a hover there can be told apart."""
-    colour = fill_colour(entry)
-    if faded:
-        colour = QColor(colour)
-        colour.setAlpha(150)
+    colour, text_colour = block_colours(entry, faded)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(QPen(QColor(theme().swatch_selected), 1.6) if selected else Qt.PenStyle.NoPen)
     painter.setBrush(colour)
     painter.drawRoundedRect(rect, 4, 4)
-    text_colour = TagColourBook.text_colour(colour)  # white or black, whichever reads better on the colour; the dot follows it (D-297)
     painter.setPen(text_colour)
     painter.setClipRect(rect.adjusted(3, 0, -2, 0))
-    bold = QFont(font)
-    bold.setBold(True)
+    bold = bold_of(font)
     painter.setFont(bold)
     metrics = QFontMetrics(bold)
-    y = rect.top() + (2 if rect.height() >= 2 * metrics.height() else max(0.0, (rect.height() - metrics.height()) / 2))  # a short block: the title in the middle
-    size = min(MARK_SIZE, metrics.height())
-    lead = DOT_ROOM if dot else 0  # the dot comes first, then the mark and the text, as in a timed event without a background
-    mark_left = rect.left() + (lead + 5 if dot else 4)  # with the dot the mark and the text start where they do on a line without a background
+    y, mark_left, size, first_left = first_line(rect, font, mark, dot)
+    lead = DOT_ROOM if dot else 0
     mark_area = QRectF(mark_left, int(y + metrics.height() / 2) - size // 2, size, size) if mark else None
     for index, line in enumerate(lines):
         painter.setFont(bold if index == 0 else font)
@@ -103,8 +130,9 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
             painter.setBrush(text_colour)
             painter.drawEllipse(QPointF(rect.left() + DOT_CENTRE, y + metrics.height() / 2), DOT_RADIUS, DOT_RADIUS)
             painter.setPen(text_colour)
-        mark_room = paint_mark(painter, int(mark_left), int(y + metrics.height() / 2), mark, size) if index == 0 else 0
-        text_left = mark_left + mark_room if mark_room else rect.left() + lead + 5  # after a mark the same small gap as after the dot (the owner)
+        if index == 0:
+            paint_mark(painter, int(mark_left), int(y + metrics.height() / 2), mark, size)
+        text_left = first_left if index == 0 else rect.left() + lead + 5
         painter.drawText(QRectF(text_left, y, rect.right() - 3 - text_left, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
                          QFontMetrics(font).elidedText(line, Qt.TextElideMode.ElideRight, int(rect.right() - 3 - text_left)))
         y += metrics.height()
@@ -112,6 +140,56 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
             break
     painter.restore()
     return mark_area
+
+
+@dataclass(frozen=True, slots=True)
+class TitlePlace:
+    """Where an event's title was drawn, and how: the title edited in place takes exactly this (D-324)."""
+
+    area: QRectF  # the title's text, without a time before it
+    entry: Entry
+    font: QFont
+    colour: QColor  # the text's colour
+    background: QColor  # what lies under the text
+
+
+class TitleEditor(QLineEdit):
+    """An event's title edited in place: no frame and no background of its own, over the drawn title (D-324). Enter or a click elsewhere
+    ends it with the text, Escape with None. A menu of its own or another window coming to the front leaves it open."""
+
+    finished = Signal(object)  # the text, or None: cancelled
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("titleInPlace")  # the look of theme.py: no border, no background, no padding
+        self.setFrame(False)
+        self.setTextMargins(0, 0, 0, 0)
+        self._open: bool = True
+        self.returnPressed.connect(lambda: self._end(self.text()))
+
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._end(None)
+            return
+        if event.key() == Qt.Key.Key_F2:  # already editing: F2 must not reach the view, which would start again from the old title
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    @override
+    def focusOutEvent(self, event: QFocusEvent) -> None:
+        super().focusOutEvent(event)
+        if event.reason() not in (Qt.FocusReason.PopupFocusReason, Qt.FocusReason.ActiveWindowFocusReason):
+            self._end(self.text())
+
+    def end_with_text(self) -> None:
+        self._end(self.text())
+
+    def _end(self, text: str | None) -> None:
+        if self._open:
+            self._open = False
+            self.finished.emit(text)
 
 
 class EntryHits(QWidget):
@@ -124,16 +202,133 @@ class EntryHits(QWidget):
     nothing_clicked = Signal()
     context_requested = Signal(object, object, QPoint)  # the Entry or None, the (day, minute) or None, where
     period_step = Signal(int)  # the wheel: one day, week or month back (-1) or forward (1)
+    title_edit_wanted = Signal(object)  # a click on the selected event, or F2: the page says whether its title may be edited in place (D-324)
+    title_edited = Signal(object, str)  # the event and the new title typed in place (D-324)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._wheel: int = 0  # what the wheel moved that is not a whole notch yet (a touchpad moves in small amounts)
         self.hits: list[tuple[QRectF, Entry]] = []
+        self.titles: list[TitlePlace] = []  # where the titles were drawn (D-324)
         self.selected: Entry | None = None
         self.mark_of: Callable[[str], str] = no_mark  # an event's sync mark: a conflict, waiting for the server, or none (D-194)
         self.mark_hits: list[tuple[QRectF, Entry]] = []  # where the marks were drawn: a click on a triangle opens its conflict, a hover explains
+        self.title_editor: TitleEditor | None = None
+        self._editing: Entry | None = None
+        self._title_click = QTimer(self)  # a click on the selected event edits its title once no second click made it a double click
+        self._title_click.setSingleShot(True)
+        self._title_click.timeout.connect(self._title_click_ended)
+        self._clicked_again: Entry | None = None
+        self._ended_by_click: bool = False  # the press being handled just ended a title edit (its focus left first)
         self.setMouseTracking(False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # a click on an event gives the view the keyboard, so Delete acts on the event (D-217, RV-22)
+
+    def note_title(self, rect: QRectF, entry: Entry, font: QFont, mark: str, dot: bool, colour: QColor, background: QColor, prefix: str = "") -> None:
+        """Where an event's title was drawn by paint_block (or a line like it): prefix is a time drawn before the title on the same line."""
+        y, _mark_left, _size, text_left = first_line(rect, font, mark, dot)
+        title_font = bold_of(font)
+        text_left += QFontMetrics(title_font).horizontalAdvance(prefix)
+        self.titles.append(TitlePlace(QRectF(text_left, y, max(1.0, rect.right() - 3 - text_left), QFontMetrics(title_font).height()), entry, title_font, colour,
+                                      background))
+
+    def edit_title(self, entry: Entry) -> bool:
+        """The title of this event edited in place, where it was drawn; False when it is not drawn here."""
+        place = next((place for place in self.titles if same_event(place.entry, entry)), None)
+        if place is None:
+            return False
+        self.close_title()
+        editor = TitleEditor(self)
+        editor.setText(entry.row.summary)
+        editor.selectAll()
+        editor.finished.connect(self._title_finished)
+        self.title_editor = editor
+        self._editing = entry
+        self._place_title(place)
+        editor.show()
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
+        return True
+
+    def close_title(self) -> None:
+        """An open title edit goes without a change."""
+        editor = self.title_editor
+        if editor is not None:
+            self.title_editor = None
+            self._editing = None
+            editor.blockSignals(True)
+            editor.hide()
+            editor.deleteLater()
+
+    def _place_title(self, place: TitlePlace) -> None:
+        """The edit where the title is drawn now, in its font and colours now (a Month line turns blue when it is selected)."""
+        editor = self.title_editor
+        if editor is None:
+            return
+        editor.setGeometry(QRect(int(place.area.left()) - 2, int(place.area.top()), int(place.area.width()) + 2, int(place.area.height())))  # Qt's line edit
+        if editor.font() != place.font:  # keeps 2 pixels before its text: the text stands exactly on the drawn title
+            editor.setFont(place.font)
+        palette = editor.palette()
+        palette.setColor(QPalette.ColorRole.Text, place.colour)
+        palette.setColor(QPalette.ColorRole.Highlight, place.colour)  # the selected text the other way round: it reads on any block
+        palette.setColor(QPalette.ColorRole.HighlightedText, place.background)
+        if palette != editor.palette():
+            editor.setPalette(palette)
+
+    def follow_title(self) -> None:
+        """After a paint: the open title edit stays on its event, wherever it is drawn now; it goes when its event is no longer drawn."""
+        if self.title_editor is None or self._editing is None:
+            return
+        place = next((place for place in self.titles if same_event(place.entry, self._editing)), None)
+        if place is None:
+            QTimer.singleShot(0, self, self._title_left)  # not during the paint itself
+            return
+        self._place_title(place)
+
+    def _title_left(self) -> None:
+        """The event is no longer drawn here (another week, another view): leaving it saves what was typed, as a click elsewhere does."""
+        editor, entry = self.title_editor, self._editing
+        if editor is not None and entry is not None and not any(same_event(place.entry, entry) for place in self.titles):
+            editor.end_with_text()
+
+    def editing_item(self) -> str:
+        """The event whose title is being edited here, or ""."""
+        return self._editing.row.item if self.title_editor is not None and self._editing is not None else ""
+
+    def _title_finished(self, text: object) -> None:
+        entry, editor = self._editing, self.title_editor
+        self.title_editor = None
+        self._editing = None
+        if editor is not None:
+            keep_keyboard = editor.hasFocus()  # Enter or Escape: the keyboard comes back to the view; a click elsewhere keeps it there
+            editor.hide()
+            editor.deleteLater()
+            if keep_keyboard:
+                self.setFocus(Qt.FocusReason.OtherFocusReason)
+            else:  # a click elsewhere ended it, also a click on its own block: that press must not open the edit again
+                self._ended_by_click = True
+                QTimer.singleShot(0, self, self._click_handled)
+        title = text.strip() if isinstance(text, str) else ""
+        if entry is not None and title and title != entry.row.summary:  # an empty or unchanged title saves nothing
+            self.title_edited.emit(entry, title)
+
+    def _click_handled(self) -> None:
+        self._ended_by_click = False
+
+    def title_shown(self, entry: Entry) -> str:
+        """The title to draw: none for the event whose title is being edited, the edit stands there (D-324)."""
+        return "" if self.title_editor is not None and same_event(entry, self._editing) else entry.summary
+
+    def _title_click_ended(self) -> None:
+        entry, self._clicked_again = self._clicked_again, None
+        if entry is not None and same_event(entry, self.selected):
+            self.title_edit_wanted.emit(self.selected)
+
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_F2 and event.modifiers() == Qt.KeyboardModifier.NoModifier and self.selected is not None:
+            self.title_edit_wanted.emit(self.selected)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def step_by_wheel(self, event: QWheelEvent) -> None:
         """One period per notch: up is back in time, down is forward. Small movements are added up until they make a notch."""
@@ -189,7 +384,12 @@ class EntryHits(QWidget):
             self.conflict_clicked.emit(item_of(marked))
             return
         entry = self.entry_at(event.position())
+        again = event.button() == Qt.MouseButton.LeftButton and same_event(entry, self.selected) and not self._ended_by_click
         self.select(entry)
+        self._title_click.stop()
+        self._clicked_again = entry if again else None
+        if again:
+            self._title_click.start(QGuiApplication.styleHints().mouseDoubleClickInterval())
         if entry is not None:
             self.entry_clicked.emit(entry)
         else:
@@ -198,6 +398,8 @@ class EntryHits(QWidget):
 
     @override
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self._title_click.stop()  # a double click opens the event, its title is not edited
+        self._clicked_again = None
         entry = self.entry_at(event.position())
         if entry is not None:
             self.entry_activated.emit(entry)
@@ -318,6 +520,7 @@ class GridCanvas(EntryHits):
         painter.setFont(font)
         self.hits = []
         self.mark_hits = []
+        self.titles = []
         for index, day in enumerate(self.days):
             for segment in self.segments.get(day, []):
                 column_width = (width - 3) / segment.columns
@@ -326,14 +529,18 @@ class GridCanvas(EntryHits):
                 height = max(14.0, (segment.end - segment.start) / 60 * self.hour_height - 1)
                 rect = QRectF(left, top, column_width - 1, height)
                 entry = segment.entry
-                lines = [entry.summary]
+                lines = [self.title_shown(entry)]
                 if height > 30:
                     lines.append(layout.time_text(entry))
                 if height > 46 and entry.row.location:
                     lines.append(one_line(entry.row.location))
+                mark = self.mark_of(item_of(entry))
                 self.note_mark(paint_block(painter, rect, entry, self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start, font, lines,
-                                           faded=not entry.row.busy, mark=self.mark_of(item_of(entry))), entry)
+                                           faded=not entry.row.busy, mark=mark), entry)
+                fill, text_colour = block_colours(entry, not entry.row.busy)
+                self.note_title(rect, entry, font, mark, False, text_colour, fill)
                 self.hits.append((rect, entry))
+        self.follow_title()
         if self.now is not None and self.today in self.days:
             index = self.days.index(self.today)
             y = (self.now.hour * 60 + self.now.minute) / 60 * self.hour_height
@@ -420,12 +627,17 @@ class DayHeader(EntryHits):
         painter.drawText(QRect(0, DAY_ROW + 2, GUTTER - 6, BAR_HEIGHT), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "All day")
         self.hits = []
         self.mark_hits = []
+        self.titles = []
         for bar in self.bars:
             left = GUTTER + bar.first * width + 1
             rect = QRectF(left, DAY_ROW + 4 + bar.row * (BAR_HEIGHT + BAR_GAP), (bar.last - bar.first + 1) * width - 3, BAR_HEIGHT)
+            mark = self.mark_of(item_of(bar.entry))
             self.note_mark(paint_block(painter, rect, bar.entry, self.selected is not None and bar.entry.row == self.selected.row and bar.entry.start == self.selected.start, font,
-                                       [bar.entry.summary], mark=self.mark_of(item_of(bar.entry))), bar.entry)
+                                       [self.title_shown(bar.entry)], mark=mark), bar.entry)
+            fill, text_colour = block_colours(bar.entry)
+            self.note_title(rect, bar.entry, font, mark, False, text_colour, fill)
             self.hits.append((rect, bar.entry))
+        self.follow_title()
         painter.end()
 
 
@@ -498,8 +710,10 @@ class MonthView(EntryHits):
                 painter.drawText(QRectF(column * width, 2, width, 18), Qt.AlignmentFlag.AlignCenter, self.days[column].strftime("%A"))
         self.hits = []
         self.mark_hits = []
+        self.titles = []
         self.more = []
         if len(self.days) < 42:
+            self.follow_title()
             painter.end()
             return
         line_height = QFontMetrics(small).height() + 2
@@ -537,8 +751,11 @@ class MonthView(EntryHits):
                 if bar.row >= room:
                     continue
                 rect = QRectF(bar.first * width + 2, top + 22 + bar.row * line_height, (bar.last - bar.first + 1) * width - 4, line_height - 2)
+                mark = self.mark_of(item_of(bar.entry))
                 self.note_mark(paint_block(painter, rect, bar.entry, self.selected is not None and bar.entry.row == self.selected.row and bar.entry.start == self.selected.start, small,
-                                           [bar.entry.summary], mark=self.mark_of(item_of(bar.entry))), bar.entry)
+                                           [self.title_shown(bar.entry)], mark=mark), bar.entry)
+                fill, text_colour = block_colours(bar.entry)
+                self.note_title(rect, bar.entry, small, mark, False, text_colour, fill)
                 self.hits.append((rect, bar.entry))
             single_ids = {id(bar.entry) for bar in week_bars}
             for column, day in enumerate(week_days):
@@ -548,11 +765,14 @@ class MonthView(EntryHits):
                 free_rows = max(0, room - bar_rows)
                 for position, entry in enumerate(timed[:free_rows]):
                     y = top + 22 + (bar_rows + position) * line_height
+                    prefix = f"{entry.start.strftime('%H:%M')} "
                     if entry.filled:  # in its colour as an all-day event, its dot in the text's colour (D-297)
                         rect = QRectF(left + 2, y, width - 4, line_height - 2)
                         selected = self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start
-                        self.note_mark(paint_block(painter, rect, entry, selected, small, [f"{entry.start.strftime('%H:%M')} {entry.summary}"],
-                                                   mark=self.mark_of(item_of(entry)), dot=True), entry)
+                        mark = self.mark_of(item_of(entry))
+                        self.note_mark(paint_block(painter, rect, entry, selected, small, [prefix + self.title_shown(entry)], mark=mark, dot=True), entry)
+                        fill, text_colour = block_colours(entry)
+                        self.note_title(rect, entry, small, mark, True, text_colour, fill, prefix)
                         self.hits.append((rect, entry))
                         continue
                     rect = QRectF(left + 3, y, width - 6, line_height - 1)
@@ -564,14 +784,19 @@ class MonthView(EntryHits):
                     if selected:
                         painter.setBrush(QColor(palette.color(QPalette.ColorRole.Highlight)))
                         painter.drawRoundedRect(rect, 3, 3)
-                    painter.setPen(palette.color(QPalette.ColorRole.HighlightedText) if selected else text)
+                    line_colour = palette.color(QPalette.ColorRole.HighlightedText) if selected else text
+                    painter.setPen(line_colour)
                     mark_size = min(MARK_SIZE, line_height - 3)
                     mark_state = self.mark_of(item_of(entry))
                     mark_room = paint_mark(painter, int(left + 16), int(y + line_height / 2 - 1), mark_state, mark_size)  # where the text would start
                     if mark_state:
                         self.mark_hits.append((QRectF(int(left + 16), int(y + line_height / 2 - 1) - mark_size // 2, mark_size, mark_size), entry))
                     painter.drawText(QRectF(left + 16 + mark_room, y, width - 20 - mark_room, line_height - 1), Qt.AlignmentFlag.AlignVCenter,
-                                     QFontMetrics(small).elidedText(f"{entry.start.strftime('%H:%M')} {entry.summary}", Qt.TextElideMode.ElideRight, int(width - 22 - mark_room)))
+                                     QFontMetrics(small).elidedText(prefix + self.title_shown(entry), Qt.TextElideMode.ElideRight, int(width - 22 - mark_room)))
+                    title_left = left + 16 + mark_room + QFontMetrics(small).horizontalAdvance(prefix)  # the title of this line, after its time (D-324)
+                    title_height = QFontMetrics(small).height()
+                    self.titles.append(TitlePlace(QRectF(title_left, y + (line_height - 1 - title_height) / 2, max(1.0, left + width - 4 - title_left), title_height), entry,
+                                                  QFont(small), line_colour, palette.color(QPalette.ColorRole.Highlight) if selected else base))
                     self.hits.append((rect, entry))
                 hidden = len(timed) - free_rows if len(timed) > free_rows else 0
                 if hidden > 0 or bar_rows > room:
@@ -582,6 +807,7 @@ class MonthView(EntryHits):
                         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, f"+{extra} more")
                         self.more.append((rect, day))
             del used
+        self.follow_title()
         painter.end()
 
 

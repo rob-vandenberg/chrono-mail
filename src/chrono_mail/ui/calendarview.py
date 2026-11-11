@@ -27,8 +27,9 @@ from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
-from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
+from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_EDIT, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
+from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_calendar import ListParameters as EventListParameters
@@ -50,9 +51,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.564"
+__version__ = "calendarview.py 4.4.566"
 
 # --- Version history ----------------------------------------------------
+# v4.4.566: The title of an event edited in place goes to the server with event.edit: this date only, no mail from Chrono Mail (D-324)
 # v4.4.564: After midnight the calendar looks as after a restart: today is the new day in every view, and a calendar that showed today shows the new today (D-322)
 # v4.4.558: The two final event menus in every view: invited and self-created, greyed by the date right-clicked; New only on an empty space, Edit off the menu; every action asks this occurrence or all occurrences after the click
 # v4.4.557: Cancel and Restore on the right-click menu, with the mail question on your own meeting; a Cancelled event does not open and its Edit is greyed until Restore (D-310)
@@ -309,6 +311,8 @@ class CalendarPage(PimPage):
             widget.nothing_clicked.connect(self._nothing_clicked)
             widget.context_requested.connect(self._context)
             widget.period_step.connect(self.step)
+            widget.title_edit_wanted.connect(self._title_edit_wanted)
+            widget.title_edited.connect(self._title_edited)
         self.panel.infos_changed.connect(self._recolour)
         self.month.day_activated.connect(self._day_activated)
         self.agenda.entry_clicked.connect(self._entry_clicked)
@@ -586,6 +590,28 @@ class CalendarPage(PimPage):
 
         self._backend.ask(EVENT_SHOW, EventItem(row.item), opened, self._failed, owner=self)
 
+    def _title_edit_wanted(self, entry: object) -> None:
+        """A click on the selected event, or F2: its title edited in place where it is drawn (D-324). Not in a read-only calendar, nor a
+        Cancelled or declined event: Edit does not change those either."""
+        if not isinstance(entry, Entry):
+            return
+        row = entry.row
+        if row.read_only or row.cancelled or row.hidden:
+            return
+        for widget in (self.grid.header, self.grid.canvas) if self.view != layout.MONTH else (self.month,):
+            if widget.edit_title(entry):
+                if widget is self.grid.canvas and widget.title_editor is not None:
+                    self.grid.area.ensureWidgetVisible(widget.title_editor)  # F2 on an event scrolled out of sight
+                return
+
+    def _title_edited(self, entry: object, title: str) -> None:
+        """The new title, on the server first (D-193): this date only for a repeating event, and Chrono Mail mails no one (D-324). The blocks
+        follow the fact; a refusal says so and the title stays."""
+        if not isinstance(entry, Entry):
+            return
+        row = entry.row
+        self._backend.ask(EVENT_EDIT, EventEdit(item=row.item, occurrence=row.occurrence, summary=title), lambda result: None, self._failed, owner=self)
+
     @override
     def delete_selected(self) -> None:
         if self.selected is not None:
@@ -701,10 +727,12 @@ class CalendarPage(PimPage):
         kind, item = str(change.kind), change.message_id
         wanted = change.new_message_id if kind == "item_moved" else item
         target = change.to_folder if kind == "item_moved" else change.folder
-        before = len(self.entries)
-        self.entries = [entry for entry in self.entries if entry.row.item not in (item, wanted)]
-        if len(self.entries) != before:
-            self._show_data()
+        edited = kind not in ("item_removed", "item_moved") and item in {widget.editing_item() for widget in (self.grid.header, self.grid.canvas, self.month)}
+        if not edited:  # its title being edited in place: its blocks stay until its new version comes, so the edit stays open on it (D-324)
+            before = len(self.entries)
+            self.entries = [entry for entry in self.entries if entry.row.item not in (item, wanted)]
+            if len(self.entries) != before:
+                self._show_data()
         if kind == "item_removed" or target not in set(self.panel.visible_ids()):
             return
         first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
