@@ -1,14 +1,15 @@
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
 from chrono_mail.ui.collectionpanel import colour_icon
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.571"
+__version__ = "tagfilter.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: A tag's right-click menu has Show everything tagged…: the Tag overview (D-328)
 # v4.4.571: Initial tag filter of a section's sidebar: "All …" and the tags in use with their counts, followed in place (D-327)
 
 TAG_ROLE: int = Qt.ItemDataRole.UserRole + 1
@@ -20,7 +21,7 @@ class TagFilter(QWidget):
     The list follows the tags in place, so the tag chosen stays chosen; when the chosen tag goes, the first row is chosen."""
 
     chosen = Signal(str)  # the tag now chosen ('' for everything)
-    menu_wanted = Signal(str, QPoint)  # a right-click on a tag: its name and where (global)
+    overview_wanted = Signal(str)  # Show everything tagged… on a tag: its name (D-328)
 
     def __init__(self, everything: str, colours: TagColourBook, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -99,4 +100,6 @@ class TagFilter(QWidget):
         item = self.list.itemAt(position)
         name = str(item.data(TAG_ROLE) or "") if item is not None else ""
         if name:
-            self.menu_wanted.emit(name, self.list.viewport().mapToGlobal(position))
+            menu = QMenu(self)
+            menu.addAction("Show everything tagged…", lambda: self.overview_wanted.emit(name))
+            menu.exec(self.list.viewport().mapToGlobal(position))

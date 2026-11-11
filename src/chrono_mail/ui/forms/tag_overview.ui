@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TagOverview</class>
+ <widget class="QWidget" name="TagOverview">
+  <property name="windowTitle">
+   <string>Tag overview</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout" stretch="0,0,1">
+   <item>
+    <widget class="QLineEdit" name="search">
+     <property name="placeholderText">
+      <string>Search within this tag</string>
+     </property>
+     <property name="clearButtonEnabled">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="note">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="panes" />
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

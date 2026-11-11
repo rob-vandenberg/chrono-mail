@@ -2,6 +2,7 @@
 Read before work on tags.
 See also: [[mail-window]]
 
+- [[D-328]] Everything of one tag in one overview
 - [[D-327]] A tag filter in every section
 - [[D-201]] Unsupported data stays local
 - [[D-176]] At most two files per message

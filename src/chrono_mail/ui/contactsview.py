@@ -59,9 +59,11 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 2.4.334"
+__version__ = "contactsview.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: A tag in the Tags list has Show everything tagged… in its right-click menu (D-328)
+# v4.4.572: open_contact: a contact opens in its editor from the Tag overview, as with a double click here (D-328)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v1.10.277: Contact groups (R-39): the groups under each address book, a group's members as the list, New group…, Rename…, Delete… and Write an
 #            e-mail in a group's menu, Add to group (ticks) and Remove from group, contacts dragged onto a group; every change in place (D-146)
@@ -259,6 +261,7 @@ class ContactsPage(PimListPage):
     item_word = "contact"
 
     compose_requested = Signal(str)
+    tag_overview_wanted = Signal(str)  # Show everything tagged… on a tag: its name (D-328)
 
     def __init__(self, backend: Backend, settings: QSettings, parent: QWidget | None = None) -> None:
         super().__init__(backend, settings, parent)
@@ -282,6 +285,8 @@ class ContactsPage(PimListPage):
         side_layout.addWidget(self.tag_title)
         self.tag_list = QListWidget(side)
         self.tag_list.setFrameShape(QListWidget.Shape.NoFrame)
+        self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tag_list.customContextMenuRequested.connect(self._tag_menu)
         side_layout.addWidget(self.tag_list, 2)
         self.side = side
 
@@ -383,6 +388,14 @@ class ContactsPage(PimListPage):
 
     def _tag_chosen(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
         self.reload_list()
+
+    def _tag_menu(self, position: QPoint) -> None:
+        item = self.tag_list.itemAt(position)
+        name = str(item.data(ROW_ROLE) or "") if item is not None else ""
+        if name:
+            menu = QMenu(self.tag_list)
+            menu.addAction("Show everything tagged…", lambda: self.tag_overview_wanted.emit(name))
+            menu.exec(self.tag_list.viewport().mapToGlobal(position))
 
     # --- showing ------------------------------------------------------------------------------
 
@@ -551,15 +564,18 @@ class ContactsPage(PimListPage):
     @override
     def edit_selected(self) -> None:
         items = self._selected_items()
-        if len(items) != 1:
-            return
+        if len(items) == 1:
+            self.open_contact(items[0])
+
+    def open_contact(self, item: str) -> None:
+        """This contact in its editor (a double click here, or in the Tag overview, D-328)."""
 
         def opened(result: ContactInfo) -> None:
             editor = ContactEditor(self._backend, self._books(), self._tag_names(), result, result.collection, self.content)
             editor.saved.connect(self._after_save)
             editor.exec()
 
-        self._backend.ask(CONTACT_SHOW, ContactItem(items[0]), opened, self._failed, owner=self)
+        self._backend.ask(CONTACT_SHOW, ContactItem(item), opened, self._failed, owner=self)
 
     def _after_save(self, item: str) -> None:
         """A contact was saved: its row followed the fact; it is selected; the tags list shows the new numbers."""

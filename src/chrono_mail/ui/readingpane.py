@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.558"
+__version__ = "readingpane.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: wire_reader: a reader outside the reading pane gets the calendar card's actions; the message window and the Tag overview use it (D-328)
 # v4.4.558: Decline from the calendar goes as on a card, with no choice of calendar
 # v4.4.556: An answer from the calendar refreshes every open card of that item (D-310)
 # v4.4.555: Cancel in calendar sets Cancelled; the organizer's address is stored at Send and Don't send, and the window closes with it (D-310)
@@ -360,6 +361,51 @@ class ReadingPane(QObject):
         if chosen is not None:
             self.open_window_of(*chosen[:3])
 
+    def wire_reader(self, reader: ReaderWidget, account: str, folder: str, message_id: str) -> None:
+        """A reader outside the reading pane (a message window, the Tag overview, D-328): its calendar card answers, applies and loads more
+        blocks as the reading pane's does."""
+        found: ReaderWidget = reader
+        place = CalendarSource(account, folder, message_id)
+        found.card.blocks_wanted.connect(partial(self._more_blocks, found.card, found, place))
+
+        def on_block() -> CalendarSource:
+            return changed(place, item=found.pressed_item)
+
+        def answer_in_window(answer: str) -> None:
+            self.answer_invitation(found, on_block(), answer)
+
+        reader.invitation_answer_requested.connect(answer_in_window)
+
+        def apply_in_window() -> None:
+            self.apply_invitation(found, on_block())
+
+        reader.invitation_apply_requested.connect(apply_in_window)
+
+        def delegate_in_window() -> None:
+            self.delegate_invitation(found, on_block())
+
+        reader.invitation_delegate_requested.connect(delegate_in_window)
+
+        def change_in_window() -> None:
+            self.change_answer(found, on_block())
+
+        reader.invitation_change_requested.connect(change_in_window)
+
+        def organize_in_window(action: str) -> None:
+            self.organize_invitation(found, on_block(), action)
+
+        reader.invitation_organize_requested.connect(organize_in_window)
+
+        def busy_in_window() -> None:
+            self.busy_invitation(found, on_block())
+
+        reader.invitation_busy_requested.connect(busy_in_window)
+
+        def add_all_in_window() -> None:
+            self.add_all_invitation(found, place)
+
+        reader.invitation_add_all_requested.connect(add_all_in_window)
+
     def open_window_of(self, account: str, folder: str, message_id: str) -> None:
         """This message read in a window of its own (also when the selection moved meanwhile)."""
 
@@ -367,47 +413,7 @@ class ReadingPane(QObject):
             window = MessageWindow(self._backend, account, folder, message_id, result, self._composing.compose_in_window, self.open_link, self.prepare_message_reader, self._prefs.settings)
             reader = window.findChild(ReaderWidget)
             if reader is not None:
-                found: ReaderWidget = reader
-                place = CalendarSource(account, folder, message_id)
-                found.card.blocks_wanted.connect(partial(self._more_blocks, found.card, found, place))
-
-                def on_block() -> CalendarSource:
-                    return changed(place, item=found.pressed_item)
-
-                def answer_in_window(answer: str) -> None:
-                    self.answer_invitation(found, on_block(), answer)
-
-                reader.invitation_answer_requested.connect(answer_in_window)
-
-                def apply_in_window() -> None:
-                    self.apply_invitation(found, on_block())
-
-                reader.invitation_apply_requested.connect(apply_in_window)
-
-                def delegate_in_window() -> None:
-                    self.delegate_invitation(found, on_block())
-
-                reader.invitation_delegate_requested.connect(delegate_in_window)
-
-                def change_in_window() -> None:
-                    self.change_answer(found, on_block())
-
-                reader.invitation_change_requested.connect(change_in_window)
-
-                def organize_in_window(action: str) -> None:
-                    self.organize_invitation(found, on_block(), action)
-
-                reader.invitation_organize_requested.connect(organize_in_window)
-
-                def busy_in_window() -> None:
-                    self.busy_invitation(found, on_block())
-
-                reader.invitation_busy_requested.connect(busy_in_window)
-
-                def add_all_in_window() -> None:
-                    self.add_all_invitation(found, place)
-
-                reader.invitation_add_all_requested.connect(add_all_in_window)
+                self.wire_reader(reader, account, folder, message_id)
 
             def calendar_in_window(position: int, name: str) -> None:
                 self.open_calendar_card(CalendarSource(account, folder, message_id, part=position), name, where=window)

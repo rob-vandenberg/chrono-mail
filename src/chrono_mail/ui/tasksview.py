@@ -61,9 +61,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.571"
+__version__ = "tasksview.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: open_task: a task opens in its editor from the Tag overview, as with a double click here (D-328)
 # v4.4.571: Tags under the task lists in the sidebar: a click on a tag shows only the tasks with that tag, All tasks shows every task again (D-327)
 # v4.4.568: New tasks go to the task list with the blue plus (D-326)
 # v4.4.564: After midnight the tasks look as after a restart: Overdue, Today, Tomorrow and the overdue marks of the new day, selection and top task kept (D-322)
@@ -769,15 +770,18 @@ class TasksPage(PimListPage):
     @override
     def edit_selected(self) -> None:
         items = self._selected_items()
-        if len(items) != 1:
-            return
+        if len(items) == 1:
+            self.open_task(items[0])
+
+    def open_task(self, item: str) -> None:
+        """This task in its editor (a double click here, or in the Tag overview, D-328)."""
 
         def opened(result: TaskInfo) -> None:
             editor = TaskEditor(self._backend, self._lists(), self._tags_known, result, result.collection, self.content)
             editor.saved.connect(self._after_save)
             editor.exec()
 
-        self._backend.ask(TASK_SHOW, TaskItem(items[0]), opened, self._failed, owner=self)
+        self._backend.ask(TASK_SHOW, TaskItem(item), opened, self._failed, owner=self)
 
     def _after_save(self, item: str) -> None:
         """A task was saved: its row follows the fact; it is selected (now, or when its fact has come)."""

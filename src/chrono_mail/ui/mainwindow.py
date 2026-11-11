@@ -61,6 +61,7 @@ from chrono_mail.ui.syncmarks import CONFLICT, SyncMarks, mark_icon
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
+from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
@@ -69,9 +70,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.571"
+__version__ = "mainwindow.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: Show everything tagged… on a tag (folder list, Contacts, Tasks, Calendar) opens the Tag overview of that tag, one window per tag (D-328)
 # v4.4.571: Tags saved in Settings reach the Tags lists of Tasks and Calendar: a new colour or name shows at once (D-327)
 # v4.4.568: Settings > Sidebar's Calendar and Tasks tabs take their effect on OK (D-326)
 # v4.4.562: Settings > Message list > Secondary sort is taken in at once, the list rearranged in place (D-320)
@@ -489,6 +491,12 @@ class MainWindow(QMainWindow):
             calendar_page.mail_ready.connect(self.composing.send_calendar_mail)
             calendar_page.answer_wanted.connect(self.reading.answer_event)
             calendar_page.delegate_wanted.connect(self.reading.delegate_event)
+        self.tag_overviews: dict[str, TagOverviewWindow] = {}  # the Tag overview windows open, by their tag in lower case (D-328)
+        self.folders.tag_overview_wanted.connect(self.show_tag_overview)
+        self.contacts_page.tag_overview_wanted.connect(self.show_tag_overview)
+        for filtered in (self.pages[TASKS], self.pages[CALENDAR]):
+            if isinstance(filtered, (TasksPage, CalendarPage)):
+                filtered.tag_filter.overview_wanted.connect(self.show_tag_overview)
         for page in self.pages.values():
             self.side_stack.addWidget(page.side)
             self.content_stack.addWidget(page.content)
@@ -1486,6 +1494,28 @@ class MainWindow(QMainWindow):
         fill_mail = {account.account_id for account in chosen if mail and (account.kind == "imap" or (account.kind == "pop3" and receives))}
         calendars = {account.account_id for account in chosen if account.dav_url}
         self.checking.first_fill(fill_mail, calendars)
+
+    def show_tag_overview(self, tag: str) -> None:
+        """Everything with this tag in a window of its own (D-328); a window already open for the tag comes to the front."""
+        open_already = self.tag_overviews.get(tag.casefold())
+        if open_already is not None:
+            open_already.showNormal()
+            open_already.raise_()
+            open_already.activateWindow()
+            return
+        calendar, tasks = self.pages[CALENDAR], self.pages[TASKS]
+        if not isinstance(calendar, CalendarPage) or not isinstance(tasks, TasksPage):
+            return
+        openers = Openers(
+            mail=self.reading.open_window_of, contact=self.contacts_page.open_contact, event=calendar.open_event, task=tasks.open_task,
+            prepare_reader=self.reading.prepare_message_reader, wire_reader=self.reading.wire_reader,
+            calendar_card=lambda source, name, where: self.reading.open_calendar_card(source, name, where=where), open_link=self.reading.open_link,
+        )
+        window = TagOverviewWindow(self.backend, tag, openers, self.settings)
+        key = tag.casefold()
+        self.tag_overviews[key] = window
+        window.destroyed.connect(lambda: self.tag_overviews.pop(key, None))
+        window.show()
 
     def add_calendar_account(self, kind: str) -> None:
         """Add account… in the Calendar, Contacts and Tasks sidebars: the one Add window on CalDAV (Calendar, Tasks) or CardDAV (Contacts), for a

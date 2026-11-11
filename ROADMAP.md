@@ -251,6 +251,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.4.546) A task without a due date has only a set-time reminder: the Reminder list of the task editor always offers At a set time…, and the choices counted from the due date are greyed without one (D-316).
 - DONE (4.4.559) Delegate on all occurrences replaces the separate answers on single dates, as Accept, Tentative and Decline (Q309, D-310).
 - DONE (4.4.560) A click in the Flag or Unread column of the message list toggles that mark on that one message (D-319).
+- DONE (4.4.572) Show everything tagged… in a tag's right-click menu opens the Tag overview: contacts, appointments, tasks and mail of that tag in one list with a reading pane (D-328).
 - DONE (4.4.571) The Tasks and Calendar sidebars have a Tags list: a click on a tag shows only its tasks or events, in Calendar in every view (D-327).
 - DONE (4.4.570) Unticking a calendar or task list never moves the blue plus; only leaving it out, deleting it or read only does (D-326).
 - DONE (4.4.569) In the window of a new appointment or task a read-only calendar or task list is greyed with why (D-326).

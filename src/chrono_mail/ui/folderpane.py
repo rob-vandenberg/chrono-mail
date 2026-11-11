@@ -39,9 +39,10 @@ from chrono_mail.ui.tagging import offered_for_mail
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.454"
+__version__ = "folderpane.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: A tag under Tags has Show everything tagged… in its right-click menu: the Tag overview (D-328)
 # v4.2.454: Rename folder opens 360 pixels wide on the owner's screen (TextBox, the owner)
 # v4.2.453: Rename folder and Delete folder… say what the rules that move mail to the folder did (D-302)
 # v4.2.450: a load started while one runs takes it over: the older one's answers are ignored, what was to follow it runs when the newer
@@ -93,6 +94,7 @@ class FolderPane(QObject):
 
     entry_chosen = Signal(object)  # another entry was selected: the CurrentView it opens (kind NONE: an account without an Inbox)
     numbers_changed = Signal()  # the numbers or the entries changed: the window title and the tray follow
+    tag_overview_wanted = Signal(str)  # Show everything tagged… on a tag: its name (D-328)
     folder_moved = Signal(str, str, str)  # a folder was renamed (account, old path, new path) or deleted (new path ""): its column setup follows
 
     def __init__(
@@ -704,6 +706,10 @@ class FolderPane(QObject):
             up.setEnabled(position > 0)
             down = menu.addAction("Move down", lambda: self.move_pin(order, position, 1))
             down.setEnabled(0 <= position < len(order) - 1)
+        elif kind == EntryKind.TAGVIEW:
+            tag = str(index.data(FOLDER_PATH_ROLE) or "")
+            menu.addSeparator()
+            menu.addAction("Show everything tagged…", lambda: self.tag_overview_wanted.emit(tag))
         elif kind == EntryKind.ACCOUNT and str(index.data(ACCOUNT_ROLE)) and not self._state.is_local(account):
             self._group_menu(menu, account)
         elif kind == EntryKind.GROUP:

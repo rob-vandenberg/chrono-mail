@@ -113,3 +113,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-320]] Secondary sort: messages with the same value by when they were received
 - [[D-321]] The day headings follow the day
 - [[D-326]] Which calendars the sidebar shows, and where new items go
+- [[D-328]] Everything of one tag in one overview

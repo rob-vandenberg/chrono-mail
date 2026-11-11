@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.571"
+__version__ = "calendarview.py 4.4.572"
 
 # --- Version history ----------------------------------------------------
+# v4.4.572: open_event: an event opens read-only from the Tag overview, a Cancelled one not until it is Restored (D-328)
 # v4.4.571: Tags under the calendars in the sidebar: a click on a tag shows only the events with that tag in every view, All events shows every event again (D-327)
 # v4.4.568: New appointments go to the calendar with the blue plus (D-326)
 # v4.4.567: An event stays selected after a change and its blocks stay until its new version comes; a title typed in place shows at once with the clock until the server answers, a refusal brings the old one back (D-325)
@@ -592,6 +593,18 @@ class CalendarPage(PimPage):
         box.exec()
         clicked = box.clickedButton()
         return "occurrence" if clicked is only else ("series" if clicked is everything else "")
+
+    def open_event(self, item: str) -> None:
+        """An event opened from the Tag overview (D-328): read-only, as a double click opens it here; a repeating one as its whole series. A Cancelled
+        event does not open until it is Restored (D-310)."""
+
+        def opened(result: EventInfo) -> None:
+            if result.status == "CANCELLED":
+                self.status("Calendar: a cancelled appointment opens once it is restored")
+                return
+            self._editor(result, result.collection, reading=True)
+
+        self._backend.ask(EVENT_SHOW, EventItem(item), opened, self._failed, owner=self)
 
     def read_selected(self) -> None:
         """A double click: the appointment opens read-only; its Edit button asks for a repeating event what the change is for. A Cancelled event does not open
