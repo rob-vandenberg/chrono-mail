@@ -69,9 +69,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.568"
+__version__ = "mainwindow.py 4.4.571"
 
 # --- Version history ----------------------------------------------------
+# v4.4.571: Tags saved in Settings reach the Tags lists of Tasks and Calendar: a new colour or name shows at once (D-327)
 # v4.4.568: Settings > Sidebar's Calendar and Tasks tabs take their effect on OK (D-326)
 # v4.4.562: Settings > Message list > Secondary sort is taken in at once, the list rearranged in place (D-320)
 # v4.4.560: a click in the Flag or Unread column goes to mark_by_icon (D-319)
@@ -1169,6 +1170,9 @@ class MainWindow(QMainWindow):
             self.report.finished("Scheduled messages changed")  # each action told its facts: the rows already follow (D-146)
         if dialog.tags_saved:
             self.tags.load()  # the rows follow the "mailbox changed" of renaming or deleting a tag (D-146)
+            for page in (self.pages[TASKS], self.pages[CALENDAR]):
+                if isinstance(page, (TasksPage, CalendarPage)):
+                    page.reload_tags()  # a new colour or name in their Tags lists and chips (D-327)
         self.columns.end_try(accepted)  # the columns shown since they were chosen: kept, or put back (B-16, D-228)
         tried = self.prefs.trying is not None
         self.prefs.try_out(None)

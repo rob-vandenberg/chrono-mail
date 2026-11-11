@@ -49,3 +49,4 @@ See also: [[sync-conflicts]]
 - [[D-324]] An appointment's title is edited in place
 - [[D-325]] An appointment stays selected and shows its change at once
 - [[D-326]] Which calendars the sidebar shows, and where new items go
+- [[D-327]] A tag filter in every section

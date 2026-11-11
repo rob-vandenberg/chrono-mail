@@ -2,6 +2,7 @@
 Read before work on tags.
 See also: [[mail-window]]
 
+- [[D-327]] A tag filter in every section
 - [[D-201]] Unsupported data stays local
 - [[D-176]] At most two files per message
 - [[D-132]] A tag is an IMAP keyword

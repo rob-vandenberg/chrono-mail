@@ -56,13 +56,15 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
+from chrono_mail.ui.tagfilter import TagFilter
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.568"
+__version__ = "tasksview.py 4.4.571"
 
 # --- Version history ----------------------------------------------------
+# v4.4.571: Tags under the task lists in the sidebar: a click on a tag shows only the tasks with that tag, All tasks shows every task again (D-327)
 # v4.4.568: New tasks go to the task list with the blue plus (D-326)
 # v4.4.564: After midnight the tasks look as after a restart: Overdue, Today, Tomorrow and the overdue marks of the new day, selection and top task kept (D-322)
 # v3.6.349: a task's dates through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
@@ -457,6 +459,14 @@ class TasksPage(PimListPage):
         self.day_watch: DayWatch = DayWatch(self)  # the local day; its change groups the tasks again (D-322)
         self._day_shown: str = ""  # the day the list was grouped with
         self.delegate = TaskDelegate(self.colours)
+        side = QWidget()
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(0)
+        side_layout.addWidget(self.panel, 3)
+        self.tag_filter = TagFilter("All tasks", self.colours, side)
+        side_layout.addWidget(self.tag_filter, 2)
+        self.side = side
         pane = QWidget()
         pane_layout = QVBoxLayout(pane)
         pane_layout.setContentsMargins(0, 0, 0, 0)
@@ -547,6 +557,11 @@ class TasksPage(PimListPage):
         self.list.doubleClicked.connect(self._double_clicked)
         self.list.customContextMenuRequested.connect(self._list_menu)
         self.day_watch.looked.connect(self._look)
+        self.tag_filter.chosen.connect(self._tag_chosen)
+
+    def _tag_chosen(self, tag: str) -> None:
+        """A tag was chosen in the sidebar (or everything): only its tasks are shown (D-327)."""
+        self.reload_list()
 
     # --- showing ------------------------------------------------------------------------------
 
@@ -587,7 +602,7 @@ class TasksPage(PimListPage):
         generation = self._generation
         visible = self.panel.visible_ids()
         selected = keep if keep is not None else self._selected_items()
-        parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip())  # only the lists shown: never a cut shared with hidden ones
+        parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip(), tag=self.tag_filter.tag())  # only the lists shown: never a cut shared with hidden ones
 
         today = self._today()
 
@@ -614,6 +629,7 @@ class TasksPage(PimListPage):
             self.model.load([], today)
             self.count_label.setText("")
             self._selection_changed()
+            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the tags still show with no list ticked
             return
         self._backend.ask(TASK_PLACES, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
 
@@ -632,10 +648,15 @@ class TasksPage(PimListPage):
         places = self.model.places()
         self.count_label.setText(f"{sum(1 for place in places if not place.done)} active, {sum(1 for place in places if place.done)} completed")
 
+    def reload_tags(self) -> None:
+        """The tags asked again (their colours or names changed in Settings): the Tags list and the chips follow (D-327)."""
+        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
+
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
         self.colours.update(tags)
         self._tags_known = [tag.name for tag in tags]
+        self.tag_filter.follow([(tag.name, tag.tasks) for tag in tags if tag.tasks > 0])
         self.list.viewport().update()
 
     @override
@@ -784,6 +805,7 @@ class TasksPage(PimListPage):
         """A task was added, changed, deleted or moved: only that task changes (D-146)."""
         kind, collection, item = str(change.kind), change.folder, change.message_id
         visible = self.panel.visible_ids()
+        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the numbers of the tags, for any task (D-327)
         if kind in ("item_removed", "item_moved") and self.model.position_of(item) >= 0:
             self.model.pending.discard(item)
             self.model.drop(item)
@@ -791,7 +813,7 @@ class TasksPage(PimListPage):
         wanted = change.new_message_id if kind == "item_moved" else item
         target = change.to_folder if kind == "item_moved" else collection
         if kind in ("item_added", "item_changed", "item_moved") and target in visible:
-            parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip(), item=wanted)
+            parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip(), tag=self.tag_filter.tag(), item=wanted)
 
             def arrived(result: TaskPlaces) -> None:
                 others = [place for place in self.model.places() if place.item != wanted]

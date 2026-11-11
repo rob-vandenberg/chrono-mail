@@ -47,14 +47,16 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagfilter import TagFilter
 from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.568"
+__version__ = "calendarview.py 4.4.571"
 
 # --- Version history ----------------------------------------------------
+# v4.4.571: Tags under the calendars in the sidebar: a click on a tag shows only the events with that tag in every view, All events shows every event again (D-327)
 # v4.4.568: New appointments go to the calendar with the blue plus (D-326)
 # v4.4.567: An event stays selected after a change and its blocks stay until its new version comes; a title typed in place shows at once with the clock until the server answers, a refusal brings the old one back (D-325)
 # v4.4.566: The title of an event edited in place goes to the server with event.edit: this date only, no mail from Chrono Mail (D-324)
@@ -218,7 +220,9 @@ class CalendarPage(PimPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        side_layout.addWidget(self.panel, 1)
+        side_layout.addWidget(self.panel, 3)
+        self.tag_filter = TagFilter("All events", self.colours, side)
+        side_layout.addWidget(self.tag_filter, 2)
         self.mini = RangeCalendar(side)
         side_layout.addWidget(self.mini)
         self.side = side
@@ -305,6 +309,7 @@ class CalendarPage(PimPage):
         self.next_button.clicked.connect(lambda: self.step(1))
         self.today_button.clicked.connect(self._goto_today)
         self.day_watch.looked.connect(self._look)
+        self.tag_filter.chosen.connect(self._tag_chosen)
         self.past_button.toggled.connect(self._past_toggled)
         self.hidden_button.toggled.connect(self._hidden_toggled)
         self.mini.clicked.connect(self._mini_clicked)
@@ -424,6 +429,10 @@ class CalendarPage(PimPage):
         self.anchor = day
         self.set_view(layout.DAY)
 
+    def _tag_chosen(self, tag: str) -> None:
+        """A tag was chosen in the sidebar (or everything): only its events are shown (D-327)."""
+        self.reload()
+
     def days(self) -> list[date]:
         return layout.days_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
 
@@ -442,6 +451,7 @@ class CalendarPage(PimPage):
             self.entries = []
             self._day_shown = today
             self._show_data()
+            self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the tags still show with no calendar ticked
             return
 
         self._fetches += 1
@@ -457,13 +467,18 @@ class CalendarPage(PimPage):
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
-        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip(), hidden=self.show_hidden)
+        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip(), tag=self.tag_filter.tag(), hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, (lambda error: None) if quiet else self._failed, owner=self)
+
+    def reload_tags(self) -> None:
+        """The tags asked again (their colours or names changed in Settings): the Tags list follows (D-327)."""
+        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
         self.colours.update(tags)
         self._tags_known = tags
+        self.tag_filter.follow([(tag.name, tag.events) for tag in tags if tag.events > 0])
 
     def _scroll_to_morning(self) -> None:
         self.grid.scroll_to_hour(FIRST_HOUR)
@@ -795,6 +810,7 @@ class CalendarPage(PimPage):
         kind, item = str(change.kind), change.message_id
         wanted = change.new_message_id if kind == "item_moved" else item
         target = change.to_folder if kind == "item_moved" else change.folder
+        self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)  # the numbers of the tags (D-327)
         stays = kind not in ("item_removed", "item_moved") and target in set(self.panel.visible_ids())
         if kind in ("item_removed", "item_moved"):
             self._forget_titles(item)  # gone: a title typed for it is nobody's (D-325)
@@ -835,7 +851,7 @@ class CalendarPage(PimPage):
                 self._show_data(keep=True)
             self._failed(error)
 
-        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted, hidden=self.show_hidden)
+        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), tag=self.tag_filter.tag(), item=wanted, hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, not_fetched, owner=self)
 
     def _answer_wanted(self, entry: Entry, verb: str, answer: str) -> None:

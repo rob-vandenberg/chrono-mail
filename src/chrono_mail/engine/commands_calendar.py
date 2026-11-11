@@ -20,9 +20,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.558"
+__version__ = "commands_calendar.py 4.4.571"
 
 # --- Version history ----------------------------------------------------
+# v4.4.571: event.list takes a tag: only the events with that tag (D-327)
 # v4.4.558: A row no longer says answerable and whole: the menus go by invited, and an invitation with no organizer you declined counts as invited
 # v4.4.557: event.cancel and event.restore, server first, with a real cancellation or a new version for your meeting and silent on someone else's; a Cancelled event takes no edit or move until it is Restored (D-310)
 # v4.4.553: A date in an object of only changed dates has its own row date and is deleted as that date; its last date takes the object along (D-310)
@@ -218,6 +219,7 @@ class ListParameters:
     calendar: str | None = field(default=None, metadata=option("Only this calendar (default: all)"))
     calendars: tuple[str, ...] = field(default=(), metadata=option("Only these calendars (repeat; default: all)"))
     text: str = field(default="", metadata=option("Only events with these words"))
+    tag: str = field(default="", metadata=option("Only events with this tag"))
     limit: int = field(default=0, metadata=option("How many at most (0: every one)"))
     hidden: bool = field(default=False, metadata=option("Also what you declined: meetings and dates of a series"))
     item: str = field(default="", metadata=option("Only this event (the calendar replaces only the blocks of an event that changed)"))
@@ -288,7 +290,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 chosen = tuple(collection for collection in names if not parameters.calendars or collection in parameters.calendars)
             if not chosen:
                 continue
-            query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
+            query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, parameters.tag, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
             items = store.index.query(query)
             if len(items) > MAXIMUM_EVENTS:
                 cut, items = True, items[:MAXIMUM_EVENTS]
