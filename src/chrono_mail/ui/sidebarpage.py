@@ -1,21 +1,25 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+
+from chrono_mail.engine.commands_pim import CollectionSummary
 
 from chrono_mail.engine.commands_sidebar import (
     FAVORITE_SHOW, FAVORITE_UNPIN, SIDEBAR_SHOW_LOCAL_FOLDER, SIDEBAR_SHOW_TREE, LocalFolderParameters, PinnedParameters, SidebarInfo, TreeParameters, VisibleParameters,
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Step
+from chrono_mail.ui.collectionpanel import colour_icon
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.prefs import StartupView
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebarpage.py 3.6.373"
+__version__ = "sidebarpage.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: Three tabs: Mail (as before), Calendar and Tasks, which tick the calendars and task lists their sidebars show; the last one shown cannot be left out (D-326)
 # v3.6.373: built from the form settings_sidebar.ui: the heading and the place of the ticks (D-276); nothing visible changed
 # v1.9.270: R-19: commands gives typed steps
 # v1.2.253: startup_forces takes Show on startup as read once (StartupView), never split here (R-12)
@@ -75,8 +79,14 @@ class SidebarPage(QWidget):
         self._show = (show_favorites, show_tags, show_local_folders)
         self._hidden_local = set(hidden_local or set())
         self._local_paths = {kind: path for kind, path in local_folders or []}
-        form = forms.fill(self, "settings_sidebar")  # the heading and the place of the ticks, which are made here from what the folder list holds (D-276)
+        form = forms.fill(self, "settings_sidebar")  # the tabs, the headings and the place of the ticks, which are made here from what the lists hold (D-276)
         part(form, QScrollArea, "scroller").setFrameShape(QFrame.Shape.NoFrame)
+        self._list_places: dict[str, tuple[QWidget, QVBoxLayout]] = {}  # Calendar and Tasks: where their ticks go (D-326)
+        self.list_boxes: dict[str, dict[str, QCheckBox]] = {}  # kind -> collection -> its tick; a kind not filled yet is not there
+        self._list_left_out: dict[str, set[str]] = {}
+        for kind, name in (("events", "calendar"), ("tasks", "tasks")):
+            part(form, QScrollArea, f"{name}Scroller").setFrameShape(QFrame.Shape.NoFrame)
+            self._list_places[kind] = (part(form, QWidget, f"{name}Ticks"), part(form, QVBoxLayout, f"{name}TicksLayout"))
         inner = part(form, QWidget, "ticks")
         self._layout = part(form, QVBoxLayout, "ticksLayout")
         self.favorites_box = self._box("Favorites", show_favorites, inner)
@@ -169,6 +179,57 @@ class SidebarPage(QWidget):
                     shown_entries[0].setEnabled(False)
         finally:
             self._applying = False
+
+    # --- Calendar and Tasks (D-326) -----------------------------------------------------------
+
+    def set_collections(self, kind: str, collections: list[CollectionSummary], left_out: set[str]) -> None:
+        """The calendars ("events") or task lists ("tasks") under their accounts, each with a tick: ticked is shown in its sidebar."""
+        inner, layout = self._list_places[kind]
+        self._list_left_out[kind] = set(left_out)
+        boxes: dict[str, QCheckBox] = {}
+        account = None
+        for info in collections:
+            if info.account != account:
+                account = info.account
+                heading = QLabel(info.account_name, inner)
+                font = heading.font()
+                font.setBold(True)
+                heading.setFont(font)
+                layout.addWidget(heading)
+            box = QCheckBox(info.name, inner)
+            box.setIcon(colour_icon(info.colour))
+            box.setChecked(info.collection not in left_out)
+            row = QHBoxLayout()
+            row.addSpacing(wpx(24))
+            row.addWidget(box)
+            row.addStretch(1)
+            layout.addLayout(row)
+            boxes[info.collection] = box
+            box.toggled.connect(self._list_toggle_of(kind))
+        self.list_boxes[kind] = boxes
+        self._list_ticked(kind)
+
+    def _list_toggle_of(self, kind: str) -> Callable[[bool], None]:
+        def toggled(checked: bool) -> None:
+            self._list_ticked(kind)
+
+        return toggled
+
+    def _list_ticked(self, kind: str) -> None:
+        """The last one still shown cannot be left out: greyed, as on the Mail tab."""
+        boxes = self.list_boxes.get(kind, {})
+        shown = [box for box in boxes.values() if box.isChecked()]
+        for box in boxes.values():
+            box.setEnabled(not (len(shown) == 1 and box is shown[0]))
+            box.setToolTip(f"The last {'calendar' if kind == 'events' else 'task list'} shown cannot be left out" if not box.isEnabled() else "")
+
+    def left_out(self, kind: str) -> set[str] | None:
+        """What is left out of that sidebar after OK; None when its list never came (nothing changes)."""
+        boxes = self.list_boxes.get(kind)
+        if boxes is None:
+            return None
+        return {collection for collection, box in boxes.items() if not box.isChecked()} | {
+            collection for collection in self._list_left_out[kind] if collection not in boxes}  # (one that is gone stays as it was)
 
     # --- after OK -----------------------------------------------------------------------------
 

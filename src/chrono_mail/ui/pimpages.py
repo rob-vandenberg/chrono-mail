@@ -16,9 +16,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 1.9.275"
+__version__ = "pimpages.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: The status line says where new items go when the blue plus moved by itself (D-326)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: pim.enable typed
 # v1.1.245: section_name and _failed: the one error line of Calendar, Tasks and Contacts (R-07)
@@ -51,6 +52,7 @@ class PimPage(SectionPage):
         self._settings: QSettings = settings
         self._enabled: bool = False
         self.panel = CollectionPanel(backend, settings, self.kind, self.multiple)
+        self.panel.target_moved.connect(self._say)  # the blue plus moved by itself (D-326)
         self.side = self.panel
         self.content = QWidget()
         layout = QVBoxLayout(self.content)
@@ -135,6 +137,9 @@ class PimPage(SectionPage):
         for clicked in self.conflict_sources():
             clicked.connect(self.conflict_requested.emit)
         self._marks_changed()
+
+    def _say(self, text: str) -> None:
+        self.status(text)
 
     def _failed(self, error: ChronoMailError) -> None:
         self.status(f"{self.section_name}: {error}")

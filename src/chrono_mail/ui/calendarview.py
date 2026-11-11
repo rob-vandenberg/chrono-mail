@@ -52,9 +52,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.567"
+__version__ = "calendarview.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: New appointments go to the calendar with the blue plus (D-326)
 # v4.4.567: An event stays selected after a change and its blocks stay until its new version comes; a title typed in place shows at once with the clock until the server answers, a refusal brings the old one back (D-325)
 # v4.4.566: The title of an event edited in place goes to the server with event.edit: this date only, no mail from Chrono Mail (D-324)
 # v4.4.564: After midnight the calendar looks as after a restart: today is the new day in every view, and a calendar that showed today shows the new today (D-322)
@@ -526,8 +527,16 @@ class CalendarPage(PimPage):
         return list(self.panel.collections)
 
     def _current_calendar(self) -> str:
-        visible = self.panel.visible_ids()
-        return visible[0] if visible else ((self._calendars()[0].collection) if self._calendars() else "")
+        """The calendar new appointments go to: the one with the blue plus (D-326)."""
+        return self.panel.new_items_id()
+
+    def _takes_new(self) -> bool:
+        """A calendar takes new appointments; with only read-only ones the status line says why nothing opens (D-326)."""
+        if self._current_calendar():
+            return True
+        if self._calendars():
+            self.status("Calendar: every calendar is read only, so none takes new appointments")
+        return False
 
     def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "", reading: bool = False, ask_scope: Callable[[], str] | None = None) -> None:
         editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings, reading, ask_scope)
@@ -537,13 +546,13 @@ class CalendarPage(PimPage):
 
     @override
     def new_item(self) -> None:
-        if not self._calendars():
+        if not self._takes_new():
             return
         self._editor(None, self._current_calendar(), start=self.anchor.isoformat(), end=(self.anchor + timedelta(days=1)).isoformat())  # All day ticked on the date in view
 
     def _slot_activated(self, day: object, minute: int) -> None:
         """A double click on a free place: a new event starting there (all day when it was the all-day area or the month)."""
-        if not isinstance(day, date) or not self._calendars():
+        if not isinstance(day, date) or not self._takes_new():
             return
         if minute < 0:
             self._editor(None, self._current_calendar(), start=day.isoformat(), end=(day + timedelta(days=1)).isoformat())

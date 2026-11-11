@@ -112,3 +112,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-319]] A click in the Flag or Unread column toggles that mark
 - [[D-320]] Secondary sort: messages with the same value by when they were received
 - [[D-321]] The day headings follow the day
+- [[D-326]] Which calendars the sidebar shows, and where new items go

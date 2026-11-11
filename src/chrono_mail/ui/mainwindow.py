@@ -69,9 +69,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.562"
+__version__ = "mainwindow.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: Settings > Sidebar's Calendar and Tasks tabs take their effect on OK (D-326)
 # v4.4.562: Settings > Message list > Secondary sort is taken in at once, the list rearranged in place (D-320)
 # v4.4.560: a click in the Flag or Unread column goes to mark_by_icon (D-319)
 # v4.4.542: closeEvent: closing waits for no server: connections are hung up, the window stays until the commands have ended and says so after a second
@@ -1178,6 +1179,11 @@ class MainWindow(QMainWindow):
         dialog.save()
         self.apply_preferences()
         self.folders.change_favorites(dialog.sidebar_page.commands())
+        for section, kind in ((CALENDAR, "events"), (TASKS, "tasks")):  # the Calendar and Tasks tabs of Settings > Sidebar (D-326)
+            left_out = dialog.sidebar_page.left_out(kind)
+            page = self.pages.get(section)
+            if left_out is not None and isinstance(page, PimPage):
+                page.panel.set_left_out(left_out)
 
     def _settings_context(self) -> SettingsContext:
         """What the Settings window shows besides the settings, in one piece."""

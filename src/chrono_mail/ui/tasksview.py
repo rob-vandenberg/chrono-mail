@@ -60,9 +60,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.564"
+__version__ = "tasksview.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: New tasks go to the task list with the blue plus (D-326)
 # v4.4.564: After midnight the tasks look as after a restart: Overdue, Today, Tomorrow and the overdue marks of the new day, selection and top task kept (D-322)
 # v3.6.349: a task's dates through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -717,12 +718,20 @@ class TasksPage(PimListPage):
         return list(self.panel.collections)
 
     def _current_list(self) -> str:
-        visible = self.panel.visible_ids()
-        return visible[0] if visible else ((self._lists()[0].collection) if self._lists() else "")
+        """The task list new tasks go to: the one with the blue plus (D-326)."""
+        return self.panel.new_items_id()
+
+    def _takes_new(self) -> bool:
+        """A task list takes new tasks; with only read-only ones the status line says why nothing happens (D-326)."""
+        if self._current_list():
+            return True
+        if self._lists():
+            self.status("Tasks: every task list is read only, so none takes new tasks")
+        return False
 
     @override
     def new_item(self) -> None:
-        if not self._lists():
+        if not self._takes_new():
             return
         editor = TaskEditor(self._backend, self._lists(), self._tags_known, None, self._current_list(), self.content)
         editor.saved.connect(self._after_save)
@@ -730,9 +739,9 @@ class TasksPage(PimListPage):
 
     def _quick_add(self) -> None:
         text = self.quick.text().strip()
-        collection = self._current_list()
-        if not text or not collection:
+        if not text or not self._takes_new():
             return
+        collection = self._current_list()
         self.quick.clear()
         self._backend.ask(TASK_ADD, TaskAdd(list=collection, summary=text), lambda result: self._after_save(result.item), self._failed, owner=self)
 

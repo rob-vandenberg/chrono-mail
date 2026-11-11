@@ -6,7 +6,7 @@ from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QSettings, Qt, Signal
 from PySide6.QtGui import QDropEvent
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
@@ -39,9 +39,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.3.502"
+__version__ = "collectionpanel.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: Calendars and task lists left out in Settings > Sidebar are not in the list; a blue plus marks the one new appointments or tasks go to, chosen with Use for new appointments (D-326)
 # v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
 # v4.2.438: a calendar fact brings its timed_background (UR-02, D-297)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -69,6 +70,42 @@ ROLE_INFO: int = Qt.ItemDataRole.UserRole + 2
 ROLE_ACCOUNT: int = Qt.ItemDataRole.UserRole + 3  # on an account's heading: its id
 ROLE_GROUP: int = Qt.ItemDataRole.UserRole + 4  # on a contact group's entry (under its address book): its GroupRow
 KIND_WORDS: dict[str, tuple[str, str]] = {"events": ("Calendar", "calendar"), "tasks": ("Tasks", "task list"), "contacts": ("Contacts", "address book")}
+NEW_ITEMS: dict[str, str] = {"events": "appointments", "tasks": "tasks"}  # what goes to the collection with the blue plus (D-326)
+PLUS_COLUMN: int = 1  # the column of the blue plus, at the right of the list
+PLUS_SIZE: int = 14
+
+
+def settings_set(settings: QSettings, key: str) -> set[str]:
+    """A list of ids kept in the settings (one id comes back as a text)."""
+    value = settings.value(key, [])
+    return {str(item) for item in value} if isinstance(value, list) else ({str(value)} if value else set())
+
+
+def left_out_key(kind: str) -> str:
+    """The setting of the calendars ("events") or task lists ("tasks") left out of their sidebar in Settings > Sidebar (D-326)."""
+    return f"left_out_{kind}"
+
+
+def plus_icon(palette: QPalette, size: int = PLUS_SIZE) -> QIcon:
+    """The blue plus: a circle with a plus in it, in the theme's accent; on a selected row in the selection's text colour, so it never
+    vanishes in the selection's blue (D-326)."""
+    icon = QIcon(_plus_pixmap(palette.color(QPalette.ColorRole.Highlight), size))
+    icon.addPixmap(_plus_pixmap(palette.color(QPalette.ColorRole.HighlightedText), size), QIcon.Mode.Selected)
+    return icon
+
+
+def _plus_pixmap(colour: QColor, size: int) -> QPixmap:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(colour, 1.4))
+    painter.drawEllipse(1, 1, size - 2, size - 2)
+    middle = size / 2
+    painter.drawLine(int(middle), 4, int(middle), size - 4)
+    painter.drawLine(4, int(middle), size - 4, int(middle))
+    painter.end()
+    return pixmap
 
 
 def colour_icon(colour: str, size: int = 12) -> QIcon:
@@ -98,6 +135,7 @@ class CollectionPanel(QWidget):
 
     changed = Signal()  # what is ticked or chosen changed
     reloaded = Signal()
+    target_moved = Signal(str)  # the blue plus went to another collection by itself: what the status line says (D-326)
     add_account_requested = Signal()  # Add account…: a calendar server for a mail account, or an account of calendars and contacts only
     infos_changed = Signal()  # what is known of the collections (a calendar's colours) was taken in again: the section redraws in their colours
     conflicts_requested = Signal()  # the Sync conflicts entry was clicked: Settings > Sync conflicts (D-194)
@@ -111,8 +149,11 @@ class CollectionPanel(QWidget):
         self.kind: str = kind
         self._multiple: bool = multiple
         self._key: str = f"hidden_{kind}"
+        self._left_out_key: str = left_out_key(kind)  # left out of the list in Settings > Sidebar (D-326)
+        self._target_key: str = f"new_items_{kind}"  # the collection with the blue plus (D-326)
         self._loading: bool = False
-        self.collections: list[CollectionSummary] = []
+        self.every: list[CollectionSummary] = []  # every collection, also the ones left out of the list
+        self.collections: list[CollectionSummary] = []  # the ones in the list
         self.group_actions: Callable[[QMenu, GroupRow], None] | None = None  # the menu of a contact group's entry (the Contacts page)
         self.book_actions: Callable[[QMenu, CollectionSummary], None] | None = None  # what the Contacts page adds to an address book's menu
         self.group_delete: Callable[[GroupRow], None] | None = None  # Delete on a contact group's entry (it asks first)
@@ -130,6 +171,13 @@ class CollectionPanel(QWidget):
         self._delete_key = DeleteKey(self.tree, self._delete_pressed)  # Delete here acts on the calendar, address book or task list, never on its items
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
+        if multiple:  # the blue plus at the right of the list (D-326)
+            self.tree.setColumnCount(2)
+            header = self.tree.header()
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, header.ResizeMode.Stretch)
+            header.setSectionResizeMode(PLUS_COLUMN, header.ResizeMode.Fixed)
+            header.resizeSection(PLUS_COLUMN, PLUS_SIZE + 10)
         self.tree.setFrameShape(QTreeWidget.Shape.NoFrame)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -160,8 +208,66 @@ class CollectionPanel(QWidget):
     # --- what is shown ------------------------------------------------------------------------
 
     def _hidden(self) -> set[str]:
-        value = self._settings.value(self._key, [])
-        return {str(item) for item in value} if isinstance(value, list) else ({str(value)} if value else set())
+        return self._set_of(self._key)
+
+    def _set_of(self, key: str) -> set[str]:
+        return settings_set(self._settings, key)
+
+    def left_out(self) -> set[str]:
+        """The collections left out of the list in Settings > Sidebar (D-326)."""
+        return self._set_of(self._left_out_key)
+
+    def set_left_out(self, collections: set[str]) -> None:
+        """Settings > Sidebar's choice: the list again, without them; only when it changed."""
+        if collections != self.left_out():
+            self._settings.setValue(self._left_out_key, sorted(collections))
+            self.reload(self.current_id())
+
+    # --- the blue plus: where new appointments or tasks go (D-326) -------------------------------
+
+    def _takers(self) -> list[str]:
+        """The collections that can take new items, in the order of the list: shown (ticked) and not read only."""
+        return [str(item.data(0, ROLE_COLLECTION)) for item in collection_items(self.tree)
+                if item.checkState(0) == Qt.CheckState.Checked and not ((info := self.info(str(item.data(0, ROLE_COLLECTION)))) is not None and info.read_only)]
+
+    def target_id(self) -> str:
+        """The collection new appointments or tasks go to: the one with the blue plus."""
+        if not self._multiple:
+            return ""
+        takers = self._takers()
+        stored = str(self._settings.value(self._target_key, "") or "")
+        return stored if stored in takers else (takers[0] if takers else "")
+
+    def new_items_id(self) -> str:
+        """Where a new item goes: the blue plus; with none shown that takes items, the first that takes them at all (never a read-only one)."""
+        return self.target_id() or next((info.collection for info in self.collections if not info.read_only), "")
+
+    def use_for_new(self, collection: str) -> None:
+        """Use for new appointments (or tasks): the blue plus goes there."""
+        if collection in self._takers():
+            self._settings.setValue(self._target_key, collection)
+            self._mark_target()
+
+    def _mark_target(self) -> None:
+        """The blue plus on the collection new items go to, with its hover text; when the one chosen can no longer take them (unticked, left
+        out, deleted, read only) the plus goes to the first that can, and the status line says so."""
+        if not self._multiple or self._loading:
+            return
+        target = self.target_id()
+        stored = str(self._settings.value(self._target_key, "") or "")
+        if target and target != stored:
+            self._settings.setValue(self._target_key, target)
+            info = self.info(target)
+            if stored and info is not None:
+                self.target_moved.emit(f"New {NEW_ITEMS[self.kind]} now go to {info.name}")
+        icon = plus_icon(self.tree.palette())
+        empty = QIcon()
+        self._loading = True  # the icon is no tick
+        for item in collection_items(self.tree):
+            marked = str(item.data(0, ROLE_COLLECTION)) == target
+            item.setIcon(PLUS_COLUMN, icon if marked else empty)
+            item.setToolTip(PLUS_COLUMN, f"New {NEW_ITEMS[self.kind]} go here" if marked else "")
+        self._loading = False
 
     def visible_ids(self) -> list[str]:
         """The collections that are ticked (calendars, task lists), or the one that is chosen (address books)."""
@@ -269,7 +375,9 @@ class CollectionPanel(QWidget):
 
     def reload(self, then_choose: str = "") -> None:
         def listed(result: tuple[CollectionSummary, ...]) -> None:
-            self.collections = list(result)
+            left_out = self.left_out() if self._multiple else set()
+            self.every = list(result)
+            self.collections = [info for info in self.every if info.collection not in left_out]
             keep = then_choose or self.prefer or self.current_id()
             self.prefer = ""
             hidden = self._hidden()
@@ -305,6 +413,7 @@ class CollectionPanel(QWidget):
             if chosen is not None:
                 self.tree.setCurrentItem(chosen)
             self._loading = False
+            self._mark_target()
             self.reloaded.emit()
             self.changed.emit()
 
@@ -315,6 +424,7 @@ class CollectionPanel(QWidget):
             return
         hidden = {str(entry.data(0, ROLE_COLLECTION)) for entry in collection_items(self.tree) if entry.checkState(0) != Qt.CheckState.Checked}
         self._settings.setValue(self._key, sorted(hidden))
+        self._mark_target()
         self.changed.emit()
 
     def _chosen(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
@@ -397,6 +507,9 @@ class CollectionPanel(QWidget):
         """One collection more: its entry under its account (a new account's heading too)."""
         if self._entry(info.collection) is not None:
             return
+        self.every.append(info)
+        if self._multiple and info.collection in self.left_out():
+            return  # left out of the list in Settings > Sidebar (D-326)
         account = info.account
         node = next((self.tree.topLevelItem(top) for top in range(self.tree.topLevelItemCount()) if (found := self.tree.topLevelItem(top)) is not None and str(found.data(0, ROLE_ACCOUNT)) == account), None)
         if node is None:
@@ -421,6 +534,7 @@ class CollectionPanel(QWidget):
         item.setFlags(flags)
         node.addChild(item)
         self._loading = False
+        self._mark_target()
 
     def apply(self, change: Change) -> None:
         """A fact about a collection of this kind, or about its items (their number)."""
@@ -442,6 +556,7 @@ class CollectionPanel(QWidget):
         elif kind == "collection_removed":
             entry = self._entry(collection)
             self.collections = [info for info in self.collections if info.collection != collection]
+            self.every = [info for info in self.every if info.collection != collection]
             if entry is not None and (parent := entry.parent()) is not None:
                 was_current = self.tree.currentItem() is entry
                 parent.removeChild(entry)
@@ -451,6 +566,7 @@ class CollectionPanel(QWidget):
                     left = collection_items(self.tree)
                     if was_current and left:
                         self.tree.setCurrentItem(left[0])
+                    self._mark_target()
                     self.changed.emit()
         elif kind in ("item_added", "item_removed", "item_moved"):
             if kind != "item_removed":
@@ -466,6 +582,7 @@ class CollectionPanel(QWidget):
 
     def _replace(self, collection: str, change: Callable[[CollectionSummary], CollectionSummary]) -> None:
         """One collection as the fact leaves it (change gives its new summary), in the list and in its entry."""
+        self.every = [change(info) if info.collection == collection else info for info in self.every]
         for number, info in enumerate(self.collections):
             if info.collection == collection:
                 changed = change(info)
@@ -477,6 +594,7 @@ class CollectionPanel(QWidget):
                     entry.setText(0, changed.name)
                     entry.setIcon(0, colour_icon(changed.colour))
                     self._loading = False
+                    self._mark_target()  # read only now: it takes no new items
 
     def edit_colours(self, collection_id: str) -> None:
         """The palette editor of a calendar; what it saves comes back as a fact."""
@@ -485,6 +603,28 @@ class CollectionPanel(QWidget):
         info = self.info(collection_id)
         if info is not None:
             PaletteEditor(self._backend, info, self, self._settings).exec()
+
+    @override
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:  # another theme or accent: the plus in its colours
+            self._mark_target()
+
+    def _target_action(self, menu: QMenu, collection: str) -> None:
+        action = menu.addAction(plus_icon(self.tree.palette()), f"Use for new {NEW_ITEMS[self.kind]}",
+                                lambda: self.use_for_new(collection))
+        action.setCheckable(True)
+        action.setChecked(collection == self.target_id())
+        info = self.info(collection)
+        entry = self._entry(collection)
+        word = KIND_WORDS[self.kind][1]
+        if info is not None and info.read_only:
+            action.setEnabled(False)  # greyed, never hidden (OR-15)
+            action.setToolTip(f"This {word} is read only: it takes no new {NEW_ITEMS[self.kind]}")
+        elif entry is not None and entry.checkState(0) != Qt.CheckState.Checked:
+            action.setEnabled(False)
+            action.setToolTip(f"This {word} is not shown: tick it first")
+        menu.setToolTipsVisible(True)
 
     def _menu(self, position: QPoint) -> None:
         self.menu_at(position).exec(self.tree.viewport().mapToGlobal(position))
@@ -507,6 +647,9 @@ class CollectionPanel(QWidget):
             if self.group_actions is not None:
                 self.group_actions(menu, group)
             return menu
+        if collection and self._multiple:  # where new appointments or tasks go: first, so it is found (D-326)
+            self._target_action(menu, collection)
+            menu.addSeparator()
         menu.addAction(f"New {KIND_WORDS[self.kind][1]}…", lambda: self.new_collection(account))
         book = self.info(collection) if collection else None
         if book is not None and self.book_actions is not None:

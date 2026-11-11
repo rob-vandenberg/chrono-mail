@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chrono_mail.engine.commands_pim import TagInfo
+from chrono_mail.engine.commands_pim import COLLECTION_LIST, CollectionSummary, ListParameters as CollectionListParameters, TagInfo
+from chrono_mail.ui.collectionpanel import left_out_key, settings_set
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_autostart import AUTOSTART_SET, AUTOSTART_SHOW, AutostartInfo, AutostartParameters
 from chrono_mail.engine.commands_updates import UPDATE_SHOW, UpdateSetup
@@ -59,9 +60,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.562"
+__version__ = "settingsdialog.py 4.4.568"
 
 # --- Version history ----------------------------------------------------
+# v4.4.568: Settings > Sidebar gets every calendar and task list for its Calendar and Tasks tabs (D-326)
 # v4.4.562: Message list: Secondary sort, order by received, newest or oldest first (D-320)
 # v4.4.510: the Calendar page gone: its tick is per account now, in Edit account (D-310)
 # v4.4.505: the Calendar page: "Send my answer to an invitation", on by default (D-310)
@@ -341,6 +343,8 @@ class SettingsDialog(QDialog):
             str(self.startup_box.currentData() or ""), self, local_folders=list(known.local_folders), hidden_local=set(known.hidden_local),
         )
         self._add_page("Sidebar", self.sidebar_page)
+        for kind in ("events", "tasks"):  # the Calendar and Tasks tabs: every calendar and task list, from the engine (D-326)
+            self._backend.ask(COLLECTION_LIST, CollectionListParameters(kind), lambda result, chosen=kind: self._lists_arrived(chosen, result), lambda error: None, owner=self)
         self.startup_box.currentIndexChanged.connect(self._startup_changed)
         self._add_page("Message list", self._list_page())
         self._add_page("Reading", self._reading_page())
@@ -365,6 +369,9 @@ class SettingsDialog(QDialog):
     def _startup_changed(self, row: int) -> None:
         """Show on startup changed while Settings is open: the Sidebar page greys what the new choice keeps visible."""
         self.sidebar_page.set_startup(str(self.startup_box.currentData() or ""))
+
+    def _lists_arrived(self, kind: str, result: tuple[CollectionSummary, ...]) -> None:
+        self.sidebar_page.set_collections(kind, list(result), settings_set(self._settings, left_out_key(kind)))
 
     def _size_sidebar_text(self, factor: float) -> None:
         """The page list is a little larger than the rest: the desktop's size plus SIDEBAR_EXTRA_POINTS, times the factor;

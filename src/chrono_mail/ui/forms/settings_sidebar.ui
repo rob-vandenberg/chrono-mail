@@ -16,55 +16,229 @@
     <number>0</number>
    </property>
    <item>
-    <widget class="QScrollArea" name="scroller">
-     <property name="widgetResizable">
-      <bool>true</bool>
+    <widget class="QTabWidget" name="tabs">
+     <property name="currentIndex">
+      <number>0</number>
      </property>
-     <widget class="QWidget" name="inner">
-      <layout class="QVBoxLayout" name="innerLayout" stretch="0,0,1">
+     <widget class="QWidget" name="mailTab">
+      <attribute name="title">
+       <string>Mail</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="mailTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
        <item>
-        <widget class="QLabel" name="displayHeading">
-         <property name="text">
-          <string>Display:</string>
+        <widget class="QScrollArea" name="scroller">
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <property name="role" stdset="0">
-          <string>heading</string>
-         </property>
+         <widget class="QWidget" name="inner">
+          <layout class="QVBoxLayout" name="innerLayout" stretch="0,0,1">
+           <item>
+            <widget class="QLabel" name="displayHeading">
+             <property name="text">
+              <string>Display:</string>
+             </property>
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QWidget" name="ticks">
+             <layout class="QVBoxLayout" name="ticksLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="innerEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="calendarTab">
+      <attribute name="title">
+       <string>Calendar</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="calendarTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
        <item>
-        <widget class="QWidget" name="ticks">
-         <layout class="QVBoxLayout" name="ticksLayout">
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-         </layout>
+        <widget class="QScrollArea" name="calendarScroller">
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <widget class="QWidget" name="calendarInner">
+          <layout class="QVBoxLayout" name="calendarInnerLayout" stretch="0,0,1">
+           <item>
+            <widget class="QLabel" name="calendarHeading">
+             <property name="text">
+              <string>Calendars shown in the sidebar:</string>
+             </property>
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QWidget" name="calendarTicks">
+             <layout class="QVBoxLayout" name="calendarTicksLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="calendarInnerEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tasksTab">
+      <attribute name="title">
+       <string>Tasks</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="tasksTabLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
        <item>
-        <spacer name="innerEnd">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
+        <widget class="QScrollArea" name="tasksScroller">
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Expanding</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>0</width>
-           <height>0</height>
-          </size>
-         </property>
-        </spacer>
+         <widget class="QWidget" name="tasksInner">
+          <layout class="QVBoxLayout" name="tasksInnerLayout" stretch="0,0,1">
+           <item>
+            <widget class="QLabel" name="tasksHeading">
+             <property name="text">
+              <string>Task lists shown in the sidebar:</string>
+             </property>
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QWidget" name="tasksTicks">
+             <layout class="QVBoxLayout" name="tasksTicksLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="tasksInnerEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </widget>
        </item>
       </layout>
      </widget>
