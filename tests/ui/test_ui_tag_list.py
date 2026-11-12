@@ -26,9 +26,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_list.py 4.4.581"
+__version__ = "test_ui_tag_list.py 4.4.582"
 
 # --- Version history ----------------------------------------------------
+# v4.4.582: New tag… in a contact or task window refuses a name over 100 characters and asks again with it
 # v4.4.581: Initial: Settings > Tags edited in place, the key fields' ✕, Show in per section, the sidebars' numbers, the Tags box of contacts
 #           and tasks, the Tags column (the owner, D-327, D-332)
 
@@ -427,3 +428,31 @@ def test_an_older_answer_of_the_tags_never_overwrites_a_newer_one(world: World, 
     newer(fresh)
     older((TagInfo("Stale", "#039be5", 0, 0, 0),))  # the older answer comes last
     assert [str(tag.name) for tag in world.window.mail_state.tags] == ["Fresh"]
+
+
+def test_new_tag_in_a_contact_or_task_window_refuses_a_name_over_100_characters_and_asks_again_with_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QInputDialog
+
+    too_long, longest = "L" * 101, "L" * 100
+    for editor in (ContactEditor(world.backend, [], [], None, "", None, TagColourBook()), TaskEditor(world.backend, [], [], None, "", None, TagColourBook())):
+        qtbot.addWidget(editor)
+        offered: list[str] = []
+        answers = [(too_long, True), (longest, True)]
+
+        def get_text(parent: object, title: str, label: str, echo: object = None, text: str = "", *rest: object) -> tuple[str, bool]:
+            offered.append(text)  # what the box opened with
+            return answers.pop(0)
+
+        told: list[str] = []
+
+        def information(parent: object, title: str, text: str, *rest: object) -> QMessageBox.StandardButton:
+            told.append(text)  # the message is answered with OK
+            return QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(QInputDialog, "getText", staticmethod(get_text))
+        monkeypatch.setattr(QMessageBox, "information", staticmethod(information))
+        editor.tags._new_tag()  # noqa: SLF001 - what New tag… does
+        assert told == ["A tag's name has at most 100 characters. Please make it a little shorter."]  # the too long name is refused, with why
+        assert offered == ["", too_long]  # asked again with the name typed: nothing is lost
+        assert editor.tag_box.names() == [longest]  # 100 characters is taken
+        editor.reject()

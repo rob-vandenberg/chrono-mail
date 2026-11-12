@@ -63,9 +63,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.581"
+__version__ = "contactsview.py 4.4.582"
 
 # --- Version history ----------------------------------------------------
+# v4.4.582: The chosen tag leaving the Tags list chooses All contacts: every contact shows again, as in Calendar and Tasks (D-327)
 # v4.4.581: The number after a tag in the Tags list drawn as a folder's unread (D-327); the Tag menu and a contact's window offer the tags shown in Contacts (Show in), the menu also one a selected contact carries (D-332)
 # v4.4.578: The Tags list follows Settings > Sidebar's Tags tick of Contacts; hidden, it filters nothing; a contact's window asks for the address books and tags itself and names its own also when it is left out (D-331)
 # v4.4.577: A separator to drag between the address books and the Tags list, its place remembered for this section (D-330)
@@ -460,6 +461,8 @@ class ContactsPage(PimListPage):
         wanted = {name.casefold() for name, _ in tags}
         for row in range(self.tag_list.count() - 1, 0, -1):
             if str(self.tag_list.item(row).data(ROW_ROLE)).casefold() not in wanted:
+                if self.tag_list.currentRow() == row:
+                    self.tag_list.setCurrentRow(0)  # the chosen tag went: All contacts, every contact shows again (D-327)
                 self.tag_list.takeItem(row)
         for number, (name, contacts) in enumerate(tags, start=1):
             text = name

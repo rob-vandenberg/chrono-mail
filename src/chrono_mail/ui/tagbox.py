@@ -3,18 +3,20 @@ from typing import override
 
 from PySide6.QtCore import QObject, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPalette
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.deletekey import DeleteKey
 from chrono_mail.ui.paletteeditor import circle_icon
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagsdialog import LONGEST_NAME
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagbox.py 4.4.581"
+__version__ = "tagbox.py 4.4.582"
 
 # --- Version history ----------------------------------------------------
+# v4.4.582: New tag… refuses a name over 100 characters, with why, and asks again with the typed name (the same limit as Settings > Tags)
 # v4.4.581: The box without radio buttons for contacts and tasks (a tag colours neither); TagEditing: Add tag…, New tag… and Remove tag of a
 #           window, the same in every window that has the box (the owner, D-332)
 # v4.4.576: The coloured part of a tag 2 pixels lower: the pixel above and below the name moved outside the colour (the owner)
@@ -282,9 +284,16 @@ class TagEditing(QObject):
         self.menu.addAction("New tag…", self._new_tag)
 
     def _new_tag(self) -> None:
-        name, ok = QInputDialog.getText(self._window, "New tag", "Name of the new tag:")
-        if ok and " ".join(name.split()):
-            self.box.add(" ".join(name.split()))
+        typed = ""
+        while True:
+            typed, ok = QInputDialog.getText(self._window, "New tag", "Name of the new tag:", QLineEdit.EchoMode.Normal, typed)
+            name = " ".join(typed.split())
+            if not ok or not name:
+                return
+            if len(name) <= LONGEST_NAME:
+                self.box.add(name)
+                return
+            QMessageBox.information(self._window, "New tag", f"A tag's name has at most {LONGEST_NAME} characters. Please make it a little shorter.")  # the engine takes no longer one
 
     def _show_remove(self) -> None:
         """Remove tag works on the selected tag: greyed, with why, until one is selected (OR-15)."""

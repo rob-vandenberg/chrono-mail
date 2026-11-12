@@ -16,9 +16,10 @@ from tests.ui.test_ui_tasks import lists, names, open_tasks, seed, select
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_filters.py 4.4.581"
+__version__ = "test_ui_tag_filters.py 4.4.582"
 
 # --- Version history ----------------------------------------------------
+# v4.4.582: a contact that loses the chosen tag: All contacts is chosen and every contact shows (D-327)
 # v4.4.581: a late answer about one task, asked with the old tag, never takes it out of the list of every task (D-146); a row's number is read from where it is drawn apart, as a folder's unread (D-327)
 # v4.4.571: Initial tests of the tag filters in the Tasks and Calendar sidebars (D-327)
 
@@ -150,3 +151,17 @@ def test_a_task_just_saved_is_selected_also_when_the_list_was_asked_again_before
     for late in held:
         late()
     assert page._selected_items() == [str(saved.item)]  # noqa: SLF001
+
+
+def test_a_contact_that_loses_the_chosen_tag_leaves_and_with_no_contact_left_every_contact_shows_again(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_contacts import open_contacts, seed as seed_contacts, select_rows  # here: test_ui_contacts imports from this file
+
+    seed_contacts(world)
+    page = open_contacts(world, qtbot, 3)
+    wait(qtbot, lambda: [counted_row(page.tag_list.item(i)) for i in range(page.tag_list.count())] == ["All contacts", "Business  (1)", "Important  (1)", "Key Customer  (1)"])
+    page.tag_list.setCurrentRow(1)  # Business: only Rebecca Hoffman
+    wait(qtbot, lambda: [str(getattr(r, "name")) for r in page.model.rows] == ["Rebecca Hoffman"])
+    select_rows(page, 0)
+    page._edit_selected(remove_tag=("Business",))  # noqa: SLF001 - the Tag menu's own step
+    wait(qtbot, lambda: [counted_row(page.tag_list.item(i)) for i in range(page.tag_list.count())] == ["All contacts", "Important  (1)", "Key Customer  (1)"])
+    wait(qtbot, lambda: page.tag_list.currentRow() == 0 and page.model.rowCount() == 3)  # All contacts chosen, every contact shows (D-327)
