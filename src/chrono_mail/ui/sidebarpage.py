@@ -16,9 +16,10 @@ from chrono_mail.ui.prefs import StartupView
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebarpage.py 4.4.585"
+__version__ = "sidebarpage.py 4.4.589"
 
 # --- Version history ----------------------------------------------------
+# v4.4.589: Mail's Tags tick first, as on the other tabs; each tab's heading is "Show in the sidebar:" (the owner)
 # v4.4.585: Show on startup no longer forces Tags shown: tags are no entry of the folder list (D-334)
 # v4.4.578: Four tabs in the order of the sections: Mail, Calendar, Contacts (new: the address books and the Tags tick) and Tasks (the owner, D-331)
 # v4.4.575: The Calendar and Tasks tabs have a Tags tick: that sidebar's Tags list shown or not (D-327)
@@ -93,10 +94,10 @@ class SidebarPage(QWidget):
             self._list_places[kind] = (part(form, QWidget, f"{name}Ticks"), part(form, QVBoxLayout, f"{name}TicksLayout"))
         inner = part(form, QWidget, "ticks")
         self._layout = part(form, QVBoxLayout, "ticksLayout")
+        self.tags_box: QCheckBox | None = self._box("Tags", show_tags, inner) if has_tags else None  # first, as on the other tabs (the owner)
         self.favorites_box = self._box("Favorites", show_favorites, inner)
         self.standard_boxes: dict[str, QCheckBox] = {view: self._box(label, view not in hidden, inner, indent=True) for view, label in standard}
         self.pin_boxes: dict[str, QCheckBox] = {pin_id: self._box(label, True, inner, indent=True) for pin_id, label in pins}
-        self.tags_box: QCheckBox | None = self._box("Tags", show_tags, inner) if has_tags else None
         self.local_box = self._box("Local Folders", show_local_folders, inner)
         self.local_folder_boxes: dict[str, QCheckBox] = {
             kind: self._box(path, kind not in self._hidden_local, inner, indent=True) for kind, path in local_folders or []

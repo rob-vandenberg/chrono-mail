@@ -11,7 +11,7 @@ from functools import partial
 
 from typing import override
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPersistentModelIndex, QRect, QRectF, QSettings, Qt, Signal
+from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPersistentModelIndex, QRect, QRectF, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDropEvent, QKeyEvent, QIcon, QPainter, QPixmap, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -47,9 +47,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 4.4.588"
+__version__ = "tagsdialog.py 4.4.589"
 
 # --- Version history ----------------------------------------------------
+# v4.4.589: The colour is a circle as tall as the tag's name, in place of a square (the owner)
 # v4.4.588: renamed: the renames the engine took at OK, for the Tags blocks to follow (D-334)
 # v4.4.581: The colour first, then the name (the owner). One list of tags without tabs, edited in the list (the owner, D-332): the name in its colour (a click on the selected one or F2 renames it
 #           in place), a colour square, Show in Mail, Calendar, Contacts and Tasks, a shortcut from a drop-down (Not assigned, or one no other tag has),
@@ -239,9 +240,9 @@ class TagsPanel(QWidget):
 
     def _colour_button(self, row: "TagRow") -> QWidget:
         button = QToolButton()
-        swatch = QPixmap(wpx(16), wpx(16))
-        swatch.fill(QColor(row.colour))
-        button.setIcon(QIcon(swatch))
+        diameter = self.list.fontMetrics().height() + 2  # as tall as the tag's name beside it (NameDelegate.paint; the owner)
+        button.setIcon(QIcon(colour_circle(QColor(row.colour), diameter, self.devicePixelRatioF())))
+        button.setIconSize(QSize(diameter, diameter))
         button.setAutoRaise(True)
         button.setToolTip("Change the colour")
         button.setAccessibleName(f"Colour of {row.name}")
@@ -468,6 +469,21 @@ class TagsPanel(QWidget):
 
 
 SHOW_IN_WORDS: tuple[tuple[str, str], ...] = (("mail", "Mail"), ("events", "Calendar"), ("contacts", "Contacts"), ("tasks", "Tasks"))
+
+
+def colour_circle(colour: QColor, diameter: int, ratio: float) -> QPixmap:
+    """A filled circle in the colour, diameter pixels wide, sharp on a screen of that pixel ratio."""
+    size = max(1, round(diameter * ratio))
+    circle = QPixmap(size, size)
+    circle.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(circle)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(colour)
+    painter.drawEllipse(QRectF(0.5, 0.5, size - 1, size - 1))
+    painter.end()
+    circle.setDevicePixelRatio(ratio)
+    return circle
 
 
 def _centred(widget: QWidget) -> QWidget:

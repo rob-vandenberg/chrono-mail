@@ -47,7 +47,7 @@
            <item>
             <widget class="QLabel" name="displayHeading">
              <property name="text">
-              <string>Display:</string>
+              <string>Show in the sidebar:</string>
              </property>
              <property name="role" stdset="0">
               <string>heading</string>
@@ -121,7 +121,7 @@
            <item>
             <widget class="QLabel" name="calendarHeading">
              <property name="text">
-              <string>Calendars shown in the sidebar:</string>
+              <string>Show in the sidebar:</string>
              </property>
              <property name="role" stdset="0">
               <string>heading</string>
@@ -195,7 +195,7 @@
            <item>
             <widget class="QLabel" name="contactsHeading">
              <property name="text">
-              <string>Address books shown in the sidebar:</string>
+              <string>Show in the sidebar:</string>
              </property>
              <property name="role" stdset="0">
               <string>heading</string>
@@ -269,7 +269,7 @@
            <item>
             <widget class="QLabel" name="tasksHeading">
              <property name="text">
-              <string>Task lists shown in the sidebar:</string>
+              <string>Show in the sidebar:</string>
              </property>
              <property name="role" stdset="0">
               <string>heading</string>

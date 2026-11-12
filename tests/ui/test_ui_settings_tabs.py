@@ -1,9 +1,12 @@
 import pytest
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtWidgets import QDialog, QMainWindow, QTabWidget
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QDialog, QLabel, QMainWindow, QTabWidget, QToolButton, QVBoxLayout
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.ui.sections import MAIL, SECTIONS
+from chrono_mail.ui.sidebarpage import SidebarPage
 from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.messagelist import CONTACT_ROLE
 from chrono_mail.ui.settingsdialog import SettingsDialog
@@ -16,9 +19,10 @@ from tests.ui.test_ui_tag_overview import open_overview
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings_tabs.py 4.4.587"
+__version__ = "test_ui_settings_tabs.py 4.4.589"
 
 # --- Version history ----------------------------------------------------
+# v4.4.589: Every tab of Settings > Sidebar is headed "Show in the sidebar:", Mail's Tags tick first; the colour in Settings > Tags is a circle as tall as the tag's name (the owner)
 # v4.4.587: A sender's contact in an unticked address book opens in its own window; both address books ticked together (D-334)
 # v4.4.584: The Tags block of D-334 in Contacts
 # v4.4.581: Settings > Tags is one list without tabs, its Show in columns in the sections' order; a contact's window offers the tags shown in
@@ -45,6 +49,30 @@ def test_settings_sidebar_has_the_sections_as_tabs_and_settings_tags_shows_them_
     header = tags.list.headerItem()
     assert [header.text(column) for _, column in SHOW_IN] == SECTION_NAMES  # one list, its Show in columns in the sections' order (D-332)
     assert tags.findChild(QTabWidget) is None  # no tabs: one list, as the tags are (the owner)
+
+
+def test_every_tab_of_settings_sidebar_is_headed_show_in_the_sidebar_and_mails_tags_tick_is_first(qtbot: QtBot) -> None:
+    page = SidebarPage((("inboxes", "All Inboxes"),), set(), [], True, True, True, True, "1" * 32, [("a" * 32, "one")], set(), "")  # mail carries tags
+    qtbot.addWidget(page)
+    for name in ("displayHeading", "calendarHeading", "contactsHeading", "tasksHeading"):
+        heading = page.findChild(QLabel, name)
+        assert heading is not None and heading.text() == "Show in the sidebar:"
+    ticks = page.findChild(QVBoxLayout, "ticksLayout")
+    assert ticks is not None and page.tags_box is not None
+    assert ticks.indexOf(page.tags_box) == 0 and ticks.indexOf(page.favorites_box) == 1  # Tags first, as on the other tabs (the owner)
+
+
+def test_the_colour_of_a_tag_in_settings_tags_is_a_circle_as_tall_as_its_name(world: World, qtbot: QtBot) -> None:
+    tags = TagsPanel(world.backend, (TagInfo("Garden", "#2e7d32", 0, 0, 0),))
+    qtbot.addWidget(tags)
+    row = tags.rows[0]
+    button = next(button for button in tags.findChildren(QToolButton) if button.accessibleName() == f"Colour of {row.name}")
+    diameter = tags.list.fontMetrics().height() + 2  # the height of the tag's name, drawn as a label
+    assert button.iconSize().width() == button.iconSize().height() == diameter
+    picture = button.icon().pixmap(button.iconSize(), tags.devicePixelRatioF()).toImage()
+    middle, corner = picture.pixelColor(picture.width() // 2, picture.height() // 2), picture.pixelColor(0, 0)
+    assert middle.name() == QColor(row.colour).name() and middle.alpha() == 255
+    assert corner.alpha() == 0  # round: nothing in the corners
 
 
 def ticks_and_ok(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, untick: list[str], tags: bool = True) -> list[bool]:

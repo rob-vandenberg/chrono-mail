@@ -4272,3 +4272,9 @@ Not tried: on screen; on Windows; a real CardDAV server.
 What landed (the owner, Q57): Settings > Tags notes every rename the engine took at OK, a passing name of swapped names joined to its chain (`src/chrono_mail/ui/tagsdialog.py`, `TagsPanel.renamed`); the main window hands them to the Tags blocks of Mail, Calendar, Tasks and Contacts (`mainwindow.py`); a block whose active tag was renamed keeps its filter on under the new name and tells it as a click does, so the list shows its items again (`tagfilter.py`, `TagFilter.follow_renames`); Mail's view takes the new name, also when only the capitals changed (`_mail_tag_chosen` compares exactly). A rename made on another computer is not followed.
 Tests: new in `tests/ui/test_ui_tags.py` (Mail, also other capitals) and `tests/ui/test_ui_tag_filters.py` (Tasks), both failing on 4.4.587; 90 related tests pass; the two files in their own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program, none on the new test lines. Review: one Sonnet reviewer: nothing real.
 Not tried: on screen; on Windows.
+
+## 2026-11-12 4.4.589 Settings > Sidebar headings, Tags first, a colour circle in Settings > Tags (the owner)
+
+What landed: every tab of Settings > Sidebar is headed "Show in the sidebar:" (`src/chrono_mail/ui/forms/settings_sidebar.ui`); Mail's Tags tick stands first, above Favorites, as on the other tabs (`sidebarpage.py`); the Colour column of Settings > Tags shows a filled circle as tall as the tag's name in place of a square, sharp on any pixel ratio (`tagsdialog.py`, `colour_circle`).
+Tests: two new in `tests/ui/test_ui_settings_tabs.py`, both failing on 4.4.588; 262 related tests pass; the file in its own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program, none in the changed test file. Review: one Sonnet reviewer: nothing real.
+Not tried: on screen; on Windows.
