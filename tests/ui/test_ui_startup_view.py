@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_startup_view.py 4.4.585"
+__version__ = "test_ui_startup_view.py 4.4.586"
 
 # --- Version history ----------------------------------------------------
+# v4.4.586: Favorites has All messages after All Inboxes (D-334)
 # v4.4.585: A start-up choice or last view that was a tag opens All Inboxes (D-334)
 # v4.4.561: the program started again gets a new backend: the closed one hands out no answers since 4.4.542
 # v2.0.298: the owner's order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied in Favorites (D-061, D-232)
@@ -55,9 +56,9 @@ def test_the_choices_are_in_the_owners_order(world: World, qtbot: QtBot) -> None
     texts = [text for text, _, _, _, _ in choices]
     assert texts[0] == "Last selected folder" and choices[0][1] == ""
     assert texts[1] == "Favorites" and not choices[1][2]  # a heading, with its entries below it
-    assert texts[2:11] == ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"] and all(choice[3] == 1 for choice in choices[2:11])
+    assert texts[2:12] == ["All Inboxes", "All messages", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"] and all(choice[3] == 1 for choice in choices[2:12])
     local, calendar, other = texts.index("Local Folders"), texts.index("Calendar"), texts.index("other@example.com")
-    assert 11 == local < calendar and texts[calendar : calendar + 3] == ["Calendar", "Contacts", "Tasks"] and calendar + 3 == other
+    assert 12 == local < calendar and texts[calendar : calendar + 3] == ["Calendar", "Contacts", "Tasks"] and calendar + 3 == other
     assert all(not choosable for text, _, choosable, _, _ in choices if text in ("Local Folders", "other@example.com"))
     assert choices[local + 1][3] == 1 and choices[other + 1][3] == 1  # the folders under their account
 
@@ -133,7 +134,7 @@ def test_the_startup_tree_opens_folded_and_a_heading_only_unfolds(world: World, 
     centre = tree.visualRect(favorites).center()
     QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, centre)
     assert tree.isExpanded(favorites) and popup.isVisible() and chooser.currentText() == "Last selected folder"  # a heading only unfolds
-    unread = model.index(1, 0, favorites)  # Unread after All Inboxes in Favorites (the owner, 2.0.298)
+    unread = model.index(2, 0, favorites)  # Unread after All Inboxes and All messages in Favorites (the owner, 2.0.298, D-334)
     QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, tree.visualRect(unread).center())
     wait(qtbot, lambda: not popup.isVisible())
     assert chooser.currentText() == "Unread" and str(chooser.currentData()).startswith("mail\t")

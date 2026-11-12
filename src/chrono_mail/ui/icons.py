@@ -9,9 +9,10 @@ from PySide6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QIconEngine, Q
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 4.4.504"
+__version__ = "icons.py 4.4.586"
 
 # --- Version history ----------------------------------------------------
+# v4.4.586: The icon of Favorites > All messages (D-334)
 # v4.4.504: place_icon: a pin, the place of a meeting on the invitation card (D-310), drawn in the colour of text
 # v4.3.498: split_icon: the owner's split of a row (an arrow, and a dotted line from under it to a second arrow), drawn in the colour of text;
 #           keep_both_icon: the owner's one square above two (Keep both of a sync conflict, B-30, B-31), drawn the same way
@@ -49,6 +50,7 @@ FOLDER_ICONS: dict[str, tuple[str, ...]] = {
     "flagged": ("mail-mark-important", "flag", "emblem-important"),
     "snoozed": ("clock", "folder"),
     "unreplied": ("mail-reply-sender", "folder"),
+    "allmessages": ("mail-message", "folder"),  # Favorites > All messages (D-334)
 }
 
 

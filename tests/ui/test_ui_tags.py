@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.4.585"
+__version__ = "test_ui_tags.py 4.4.586"
 
 # --- Version history ----------------------------------------------------
+# v4.4.586: Favorites > All messages: every message, its own columns, the tag filter (D-334)
 # v4.4.585: Mail's Tags block: a click filters the open folder, one filter with Tagged with, the Sidebar tick (D-334)
 # v4.4.581: Settings > Tags is one list edited in place (D-332): the names read from the lines; the tests of the tabs and of the Name and
 #           Shortcut columns' shared width went with them
@@ -290,3 +291,23 @@ def test_the_tag_filter_stays_on_another_folder_and_the_sidebar_tick_hides_the_b
     assert inbox is not None
     window.tree.setCurrentIndex(inbox)
     wait(qtbot, lambda: window.list_model.rowCount() == every)
+
+
+def test_all_messages_under_favorites_shows_every_message_with_its_own_columns_and_takes_the_tag_filter(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.columnsetup import folder_type, setup_key
+
+    started(qtbot, world)
+    window = world.window
+    tag_rows(world, qtbot, 0)
+    select(world, 1)
+    window.mail_actions.delete_selected()  # one message to Trash
+    wait(qtbot, lambda: window.list_model.rowCount() == 2)
+    titles = [window.folders.model.index(row, 0, window.folders.model.index(0, 0)).data() for row in range(window.folders.model.rowCount(window.folders.model.index(0, 0)))]
+    assert titles[:2] == ["All Inboxes", "All messages"]  # right after All Inboxes (D-334)
+    entry = window.folders.find_item(("", "favorite", "everywhere"))
+    assert entry is not None
+    window.tree.setCurrentIndex(entry)
+    wait(qtbot, lambda: window.mail_state.view.combined == "everywhere" and window.list_model.rowCount() == 3)  # the Inbox's two and the one in Trash
+    assert setup_key(window.mail_state.view) == "favorite\x1feverywhere" and folder_type(window.mail_state.view) == "incoming"  # its own columns, starting as incoming mail
+    window.mail_tags.choose("Work")
+    wait(qtbot, lambda: window.list_model.rowCount() == 1)  # every message with the tag, wherever it is

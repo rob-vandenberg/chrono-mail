@@ -23,9 +23,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.2.479"
+__version__ = "test_ui_preferences.py 4.4.586"
 
 # --- Version history ----------------------------------------------------
+# v4.4.586: Favorites has All messages after All Inboxes (D-334)
 # v4.2.479: the header tests of long lists of names, of a narrower pane and of a sender too wide to wrap unfold the header first (folded,
 #            it is as high for every message and shortens the sender)
 # v4.2.467: the reading pane keeps the width the person gave it, whatever the message; Widen the reading pane to fit the message (D-304)
@@ -545,7 +546,7 @@ def test_the_sidebar_page_switches_entries_on_and_off_after_ok(world: World, qtb
 
     def change(dialog: SettingsDialog) -> None:
         page = dialog.sidebar_page
-        assert list(page.standard_boxes) == ["inboxes", "unread", "outbox", "sent", "drafts", "flagged", "unreplied", "junk", "trash"]  # Snoozed and Archive: not used
+        assert list(page.standard_boxes) == ["inboxes", "everywhere", "unread", "outbox", "sent", "drafts", "flagged", "unreplied", "junk", "trash"]  # Snoozed and Archive: not used
         assert all(box.isChecked() for box in page.standard_boxes.values()) and len(page.pin_boxes) == 1
         assert list(page.account_boxes) == [world.account_id]  # an account with its own folders
         assert page.commands() == []  # nothing changed: nothing is sent
