@@ -11,9 +11,10 @@ from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagging.py 4.4.581"
+__version__ = "tagging.py 4.4.583"
 
 # --- Version history ----------------------------------------------------
+# v4.4.583: The small tags of the Tags column stand as one group in the middle of the column; the ones that fit when it is narrow (the owner)
 # v4.4.581: The Tag menu also offers a tag not shown in Mail that a selected message carries (D-332); the Tags column draws a small coloured tag for each tag on every row, the selected one too: never names (the owner)
 # v4.2.394: a tag's key in the Tag menu only shows there: once the menu had been opened, the key was there twice and Qt did neither
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -107,11 +108,16 @@ def paint_tag_marks(painter: QPainter, area: QRect, tags: tuple[str, ...], book:
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     height = max(6, min(area.height() - 6, QFontMetrics(font).height() - 4))
-    left = area.left() + 4
+    fitting = len(tags)
+    while fitting > 0 and fitting * MARK_WIDTH + (fitting - 1) * MARK_GAP > area.width() - 5:  # as many as fitted before, from 4 pixels in to the last pixel
+        fitting -= 1
+    if fitting == 0:
+        painter.restore()
+        return  # too narrow for even one: nothing drawn, as before
+    group = fitting * MARK_WIDTH + (fitting - 1) * MARK_GAP
+    left = area.left() + (area.width() - group) // 2  # the group in the middle of the column (the owner)
     top = area.top() + (area.height() - height) // 2
-    for tag in tags:
-        if left + MARK_WIDTH > area.right():
-            break
+    for tag in tags[:fitting]:
         colour = book.colour(tag)
         painter.setPen(colour.darker(130))
         painter.setBrush(colour)

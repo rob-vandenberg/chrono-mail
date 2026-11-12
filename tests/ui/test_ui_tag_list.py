@@ -26,9 +26,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_list.py 4.4.582"
+__version__ = "test_ui_tag_list.py 4.4.583"
 
 # --- Version history ----------------------------------------------------
+# v4.4.583: The Tags column test: the small tags stand in the middle of the column (the owner)
 # v4.4.582: New tag… in a contact or task window refuses a name over 100 characters and asks again with it
 # v4.4.581: Initial: Settings > Tags edited in place, the key fields' ✕, Show in per section, the sidebars' numbers, the Tags box of contacts
 #           and tasks, the Tags column (the owner, D-327, D-332)
@@ -325,7 +326,8 @@ def test_the_tags_column_is_called_tags_and_draws_only_small_tags(world: World, 
         drawn.append(image)
     assert drawn[0] == drawn[1]  # the selected row as the others: small tags, never names (the owner)
     painted = [x for x in range(120) if any(drawn[1].pixelColor(x, y).alpha() > 0 for y in range(24))]
-    assert painted and max(painted) < 4 + 3 * (MARK_WIDTH + MARK_GAP)  # three small tags from the left, nothing else (a name would reach further)
+    assert painted and max(painted) - min(painted) < 3 * (MARK_WIDTH + MARK_GAP)  # three small tags, nothing else (a name would reach further)
+    assert abs(min(painted) - (119 - max(painted))) <= 1  # in the middle of the column: as much room left as right (the owner)
 
 
 def test_renames_never_join_two_tags(world: World, qtbot: QtBot) -> None:
