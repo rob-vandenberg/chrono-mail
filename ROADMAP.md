@@ -308,6 +308,13 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 4.7 | Contact groups (vCard 4 and Apple's form, Kerio checked live), kept in step like every card (R-39, D-227). | done (1.10.277) |
 
 ## Milestone 5: Google (OAuth2, Gmail by IMAP, Calendar, People, Tasks)
+
+| # | Task | Status |
+|---|---|---|
+| 5.1 | Gmail mail by IMAP and SMTP with an app password: Add account's Gmail choice, All Mail hidden at first, the app password advice (D-335). | done (4.4.592) |
+| 5.2 | Google sign-in (OAuth with PKCE) through the owner's own Google project; Google Calendar and Google Contacts over CalDAV and CardDAV with it; sign in again when Google ends it (D-335). | in progress |
+| 5.3 | Google Tasks through Google's Tasks API (no tasks over CalDAV at Google). | open |
+
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
 ## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed
 - DONE (0.0.70) The Inboxes heading is removed from the folder tree (it was never requested, D-061).

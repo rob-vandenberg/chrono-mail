@@ -32,7 +32,7 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.2.449"
+__version__ = "accountdialog.py 4.4.592"
 
 # --- Version history ----------------------------------------------------
 # v4.2.449: calendars_account_id: the account that got the calendar server, also a mail account given one (its first fill, D-300)
@@ -41,6 +41,8 @@ __version__ = "accountdialog.py 4.2.449"
 # v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test and Add; Connect tests or adds
 #           again; the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.440: a long error text is shown whole: the smallest height follows what the wrapping texts need at the width, never above the screen
+# v4.4.592: Account type offers Gmail: an IMAP account with Gmail's servers filled in and greyed, the user name the address, and a line on
+#           the app password Gmail asks for (D-335)
 # v4.2.439: Account type offers POP3, IMAP, CalDAV and CardDAV: the calendar window is a part of this one (the sidebars' Add account…
 #           opens it on CalDAV or CardDAV); the first-account window says "your first account" (UR-04, D-298)
 # v4.0.376: built from its Qt Designer form (ui/forms/account_add.ui, D-276), the server boxes at its "servers" place; its smallest width
@@ -68,6 +70,9 @@ __version__ = "accountdialog.py 4.2.449"
 # v0.0.13: Initial account dialog
 
 KINDS: tuple[tuple[AccountKind, str], ...] = ((AccountKind.POP3, "POP3: the mail is downloaded to this computer"), (AccountKind.IMAP, "IMAP: the mail stays on the server and is kept in step"))
+GMAIL: str = "gmail"  # an IMAP account on Gmail's servers, logged in with an app password (D-335)
+GMAIL_LABEL: str = "Gmail: Google mail, with an app password"
+GMAIL_SERVERS: tuple[tuple[str, int], tuple[str, int]] = (("imap.gmail.com", 993), ("smtp.gmail.com", 465))  # both implicit TLS, checked live (D-335)
 CALDAV: str = "caldav"  # the Account type choices of a calendar and contacts server (D-185, D-298): one kind of account, other folders ticked
 CARDDAV: str = "carddav"
 CALENDAR_KINDS: tuple[tuple[str, str], ...] = ((CALDAV, "CalDAV: calendars and tasks from a server"), (CARDDAV, "CardDAV: contacts from a server"))
@@ -117,8 +122,10 @@ class AccountDialog(QDialog):
         self.kind: QComboBox = part(form, QComboBox, "kind")
         for kind, label in KINDS:
             self.kind.addItem(label, kind.value)
+        self.kind.addItem(GMAIL_LABEL, GMAIL)
         for value, label in CALENDAR_KINDS:
             self.kind.addItem(label, value)
+        self.gmail_help: QLabel = part(form, QLabel, "gmailHelp")
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
         self.name: QLineEdit = part(form, QLineEdit, "yourName")
         self.email: QLineEdit = part(form, QLineEdit, "email")
@@ -174,7 +181,10 @@ class AccountDialog(QDialog):
     # --- what follows what ------------------------------------------------------------------------
 
     def _is_imap(self) -> bool:
-        return str(self.kind.currentData()) == AccountKind.IMAP.value
+        return str(self.kind.currentData()) in (AccountKind.IMAP.value, GMAIL)
+
+    def _is_gmail(self) -> bool:
+        return str(self.kind.currentData()) == GMAIL
 
     def _is_calendar(self) -> bool:
         return str(self.kind.currentData()) in (CALDAV, CARDDAV)
@@ -184,13 +194,15 @@ class AccountDialog(QDialog):
         CardDAV: the calendar part instead (the mail fields belong to another kind of account, so they are not shown). Each part keeps what was
         typed, its own result line and what its work answered, so an answer that comes after a change of kind stays with its own part."""
         calendar = self._is_calendar()
+        self.gmail_help.setVisible(self._is_gmail())
         for widget in (self._who, self.servers.widget, self._options, self.test_button, self.result_label):
             widget.setVisible(not calendar)
         self.calendar.setVisible(calendar)
         if calendar:
             self.calendar.ticked_kinds = CARDDAV_KINDS if str(self.kind.currentData()) == CARDDAV else CALDAV_KINDS
         else:
-            self.servers.set_kind(AccountKind(str(self.kind.currentData())))
+            self.servers.set_kind(AccountKind.IMAP if self._is_gmail() else AccountKind(str(self.kind.currentData())))
+            self._gmail_servers()
             self.policy.setEnabled(not self._is_imap())
             self.storage.setEnabled(not self._is_imap())
             if self._is_imap():
@@ -247,8 +259,40 @@ class AccountDialog(QDialog):
         allowed = self.calendar.found is not None if self._is_calendar() else not self._testing
         self.add_button.setEnabled(allowed and not self._adding)
 
+    def _gmail_servers(self) -> None:
+        """Gmail: its servers, both with TLS, and the address as the user name, all greyed (D-335); another kind: the fields are the person's
+        again, and Gmail's server names go when they are still the ones filled in here."""
+        gmail = self._is_gmail()
+        servers = self.servers
+        fixed = (servers.incoming_host, servers.incoming_port, servers.incoming_security, servers.outgoing_host, servers.outgoing_port,
+                 servers.outgoing_security, servers.username, servers.same_login)
+        if gmail:
+            servers.same_login.setChecked(True)
+            for (host, port), (host_field, port_field, security) in zip(GMAIL_SERVERS, ((servers.incoming_host, servers.incoming_port, servers.incoming_security),
+                                                                                         (servers.outgoing_host, servers.outgoing_port, servers.outgoing_security))):
+                security.setCurrentIndex(security.findData("tls"))
+                host_field.setText(host)
+                port_field.setValue(port)
+            servers.username.setText(self.email.text().strip())
+        elif self._gmail_was:
+            domain = self.email.text().strip().partition("@")[2]
+            self._last_guess_host = f"mail.{domain}" if domain else ""  # the usual guess from the address as it is now (typed while on Gmail too)
+            for host_field, (host, _) in zip((servers.incoming_host, servers.outgoing_host), GMAIL_SERVERS):
+                if host_field.text() == host:
+                    host_field.setText(self._last_guess_host)
+        for field in fixed:
+            field.setEnabled(not gmail)
+        self._gmail_was = gmail
+
+    _gmail_was: bool = False
+
     def _guess_from_address(self, text: str) -> None:
-        """Suggest the user name and the server names from the e-mail address, until the person types their own."""
+        """Suggest the user name and the server names from the e-mail address, until the person types their own. Gmail: the user name is the
+        address, the servers stay Gmail's (D-335)."""
+        if self._is_gmail():
+            self.username.setText(text.strip())
+            self._last_guess_user = text
+            return
         if self.username.text() in ("", self._last_guess_user):
             self.username.setText(text)
         domain = text.partition("@")[2]

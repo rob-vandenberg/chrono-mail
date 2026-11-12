@@ -16,9 +16,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.4.517"
+__version__ = "imap_sync.py 4.4.592"
 
 # --- Version history ----------------------------------------------------
+# v4.4.592: Gmail's All Mail starts hidden when nothing of it was here before and the person never chose: it holds every message once
+#           more (D-335)
 # v4.4.517: The answer marks of an invitation are keywords: sent and taken over with the flags, here only in a folder that keeps no keywords (D-310)
 # v4.2.449: receive_only, the first fill of a new account (D-300): folders opened read-only, only downloads; nothing sent to the server,
 #           nothing made, moved, deleted or marked there, nothing removed here, no checkpoint (the next full check asks everything)
@@ -310,6 +312,16 @@ def _printable(text: str) -> str:
     return "".join(character if character.isprintable() else "?" for character in text[:80])
 
 
+def gmail_all_mail_to_hide(capabilities: frozenset[str], listed: Sequence[FolderEntry], state: ImapState) -> list[str]:
+    """Gmail's All Mail (\\All) holds every message of the account once more, so it starts hidden and nothing is kept twice (D-335): only on
+    Gmail (X-GM-EXT-1), only while the person never chose about it (neither unticked nor ticked) and only when it was never synchronised here,
+    so an All Mail kept in step before stays."""
+    if "X-GM-EXT-1" not in capabilities:
+        return []
+    known = set(state.server_names.values())
+    return [entry.name for entry in listed if "\\all" in entry.attributes and entry.name not in state.hidden | state.forced | known]
+
+
 def _role_of(entry: FolderEntry, pass_number: int) -> FolderRole | None:
     if pass_number == 0:
         return FolderRole.INBOX if entry.name.upper() == "INBOX" else next((SPECIAL_USE[attribute] for attribute in entry.attributes if attribute in SPECIAL_USE), None)
@@ -393,6 +405,8 @@ def sync_imap(
         if state.pending and not options.receive_only and send_pending(client, store, state, listed, notes):  # renamed or deleted here offline: on the server first (R-31)
             listed = client.list_folders()
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
+        for name in gmail_all_mail_to_hide(client.capabilities, listed, state):
+            state.set_hidden(name, True)  # as if unticked in Edit account > Folders: ticking it there brings it (D-335)
         for name in sorted(state.forced & subscribed):
             state.follow_list(name)  # ticked here, and the server's list has it now: it follows that list from now on (R-34)
         plans, planning_notes = plan_folders(listed, subscribed, planned_anyway(state), dict(state.roles))

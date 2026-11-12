@@ -38,6 +38,22 @@
      <item row="0" column="1">
       <widget class="QComboBox" name="kind" />
      </item>
+     <item row="1" column="1">
+      <widget class="QLabel" name="gmailHelp">
+       <property name="text">
+        <string>Gmail asks for an app password, not your Google password. Turn on 2-Step Verification in your Google account, then make an app password at &lt;a href="https://myaccount.google.com/apppasswords"&gt;myaccount.google.com/apppasswords&lt;/a&gt; and type it under Password below.</string>
+       </property>
+       <property name="textFormat">
+        <enum>Qt::RichText</enum>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+       <property name="openExternalLinks">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>

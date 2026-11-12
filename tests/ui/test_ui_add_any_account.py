@@ -9,9 +9,10 @@ from tests.fakedav import FakeDav
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_add_any_account.py 4.2.441"
+__version__ = "test_ui_add_any_account.py 4.4.592"
 
 # --- Version history ----------------------------------------------------
+# v4.4.592: the choices include Gmail, after IMAP (D-335)
 # v4.2.441: the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.440: a long error text is shown whole; the smallest height follows the text and the width
 # v4.2.439: Initial tests: every kind of account is added in the one Add window (UR-04, D-298); its size and the type waiting for a test
@@ -19,6 +20,7 @@ __version__ = "test_ui_add_any_account.py 4.2.441"
 CHOICES = [
     "POP3: the mail is downloaded to this computer",
     "IMAP: the mail stays on the server and is kept in step",
+    "Gmail: Google mail, with an app password",
     "CalDAV: calendars and tasks from a server",
     "CardDAV: contacts from a server",
 ]

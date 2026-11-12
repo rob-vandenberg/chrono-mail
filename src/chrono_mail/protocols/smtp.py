@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from typing import override
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
+from chrono_mail.core.errors import refused_login
 from chrono_mail.core.words import digits
 from chrono_mail.protocols.tls import client_context, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 4.2.441"
+__version__ = "smtp.py 4.4.592"
 
 # --- Version history ----------------------------------------------------
+# v4.4.592: a login Gmail refused says how to make an app password (D-335)
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.1.341: once the server accepted the message, a failed QUIT no longer makes the send fail (it was sent again, RV-140)
@@ -102,7 +104,7 @@ def _mapped_errors(settings: ServerSettings) -> Generator[None]:
     try:
         yield
     except smtplib.SMTPAuthenticationError as error:
-        raise AuthenticationError(f"The server refused the login: {_printable(error.smtp_error)}") from None
+        raise refused_login(settings.host, _printable(error.smtp_error)) from None
     except smtplib.SMTPRecipientsRefused as error:
         details = "; ".join(f"{address}: {code} {_printable(text)}" for address, (code, text) in error.recipients.items())
         raise ProtocolError(f"The server refused every recipient: {details}") from None

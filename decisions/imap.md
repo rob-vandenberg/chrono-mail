@@ -32,3 +32,4 @@ See also: [[sync-conflicts]] · [[pop3-smtp-sending]]
 - [[D-206]] Many messages, one command
 - [[D-259]] Hostile input is never fatal
 - [[D-280]] Standard folder names, one language
+- [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts

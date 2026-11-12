@@ -28,3 +28,4 @@ See also: [[storage]]
 - [[D-041]] Password fields and signature
 - [[D-078]] Own generic DAV client
 - [[D-293]] Check for updates never on its own
+- [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts

@@ -7,14 +7,16 @@ from types import TracebackType
 from typing import Self
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
+from chrono_mail.core.errors import refused_login
 from chrono_mail.protocols.lineconnection import LineConnection
 from chrono_mail.protocols.tls import client_context, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 4.4.542"
+__version__ = "imap.py 4.4.592"
 
 # --- Version history ----------------------------------------------------
+# v4.4.592: a login Gmail refused says how to make an app password (D-335)
 # v4.4.542: the connection can be hung up at the end of the program; leave: LOGOUT without waiting for the answer
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
@@ -340,7 +342,7 @@ class ImapClient:
             else:
                 self._command(f"LOGIN {quote(self._settings.username)} {quote(self._password)}")
         except ImapRefused as error:
-            raise AuthenticationError(f"The server refused the login: {error}") from None
+            raise refused_login(self._settings.host, str(error)) from None
         self.capabilities = self._read_capabilities()  # they may differ once logged in
 
     # --- low level -------------------------------------------------------------------------------
