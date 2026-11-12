@@ -17,9 +17,10 @@ from tests.ui.test_ui_tasks import lists, names, open_tasks, seed, select
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_filters.py 4.4.588"
+__version__ = "test_ui_tag_filters.py 4.4.591"
 
 # --- Version history ----------------------------------------------------
+# v4.4.591: The active line shows its number with the check mark right of it (the owner)
 # v4.4.588: A tag renamed in Settings > Tags while its filter is on in Tasks: the filter stays on under the new name (D-334)
 # v4.4.584: One Tags block (D-334): no "All …" line, a click turns a filter on and off, Space and Enter too, the active line blue with a check mark
 #           without the focus, the heading names the tag, a filter set elsewhere scrolls its line into view; the active tag stays when it loses its items
@@ -253,7 +254,36 @@ def test_the_active_line_is_blue_with_a_check_mark_also_without_the_focus(qtbot:
     text = block.list.palette().color(QPalette.ColorRole.HighlightedText)
     right = [image.pixelColor(x, y) for x in range(image.width() - 20, image.width()) for y in range(image.height())]
     assert any(abs(colour.red() - text.red()) + abs(colour.green() - text.green()) + abs(colour.blue() - text.blue()) < 60 for colour in right)  # the check mark at the right
-    assert block.list.item(0).data(COUNT_ROLE) == 1  # the number is kept, only not drawn while the filter is on
+    assert block.list.item(0).data(COUNT_ROLE) == 1  # the number is kept, and drawn with the check mark right of it (the owner)
+
+
+def test_the_active_line_shows_its_number_with_the_check_mark_right_of_it(qtbot: QtBot) -> None:
+    from PySide6.QtGui import QFont, QFontMetrics, QPalette
+
+    from chrono_mail.ui.foldertree import COUNT_MARGIN
+    from chrono_mail.ui.tagfilter import CHECK_MARK
+
+    block = tag_block(qtbot, ["Home"])
+    block.follow([("Home", 164)])
+    block.choose("Home")
+    block.list.clearFocus()  # no dotted focus frame across the line
+    qtbot.wait(50)
+    line = block.list.visualItemRect(block.list.item(0))
+    image = block.list.viewport().grab(line).toImage()
+    ratio = image.devicePixelRatio()
+    bold = QFont(block.list.font())
+    bold.setBold(True)
+    metrics = QFontMetrics(bold)
+    right = line.width() - COUNT_MARGIN
+    number_from, mark_from = right - metrics.horizontalAdvance(f"164 {CHECK_MARK}"), right - metrics.horizontalAdvance(CHECK_MARK)
+    text = block.list.palette().color(QPalette.ColorGroup.Active, QPalette.ColorRole.HighlightedText)
+
+    def written(x: int) -> bool:
+        return any(abs(colour.red() - text.red()) + abs(colour.green() - text.green()) + abs(colour.blue() - text.blue()) < 90
+                   for colour in (image.pixelColor(int(x * ratio), int(y * ratio)) for y in range(3, line.height() - 3)))  # inside the line, clear of any frame
+
+    assert any(written(x) for x in range(number_from, mark_from - 3))  # the number, left of the check mark
+    assert any(written(x) for x in range(mark_from, right))  # the check mark at the right
 
 
 def test_a_filter_turned_on_from_elsewhere_brings_its_line_into_view(qtbot: QtBot) -> None:

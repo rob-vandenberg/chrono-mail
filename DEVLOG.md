@@ -4284,3 +4284,9 @@ Not tried: on screen; on Windows.
 What landed: Favorites starts with All Messages, then All Inboxes, in Mail's folder list, Settings > Sidebar > Mail and Show on startup (`src/chrono_mail/ui/models.py`); "All messages" is written "All Messages", as All Inboxes keeps its capitals (the owner). A fault of 4.4.586 fixed: All Messages could not be hidden, because `favorite.show` knew only the engine's views, which leave out "everywhere"; it now takes All Messages too (`src/chrono_mail/engine/commands_sidebar.py`, `FAVORITE_VIEWS`). Five tests of `tests/ui/test_ui_window.py` had failed since 4.4.586 (the file was not run then); they follow the new Favorites now.
 Tests: `tests/test_engine_sidebar.py` (All Messages hidden and shown, failing without the fix); the order in `test_ui_models.py`, `test_ui_preferences.py`, `test_ui_startup_view.py`, `test_ui_tags.py`, `test_ui_window.py` (failing on 4.4.589); 230 related tests pass; 191 in their own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program. No reviewer (the owner).
 Not tried: on screen; on Windows.
+
+## 2026-11-12 4.4.591 The active tag keeps its number, the check mark right of it (the owner, D-334)
+
+What landed: the blue line of the tag whose filter is on shows its number in bold at the right with ✓ right of it, in every Tags block (`src/chrono_mail/ui/tagfilter.py`, `TagLineDelegate.paint`); before, the ✓ stood in place of the number. A tag with no items left shows only the ✓.
+Tests: new in `tests/ui/test_ui_tag_filters.py` (the number and the ✓ drawn, failing on 4.4.590); 66 related tests pass; the file in its own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program. Review: one Sonnet reviewer: nothing real.
+Not tried: on screen; on Windows.

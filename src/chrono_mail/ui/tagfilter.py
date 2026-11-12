@@ -11,9 +11,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.588"
+__version__ = "tagfilter.py 4.4.591"
 
 # --- Version history ----------------------------------------------------
+# v4.4.591: The active line keeps its number, the check mark right of it (the owner)
 # v4.4.588: follow_renames: the filter on a tag renamed in Settings > Tags stays on under the new name (D-334)
 # v4.4.585: show_quietly: a filter set elsewhere (Mail's Filter > Tagged with) shown in the block, its line in view (D-334)
 # v4.4.584: One Tags block for every section (D-334): no "All …" line; a click on a tag turns its filter on, a second click (or Space, Enter) off; the active
@@ -35,13 +36,13 @@ def tags_shown(settings: QSettings, kind: str) -> bool:
 
 TAG_ROLE: int = Qt.ItemDataRole.UserRole + 1
 ACTIVE_ROLE: int = Qt.ItemDataRole.UserRole + 2  # the line of the tag whose filter is on
-CHECK_MARK: str = "✓"  # in place of the number on the active line (the owner, D-334)
+CHECK_MARK: str = "✓"  # right of the number on the active line (the owner, D-334)
 ACTIVE_HINT: str = "Click again to show everything"
 
 
 class TagLineDelegate(FolderItemDelegate):
     """A tag's line as a folder's, with its number in bold at the right; the active line blue whatever has the focus, with a check mark
-    in place of the number: it shows a state, never a selection (D-334)."""
+    right of its number: it shows a state, never a selection (D-334)."""
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -57,7 +58,9 @@ class TagLineDelegate(FolderItemDelegate):
         full = getattr(item, "rect")  # getattr: no typed field
         bold = QFont(getattr(item, "font"))  # getattr: no typed field
         bold.setBold(True)
-        mark_width = QFontMetrics(bold).horizontalAdvance(CHECK_MARK)
+        count = index.data(COUNT_ROLE)
+        mark = f"{count} {CHECK_MARK}" if isinstance(count, int) and count > 0 else CHECK_MARK  # the number stays, the check mark right of it (the owner)
+        mark_width = QFontMetrics(bold).horizontalAdvance(mark)
         painter.save()
         painter.fillRect(full, palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Highlight))  # the blue also when the window is in the background
         text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item, widget)
@@ -70,7 +73,7 @@ class TagLineDelegate(FolderItemDelegate):
         painter.setFont(getattr(item, "font"))  # getattr: no typed field
         painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), metrics.elidedText(str(index.data(Qt.ItemDataRole.DisplayRole) or ""), Qt.TextElideMode.ElideRight, max(room, 0)))
         painter.setFont(bold)
-        painter.drawText(full.adjusted(0, 0, -COUNT_MARGIN, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), CHECK_MARK)
+        painter.drawText(full.adjusted(0, 0, -COUNT_MARGIN, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), mark)
         if widget is not None and widget.hasFocus() and isinstance(widget, QListWidget) and widget.currentIndex() == index:
             painter.setPen(QPen(palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.HighlightedText), 1, Qt.PenStyle.DotLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
