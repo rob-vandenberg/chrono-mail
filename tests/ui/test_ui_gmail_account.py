@@ -8,9 +8,10 @@ from chrono_mail.ui.accountdialog import GMAIL, GOOGLE, AccountDialog
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_gmail_account.py 4.4.593"
+__version__ = "test_ui_gmail_account.py 4.4.594"
 
 # --- Version history ----------------------------------------------------
+# v4.4.594: Gmail hides Outgoing mail and Options: the window is shorter than with IMAP (D-335)
 # v4.4.593: Google Calendar and Contacts: Sign in with Google, greyed with the reason without the client file (D-335)
 # v4.4.592: Initial tests: Gmail in Add account, its servers filled in and greyed, the address as the user name (D-335)
 
@@ -131,3 +132,30 @@ def test_edit_accounts_sign_in_can_be_stopped_with_its_button(world: World, qtbo
     dialog.dav_check_button.click()
     wait(qtbot, lambda: dialog.dav_check_button.text() == "Sign in with Google")
     assert not commands_google._waiting  # pyright: ignore[reportPrivateUsage]
+
+
+def test_gmail_hides_outgoing_mail_and_options_so_the_window_is_shorter(world: World, qtbot: QtBot) -> None:
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
+    qtbot.wait(50)  # the window lays itself out again after a change of type
+    imap_height = dialog.minimumSize().height()
+    dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
+    qtbot.wait(50)
+    assert not dialog.servers.outgoing_group.isVisibleTo(dialog) and not dialog._options.isVisibleTo(dialog)  # pyright: ignore[reportPrivateUsage]
+    assert dialog.servers.incoming_group.isVisibleTo(dialog) and dialog.servers.password.isVisibleTo(dialog)
+    assert dialog.add_button.isVisibleTo(dialog) and dialog.test_button.isVisibleTo(dialog)
+    assert dialog.minimumSize().height() < imap_height - 150  # measured: 546 against 800
+    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
+    assert dialog.servers.outgoing_group.isVisibleTo(dialog) and dialog._options.isVisibleTo(dialog)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_gmail_always_encrypts_even_after_the_tick_was_taken_off_under_imap(world: World, qtbot: QtBot) -> None:
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
+    qtbot.addWidget(dialog)
+    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
+    dialog.encrypt.setChecked(False)
+    dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
+    assert dialog.encrypt.isChecked()
+

@@ -35,9 +35,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.593"
+__version__ = "accountdialog.py 4.4.594"
 
 # --- Version history ----------------------------------------------------
+# v4.4.594: Gmail hides the Outgoing mail and Options boxes (fixed for Gmail): the window is shorter and its buttons stay on the screen (D-335)
 # v4.4.593: Account type offers Google Calendar and Contacts: Sign in with Google adds both as accounts of calendars and contacts; greyed with
 #           the reason when Google sign-in is not set up on this computer (D-335)
 # v4.2.449: calendars_account_id: the account that got the calendar server, also a mail account given one (its first fill, D-300)
@@ -216,6 +217,11 @@ class AccountDialog(QDialog):
         for widget in (self._who, self.servers.widget, self._options, self.test_button):
             widget.setVisible(not calendar and not google)
         self.result_label.setVisible(not calendar)
+        gmail = self._is_gmail()
+        self.servers.outgoing_group.setVisible(not gmail)  # Gmail: sending uses the incoming login on Gmail's own server, nothing to choose
+        self._options.setVisible(not calendar and not google and not gmail)  # Gmail: an IMAP account of its own, encrypted; the window stays short
+        if gmail:
+            self.encrypt.setChecked(True)  # hidden, so never a choice left over from another type: Gmail's mail is encrypted here (OR-6)
         self.add_button.setText("Sign in with Google" if google else "Add account")
         self.add_button.setToolTip("" if not google or google_client_codes() is not None else
                                    f"Google sign-in is not set up on this computer: {GOOGLE_CLIENT_FILE} is missing")
