@@ -47,9 +47,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 4.4.581"
+__version__ = "tagsdialog.py 4.4.588"
 
 # --- Version history ----------------------------------------------------
+# v4.4.588: renamed: the renames the engine took at OK, for the Tags blocks to follow (D-334)
 # v4.4.581: The colour first, then the name (the owner). One list of tags without tabs, edited in the list (the owner, D-332): the name in its colour (a click on the selected one or F2 renames it
 #           in place), a colour square, Show in Mail, Calendar, Contacts and Tasks, a shortcut from a drop-down (Not assigned, or one no other tag has),
 #           ✕ deletes, Add tag adds a line, a line is dragged to its place; the Add/Edit window and Up and Down are gone
@@ -183,6 +184,7 @@ class TagsPanel(QWidget):
         self.rows: list[TagRow] = rows_from(tags)
         self._first_order: list[str] = [row.name for row in self.rows]
         self.deleted: list[TagRow] = []
+        self.renamed: dict[str, str] = {}  # the renames the engine took at OK: each first name and the name it has now (the Tags blocks follow them, D-334)
         form = forms.fill(self, "settings_tags", {"list": TagList})  # D-276
         self.list = part(form, TagList, "list")
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -428,12 +430,16 @@ class TagsPanel(QWidget):
             return
         steps = self.commands()
         self.status.setText("Saving…")
+        sent: list[AnyStep[object]] = []
 
         def next_step(result: object = None) -> None:
+            if sent:
+                self._note_rename(sent.pop())
             if not steps:
                 self.status.setText("")
                 saved()
                 return
+            sent.append(steps[0])
             steps.pop(0).start(self._backend, next_step, stopped, owner=self)
 
         def stopped(error: ChronoMailError) -> None:
@@ -451,6 +457,14 @@ class TagsPanel(QWidget):
             failed()
 
         next_step()
+
+    def _note_rename(self, step: AnyStep[object]) -> None:
+        """A step the engine took: a rename is noted under the tag's first name (a passing name of swapped names joins its chain)."""
+        if not isinstance(step, Step) or step.command is not TAG_RENAME or not isinstance(step.parameters, RenameParameters):
+            return
+        old, new = step.parameters.name, step.parameters.new_name
+        first = next((start for start, now in self.renamed.items() if now == old), old)
+        self.renamed[first] = new
 
 
 SHOW_IN_WORDS: tuple[tuple[str, str], ...] = (("mail", "Mail"), ("events", "Calendar"), ("contacts", "Contacts"), ("tasks", "Tasks"))

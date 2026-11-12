@@ -11,9 +11,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.585"
+__version__ = "tagfilter.py 4.4.588"
 
 # --- Version history ----------------------------------------------------
+# v4.4.588: follow_renames: the filter on a tag renamed in Settings > Tags stays on under the new name (D-334)
 # v4.4.585: show_quietly: a filter set elsewhere (Mail's Filter > Tagged with) shown in the block, its line in view (D-334)
 # v4.4.584: One Tags block for every section (D-334): no "All …" line; a click on a tag turns its filter on, a second click (or Space, Enter) off; the active
 #           line stays blue wherever the focus is, a check mark in place of its number, a hover text; the heading names the tag; the coloured tag shape of Mail
@@ -154,6 +155,20 @@ class TagFilter(QWidget):
     def clear_quietly(self) -> None:
         """No filter, without telling anyone (the caller loads what it shows itself)."""
         self._set_active("")
+
+    def follow_renames(self, renames: dict[str, str]) -> None:
+        """Settings > Tags renamed tags (each first name and its new one): the filter on a renamed tag stays on under its new name, told as a
+        click is, so the list shows its items again; until the tags come again, the lines carry the new names (D-334)."""
+        new_names = {old.casefold(): new for old, new in renames.items()}
+        wanted = new_names.get(self._active.casefold()) if self._active else None
+        if wanted is None or wanted == self._active:
+            return
+        self._active = wanted
+        self.follow([(new_names.get(name.casefold(), name), count) for name, count in self._tags])
+        row = self._row(wanted)
+        if row is not None:
+            self.list.scrollToItem(self.list.item(row))
+        self.chosen.emit(wanted)
 
     def follow(self, tags: list[tuple[str, int]]) -> None:
         """The tags as they are now, with how many items carry them, changed in place: a number that changed is written again, a tag that came

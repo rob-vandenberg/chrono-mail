@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.4.586"
+__version__ = "test_ui_tags.py 4.4.588"
 
 # --- Version history ----------------------------------------------------
+# v4.4.588: A tag renamed in Settings > Tags while its filter is on: the filter stays on under the new name, also in other capitals (D-334)
 # v4.4.586: Favorites > All messages: every message, its own columns, the tag filter (D-334)
 # v4.4.585: Mail's Tags block: a click filters the open folder, one filter with Tagged with, the Sidebar tick (D-334)
 # v4.4.581: Settings > Tags is one list edited in place (D-332): the names read from the lines; the tests of the tabs and of the Name and
@@ -258,6 +259,35 @@ def test_a_message_coming_into_a_filtered_favorites_view_must_match_the_filter(w
     model._spec = ViewSpec("", combined="tagged", combined_tag="Work", tag="Urgent")
     assert not model._may_hold(arrival((), ("Work",)))
     assert model._may_hold(arrival((), ("work", "urgent")))
+
+
+def rename_in_settings(qtbot: QtBot, world: World, monkeypatch: pytest.MonkeyPatch, old: str, new: str) -> None:
+    """Settings > Tags: the tag old renamed in place to new, and OK."""
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    def rename_and_ok(dialog: SettingsDialog) -> int:
+        row = next(row for row in dialog.tags_panel.rows if row.name == old)
+        dialog.tags_panel.rename(row, new)
+        dialog.accept()  # OK waits for the tags to be saved
+        wait(qtbot, lambda: dialog.result() == SettingsDialog.DialogCode.Accepted)
+        return int(dialog.result())
+
+    monkeypatch.setattr(SettingsDialog, "exec", rename_and_ok)
+    world.window.open_tags()
+
+
+def test_a_tag_renamed_in_settings_while_its_filter_is_on_keeps_the_filter_on_under_its_new_name(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    window = world.window
+    tag_rows(world, qtbot, 0, 2)
+    wait(qtbot, lambda: window.mail_tags.list.count() == 1)
+    window.mail_tags.choose("Work")
+    wait(qtbot, lambda: window.list_model.rowCount() == 2)
+    rename_in_settings(qtbot, world, monkeypatch, "Work", "Projects")
+    wait(qtbot, lambda: window.mail_state.view.tag == "Projects" and window.list_model.rowCount() == 2 and [window.mail_tags.list.item(row).text() for row in range(window.mail_tags.list.count())] == ["Projects"])
+    assert window.mail_tags.tag() == "Projects" and window.mail_tags.title.text() == "Tags: Projects"
+    rename_in_settings(qtbot, world, monkeypatch, "Projects", "PROJECTS")  # other capitals only: followed too
+    wait(qtbot, lambda: window.mail_state.view.tag == "PROJECTS" and window.list_model.rowCount() == 2 and window.mail_tags.title.text() == "Tags: PROJECTS")
 
 
 def test_the_tag_filter_stays_on_another_folder_and_the_sidebar_tick_hides_the_block_and_its_filter(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

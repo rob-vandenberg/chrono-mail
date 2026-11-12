@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.587"
+__version__ = "mainwindow.py 4.4.588"
 
 # --- Version history ----------------------------------------------------
+# v4.4.588: A tag renamed in Settings > Tags keeps its filter on in the four Tags blocks, Mail's view following (D-334)
 # v4.4.587: A sender's contact in an unticked address book opens in its own window (D-334)
 # v4.4.585: Mail's Tags block below the folder list, its own separator place; the block and Filter > Tagged with are one filter; Settings > Sidebar > Mail's Tags tick shows it (D-334)
 # v4.4.578: Settings > Sidebar's Contacts tab: the address books left out and the Tags tick reach Contacts; the Contact icon of a sender in a left-out address book opens the contact in its own window (D-331)
@@ -1199,6 +1200,13 @@ class MainWindow(QMainWindow):
             for page in (self.pages[TASKS], self.pages[CALENDAR]):
                 if isinstance(page, (TasksPage, CalendarPage)):
                     page.reload_tags()  # a new colour or name in their Tags lists and chips (D-327)
+            renames = {old: new for old, new in dialog.tags_panel.renamed.items() if old != new}
+            if renames:  # a filter on a renamed tag stays on under its new name (D-334)
+                self.mail_tags.follow_renames(renames)
+                for page in (self.pages[TASKS], self.pages[CALENDAR]):
+                    if isinstance(page, (TasksPage, CalendarPage)):
+                        page.tag_filter.follow_renames(renames)
+                self.contacts_page.tag_filter.follow_renames(renames)
         self.columns.end_try(accepted)  # the columns shown since they were chosen: kept, or put back (B-16, D-228)
         tried = self.prefs.trying is not None
         self.prefs.try_out(None)
@@ -1259,7 +1267,7 @@ class MainWindow(QMainWindow):
         """A click in Mail's Tags block: the same filter as Filter > Tagged with, on what the list shows (D-334)."""
         view = self.mail_state.view
         wanted = name or None
-        if (view.tag or "").casefold() != (wanted or "").casefold():
+        if (view.tag or "") != (wanted or ""):  # exact: a rename into other capitals is followed too
             self.messages.change_view(changed(view, tag=wanted))
 
     def _mail_tag_shown(self) -> None:

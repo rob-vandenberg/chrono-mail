@@ -12,13 +12,15 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagfilter import TagFilter
 from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.test_ui_calendar import open_calendar, summaries
+from tests.ui.test_ui_tags import rename_in_settings
 from tests.ui.test_ui_tasks import lists, names, open_tasks, seed, select
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_filters.py 4.4.584"
+__version__ = "test_ui_tag_filters.py 4.4.588"
 
 # --- Version history ----------------------------------------------------
+# v4.4.588: A tag renamed in Settings > Tags while its filter is on in Tasks: the filter stays on under the new name (D-334)
 # v4.4.584: One Tags block (D-334): no "All …" line, a click turns a filter on and off, Space and Enter too, the active line blue with a check mark
 #           without the focus, the heading names the tag, a filter set elsewhere scrolls its line into view; the active tag stays when it loses its items
 # v4.4.582: a contact that loses the chosen tag: All contacts is chosen and every contact shows (D-327)
@@ -87,6 +89,17 @@ def test_a_task_that_is_not_shown_and_gets_a_tag_is_counted_at_once(world: World
     done = next(task.item for task in world.call("task.list", state="all").tasks if task.summary == "Old job")
     world.call("task.edit", item=done, add_tag=("Home",))
     wait(qtbot, lambda: rows(page.tag_filter) == ["Home  (2)"])
+
+
+def test_a_tag_renamed_in_settings_while_its_filter_is_on_in_tasks_keeps_the_filter_on_under_its_new_name(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed(world)
+    page = open_tasks(world, qtbot, 4)
+    wait(qtbot, lambda: rows(page.tag_filter) == ["Home  (1)"])
+    page.tag_filter.choose("Home")
+    wait(qtbot, lambda: names(page) == ["Pay rent"])
+    rename_in_settings(qtbot, world, monkeypatch, "Home", "House")
+    wait(qtbot, lambda: page.tag_filter.tag() == "House" and rows(page.tag_filter) == ["House  (1)"] and names(page) == ["Pay rent"])
+    assert page.tag_filter.title.text() == "Tags: House"
 
 
 def icon_colour(tag_filter: TagFilter, row: int) -> str:
