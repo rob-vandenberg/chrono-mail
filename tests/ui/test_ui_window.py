@@ -24,9 +24,10 @@ from chrono_mail.ui.textbox import TextBox
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.4.561"
+__version__ = "test_ui_window.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner); the tests that missed All Messages since 4.4.586 follow
 # v4.4.561: the window opened after a close gets a new backend: the closed one hands out no answers since 4.4.542
 # v4.2.454: F2 in the folder list asks through TextBox.ask (Rename folder opens 360 pixels wide)
 # v4.2.419: About is a window of its own (D-293)
@@ -157,7 +158,7 @@ def test_first_start_without_an_account_asks_for_one(empty_world: World, qtbot: 
 
 def test_tree_shows_the_account_and_its_folders_with_unread_counts(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    assert tree_labels(world.window) == ["Favorites", "  All Inboxes  (3)", "  Unread  (3)", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Unreplied", "  Junk", "  Trash", "me@example.com", "  Inbox  (3)", "  Unread", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Junk", "  Trash"]  # the owner's order (D-061, D-232)
+    assert tree_labels(world.window) == ["Favorites", "  All Messages", "  All Inboxes  (3)", "  Unread  (3)", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Unreplied", "  Junk", "  Trash", "me@example.com", "  Inbox  (3)", "  Unread", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Junk", "  Trash"]  # the owner's order (D-061, D-232)
     assert world.window.count_label.text() == "3 messages, 3 unread"
     assert world.window.sort_button.text() == "Sorted by Received ▾"
     assert world.window.windowTitle() == "Inbox (3) - Chrono Mail"
@@ -578,6 +579,8 @@ def test_a_folder_that_can_take_a_drop_gets_a_bar_across_the_row(world: World, q
     qtbot.wait(50)
     trash = window.folders.find_item((world.account_id, "folder", "Trash"))  # noqa: SLF001
     assert trash is not None
+    window.tree.scrollTo(trash)  # in view, whatever the height of the folder list
+    qtbot.wait(50)
     row = window.tree.visualRect(trash)
     image = window.tree.viewport().grab().toImage()
     highlight = window.tree.palette().color(QPalette.ColorRole.Highlight).name()
@@ -1291,7 +1294,7 @@ def test_next_unread_goes_on_to_the_next_folder_with_unread_mail(world: World, q
 def test_the_favorites_show_the_same_folder_of_every_mailbox_and_can_be_switched_off(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     favorites = world.window.tree_model.index(0, 0)
-    inboxes = world.window.tree_model.index(0, 0, favorites)  # All Inboxes first (the owner's order, D-061)
+    inboxes = world.window.tree_model.index(1, 0, favorites)  # All Inboxes after All Messages (the owner)
     assert favorites.data() == "Favorites" and inboxes.data() == "All Inboxes" and inboxes.data(COUNT_ROLE) == 3
     world.window.tree.setCurrentIndex(inboxes)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
@@ -1312,8 +1315,8 @@ def test_a_pinned_folder_and_a_group_show_in_the_folder_list(world: World, qtbot
     world.window.reload_accounts(select_saved=False)
     wait(qtbot, lambda: "Work" in tree_labels(world.window))
     labels = tree_labels(world.window)
-    assert labels[0] == "Favorites" and labels[10] == "  Sent"  # the pinned folder follows the standard favorites
-    assert labels[11:15] == ["Work", "  All Inboxes  (3)", "  me@example.com", "    Inbox  (3)"]  # Inbox first, then Unread (D-232)
+    assert labels[0] == "Favorites" and labels[11] == "  Sent"  # the pinned folder follows the standard favorites
+    assert labels[12:16] == ["Work", "  All Inboxes  (3)", "  me@example.com", "    Inbox  (3)"]  # Inbox first, then Unread (D-232)
     inbox = next(world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)) for row in range(2) if world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)).data(KIND_ROLE) == "groupinbox")
     world.window.tree.setCurrentIndex(inbox)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
@@ -1321,7 +1324,7 @@ def test_a_pinned_folder_and_a_group_show_in_the_folder_list(world: World, qtbot
     world.window.search_box.setText("Message 2")  # a search stays inside the combined view
     world.window.search_box.returnPressed.emit()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
-    pinned = world.window.tree_model.index(9, 0, world.window.tree_model.index(0, 0))  # after the nine standard favorites
+    pinned = world.window.tree_model.index(10, 0, world.window.tree_model.index(0, 0))  # after the ten standard favorites
     assert pinned.data(KIND_ROLE) == "pinlink"
     world.window.tree.setCurrentIndex(pinned)
     wait(qtbot, lambda: world.window.mail_state.view.folder == "Sent")  # noqa: SLF001
@@ -1349,16 +1352,16 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
     assert "Put in group" in offered(account) and "Take out of its group" not in offered(account)
     world.window.folders.sidebar_call(FAVORITE_PIN, PinParameters(world.account_id, "Inbox"))  # noqa: SLF001
     wait(qtbot, lambda: any(pin.folder == "Inbox" for pin in world.call("sidebar.show").pins))
-    wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:12] and offered(world.window.tree_model.index(0, 0, account_node(world.window))) == [])
-    pinned = world.window.tree_model.index(9, 0, world.window.tree_model.index(0, 0))  # after the nine standard favorites
+    wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:13] and offered(world.window.tree_model.index(0, 0, account_node(world.window))) == [])
+    pinned = world.window.tree_model.index(10, 0, world.window.tree_model.index(0, 0))  # after the ten standard favorites
     assert pinned.data(KIND_ROLE) == "pinlink" and offered(pinned)[:4] == ["Remove from Favorites", "Rename…", "Move up", "Move down"]
     assert offered(pinned)[4:] == STANDARD_FAVORITES  # then every standard favorite (D-234)
-    standard = world.window.tree_model.index(2, 0, world.window.tree_model.index(0, 0))
+    standard = world.window.tree_model.index(3, 0, world.window.tree_model.index(0, 0))
     assert offered(standard) == STANDARD_FAVORITES  # a group is made from an account (1.1.190)
     assert offered(world.window.tree_model.index(0, 0)) == STANDARD_FAVORITES  # the heading too, also while nothing is hidden
 
 
-STANDARD_FAVORITES = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]  # Snoozed, Scheduled, Archive: no such folder yet
+STANDARD_FAVORITES = ["All Messages", "All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]  # Snoozed, Scheduled, Archive: no such folder yet
 
 
 def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_shows_or_hides_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1381,10 +1384,10 @@ def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_sh
     first = ticks()
     assert list(first) == STANDARD_FAVORITES and all(checked and enabled for checked, enabled in first.values())  # nothing hidden: all ticked
     click("Sent")
-    wait(qtbot, lambda: "  Sent" not in tree_labels(world.window)[:10] and ticks()["Sent"] == (False, True))  # hidden, still listed
+    wait(qtbot, lambda: "  Sent" not in tree_labels(world.window)[:11] and ticks()["Sent"] == (False, True))  # hidden, still listed
     click("Sent")
-    wait(qtbot, lambda: "  Sent" in tree_labels(world.window)[:10] and ticks()["Sent"] == (True, True))  # shown again
-    in_use = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk"]  # Trash stays
+    wait(qtbot, lambda: "  Sent" in tree_labels(world.window)[:11] and ticks()["Sent"] == (True, True))  # shown again
+    in_use = ["All Messages", "All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk"]  # Trash stays
     for label in in_use:
         click(label)
         wait(qtbot, lambda label=label: not ticks()[label][0])

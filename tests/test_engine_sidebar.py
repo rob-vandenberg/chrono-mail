@@ -13,9 +13,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_sidebar.py 2.0.287"
+__version__ = "test_engine_sidebar.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: Favorites > All Messages can be hidden and shown again (D-334)
 # v2.0.287: the permission check not on Windows (the Windows computer's report)
 # v1.1.252: a renamed folder takes its pins along, with the folders inside it; their names and order stay; other accounts untouched (R-41)
 # v1.1.204: sidebar.show-local-folder hides and shows a standard folder of Local Folders; the file refuses another name
@@ -46,6 +47,8 @@ def test_pinning_renaming_ordering_and_unpinning_folders(tmp_path: Path) -> None
             call(engine, "favorite.pin", account=account, folder="No/Such")
         assert call(engine, "favorite.show", view="trash", visible=False).hidden == ("trash",)
         assert call(engine, "favorite.show", view="trash", visible=True).hidden == ()
+        assert call(engine, "favorite.show", view="everywhere", visible=False).hidden == ("everywhere",)  # All Messages can be hidden too (D-334)
+        assert call(engine, "favorite.show", view="everywhere", visible=True).hidden == ()
         with pytest.raises(UsageError):
             call(engine, "favorite.show", view="everything")
         call(engine, "account.remove", account=account)  # the pins of a removed account go with it

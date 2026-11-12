@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.4.588"
+__version__ = "test_ui_tags.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
 # v4.4.588: A tag renamed in Settings > Tags while its filter is on: the filter stays on under the new name, also in other capitals (D-334)
 # v4.4.586: Favorites > All messages: every message, its own columns, the tag filter (D-334)
 # v4.4.585: Mail's Tags block: a click filters the open folder, one filter with Tagged with, the Sidebar tick (D-334)
@@ -333,7 +334,7 @@ def test_all_messages_under_favorites_shows_every_message_with_its_own_columns_a
     window.mail_actions.delete_selected()  # one message to Trash
     wait(qtbot, lambda: window.list_model.rowCount() == 2)
     titles = [window.folders.model.index(row, 0, window.folders.model.index(0, 0)).data() for row in range(window.folders.model.rowCount(window.folders.model.index(0, 0)))]
-    assert titles[:2] == ["All Inboxes", "All messages"]  # right after All Inboxes (D-334)
+    assert titles[:2] == ["All Messages", "All Inboxes"]  # first, then All Inboxes (the owner)
     entry = window.folders.find_item(("", "favorite", "everywhere"))
     assert entry is not None
     window.tree.setCurrentIndex(entry)

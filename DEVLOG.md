@@ -4278,3 +4278,9 @@ Not tried: on screen; on Windows.
 What landed: every tab of Settings > Sidebar is headed "Show in the sidebar:" (`src/chrono_mail/ui/forms/settings_sidebar.ui`); Mail's Tags tick stands first, above Favorites, as on the other tabs (`sidebarpage.py`); the Colour column of Settings > Tags shows a filled circle as tall as the tag's name in place of a square, sharp on any pixel ratio (`tagsdialog.py`, `colour_circle`).
 Tests: two new in `tests/ui/test_ui_settings_tabs.py`, both failing on 4.4.588; 262 related tests pass; the file in its own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program, none in the changed test file. Review: one Sonnet reviewer: nothing real.
 Not tried: on screen; on Windows.
+
+## 2026-11-12 4.4.590 All Messages first in Favorites, and it can be hidden (the owner, D-334)
+
+What landed: Favorites starts with All Messages, then All Inboxes, in Mail's folder list, Settings > Sidebar > Mail and Show on startup (`src/chrono_mail/ui/models.py`); "All messages" is written "All Messages", as All Inboxes keeps its capitals (the owner). A fault of 4.4.586 fixed: All Messages could not be hidden, because `favorite.show` knew only the engine's views, which leave out "everywhere"; it now takes All Messages too (`src/chrono_mail/engine/commands_sidebar.py`, `FAVORITE_VIEWS`). Five tests of `tests/ui/test_ui_window.py` had failed since 4.4.586 (the file was not run then); they follow the new Favorites now.
+Tests: `tests/test_engine_sidebar.py` (All Messages hidden and shown, failing without the fix); the order in `test_ui_models.py`, `test_ui_preferences.py`, `test_ui_startup_view.py`, `test_ui_tags.py`, `test_ui_window.py` (failing on 4.4.589); 230 related tests pass; 191 in their own process and in reverse order; Pyrefly (Linux and win32) 0 errors in the program. No reviewer (the owner).
+Not tried: on screen; on Windows.

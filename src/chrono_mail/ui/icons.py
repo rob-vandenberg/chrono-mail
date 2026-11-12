@@ -50,7 +50,7 @@ FOLDER_ICONS: dict[str, tuple[str, ...]] = {
     "flagged": ("mail-mark-important", "flag", "emblem-important"),
     "snoozed": ("clock", "folder"),
     "unreplied": ("mail-reply-sender", "folder"),
-    "allmessages": ("mail-message", "folder"),  # Favorites > All messages (D-334)
+    "allmessages": ("mail-message", "folder"),  # Favorites > All Messages (D-334)
 }
 
 

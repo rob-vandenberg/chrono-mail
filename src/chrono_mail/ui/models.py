@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 4.4.586"
+__version__ = "models.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: Favorites starts with All Messages, then All Inboxes; All Messages written with capitals as All Inboxes (the owner)
 # v4.4.586: Favorites > All messages after All Inboxes: every message there is (D-334)
 # v4.4.585: The Tags section leaves the folder list: tags are Mail's Tags block (D-334)
 # v4.4.581: Tags lists only the tags some mail carries, each with how many in bold at the right, as a folder's unread (the owner, D-327)
@@ -94,8 +95,8 @@ COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages
 
 
 FAVORITES: tuple[tuple[str, str, str], ...] = (  # view id (message.combined), label, icon
-    ("inboxes", "All Inboxes", "inbox"),  # the owner's order (2.0.298): as under every account (D-232), All Inboxes in the Inbox's place
-    ("everywhere", "All messages", "allmessages"),  # every message of every folder of every account, with its own columns (the owner, D-334)
+    ("everywhere", "All Messages", "allmessages"),  # every message of every folder of every account, with its own columns; first (the owner, D-334)
+    ("inboxes", "All Inboxes", "inbox"),  # then All Inboxes, as under every account in the Inbox's place (the owner, 2.0.298, D-232)
     ("unread", "Unread", "unread"),
     ("outbox", "Outbox", "outbox"),
     ("sent", "Sent", "sent"),

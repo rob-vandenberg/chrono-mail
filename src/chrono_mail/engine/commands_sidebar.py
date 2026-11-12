@@ -4,15 +4,16 @@ from dataclasses import dataclass, field
 from chrono_mail.config import LOCAL_FOLDER_KINDS, Sidebar, load_sidebar, save_sidebar
 from chrono_mail.core import ConfigurationError
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_combined import VIEWS
+from chrono_mail.engine.commands_combined import EVERYWHERE, VIEWS
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_sidebar.py 2.1.311"
+__version__ = "commands_sidebar.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: favorite.show takes All Messages (everywhere) too: it can be hidden as every favorite (D-334)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed favorite.*, sidebar.show-tree, sidebar.show-local-folder, group.*
 # v1.1.252: a change of the sidebar file holds the engine's sidebar lock (a rename moves pins at the same time, R-41)
@@ -23,6 +24,9 @@ __version__ = "commands_sidebar.py 2.1.311"
 # v1.1.190: group.add needs at least one account (an empty group could never be shown)
 # v0.0.47: Initial commands for pinned favorites and account groups
 
+
+
+FAVORITE_VIEWS: tuple[str, ...] = (*VIEWS, EVERYWHERE)  # the standard favorites that can be shown or hidden: the views and All Messages (D-334)
 
 @dataclass(frozen=True, slots=True)
 class PinInfo:
@@ -127,7 +131,7 @@ def favorite_reorder(engine: Engine, parameters: ReorderParameters) -> SidebarIn
 
 @dataclass(frozen=True, slots=True)
 class VisibleParameters:
-    view: str = field(metadata=option("A standard favorite: " + ", ".join(VIEWS)))
+    view: str = field(metadata=option("A standard favorite: " + ", ".join(FAVORITE_VIEWS)))
     visible: bool = field(default=True, metadata=option("false switches it off"))
 
 
@@ -155,8 +159,8 @@ def sidebar_show_local_folder(engine: Engine, parameters: LocalFolderParameters)
 
 
 def favorite_show(engine: Engine, parameters: VisibleParameters) -> SidebarInfo:
-    if parameters.view not in VIEWS:
-        raise UsageError(f"The standard favorites are {', '.join(VIEWS)}")
+    if parameters.view not in FAVORITE_VIEWS:
+        raise UsageError(f"The standard favorites are {', '.join(FAVORITE_VIEWS)}")
     return _change(engine, lambda sidebar: sidebar.with_hidden(parameters.view, not parameters.visible))
 
 

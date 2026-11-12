@@ -18,9 +18,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, PAGE_SIZE, ROW_ROLE, M
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 4.4.586"
+__version__ = "test_ui_models.py 4.4.590"
 
 # --- Version history ----------------------------------------------------
+# v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
 # v4.4.586: Favorites has All messages after All Inboxes (D-334)
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged; Favorites All Inboxes, Unread, …, Flagged, Unreplied (D-232, D-061)
@@ -366,7 +367,7 @@ def test_favorites_and_local_folders_in_the_tree() -> None:
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
     counts = [model.index(row, 0, favorites).data(COUNT_ROLE) for row in range(model.rowCount(favorites))]
-    assert labels[:3] == ["All Inboxes", "All messages", "Unread"] and labels[-1] == "Trash" and counts[0] == 7 and counts[2] == 7 and counts[-1] == 7 and len(labels) == 10  # shared mail counted once (Snoozed and Archive are not used here)
+    assert labels[:3] == ["All Messages", "All Inboxes", "Unread"] and labels[-1] == "Trash" and counts[1] == 7 and counts[2] == 7 and counts[-1] == 7 and len(labels) == 10  # shared mail counted once (Snoozed and Archive are not used here)
     model.show_favorites = model.show_local_folders = False
     model.populate(accounts, folders)
     assert tops(model) == ["one@example.com", "two@example.com"]
@@ -551,12 +552,12 @@ def test_snoozed_and_archive_show_only_once_used_and_a_hidden_tree_goes(qtbot: Q
     model.populate(accounts, plain)
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
-    assert labels == ["All Inboxes", "All messages", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]
+    assert labels == ["All Messages", "All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]
     used = {"a" * 32: [Info("Inbox", "inbox", 0), Info("Snoozed", "snoozed", 0), Info("Archive", "archive", 0)], "b" * 32: [Info("Inbox", "inbox", 0)]}
     model.populate(accounts, used)
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
-    assert labels == ["All Inboxes", "All messages", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Snoozed", "Archive", "Junk", "Trash"]
+    assert labels == ["All Messages", "All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Snoozed", "Archive", "Junk", "Trash"]
     model.hidden_trees = {"b" * 32}
     model.populate(accounts, used)
     assert tops(model) == ["Favorites", "one@example.com"]
