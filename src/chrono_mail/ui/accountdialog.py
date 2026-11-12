@@ -37,9 +37,11 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.595"
+__version__ = "accountdialog.py 4.4.596"
 
 # --- Version history ----------------------------------------------------
+# v4.4.596: Gmail: the field is called App password, with the hint 16 letters from Google; spaces and line breaks of a pasted app password
+#           are removed (D-335)
 # v4.4.595: the mail part in three tabs, Account (with the user name and password), Servers and Options, the buttons always below them; Gmail
 #           greys Servers and Options; never taller than the screen with the title bar counted (the owner, D-336)
 # v4.4.594: Gmail hides the Outgoing mail and Options boxes (fixed for Gmail): the window is shorter and its buttons stay on the screen (D-335)
@@ -121,6 +123,7 @@ class AccountDialog(QDialog):
         self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
         self.created_account_id: str | None = None
         self._google_ticket: str = ""  # the Google sign-in under way, so Cancel stops exactly it
+        self._password_label: QLabel | None = None  # Password, or App password for Gmail
         self.added_account_ids: tuple[str, ...] = ()  # every account the window added (Google: its calendars and its contacts)
         self.key_created: bool = False
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
@@ -197,6 +200,8 @@ class AccountDialog(QDialog):
             return
         for field in (servers.username, servers.password):
             label = incoming.labelForField(field)
+            if field is servers.password and isinstance(label, QLabel):
+                self._password_label = label
             incoming.takeRow(field)
             if label is not None:
                 who.addRow(label, field)
@@ -242,6 +247,9 @@ class AccountDialog(QDialog):
         for index, reason in ((SERVERS_TAB, "Gmail's servers are filled in for you"), (OPTIONS_TAB, "A Gmail account keeps its own folders, encrypted")):
             self.tabs.setTabEnabled(index, not gmail)  # greyed, never hidden (OR-15): everything Gmail needs is on the Account tab
             self.tabs.setTabToolTip(index, reason if gmail else "")
+        if self._password_label is not None:  # Gmail asks for an app password: the field says so (D-335)
+            self._password_label.setText("App password" if gmail else "Password")
+        self.servers.password.setPlaceholderText("16 letters from Google" if gmail else "")
         if gmail:
             self.tabs.setCurrentIndex(ACCOUNT_TAB)
             self.encrypt.setChecked(True)  # never a choice left over from another type: Gmail's mail is encrypted here (OR-6)
@@ -395,7 +403,10 @@ class AccountDialog(QDialog):
 
     def _values(self, fresh: bool = False) -> AccountCheckParameters:
         """fresh: a test the person starts, which checks the certificates with the usual checks only (D-299)."""
-        return dataclasses.replace(self.servers.check_parameters(trusted=tuple(self.trusted)), fresh=fresh)
+        values = dataclasses.replace(self.servers.check_parameters(trusted=tuple(self.trusted)), fresh=fresh)
+        if self._is_gmail():  # Google shows an app password in groups with spaces, and a copy may bring a line break: it is only letters (D-335)
+            values = dataclasses.replace(values, password="".join(values.password.split()))
+        return values
 
     def _busy(self, busy: bool) -> None:
         """A test runs: Test waits for its answer (it would start another test), and so does the mail part's Add."""

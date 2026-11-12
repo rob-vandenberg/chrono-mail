@@ -11,9 +11,11 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FO
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 4.2.415"
+__version__ = "foldertree.py 4.4.596"
 
 # --- Version history ----------------------------------------------------
+# v4.4.596: an arrow or page key moves past a folder that only holds folders (Gmail's [Gmail]), opening it on the way down; nothing is
+#           dropped on it (D-335)
 # v4.2.415: a drop of a mix is taken when one of its messages may go there; each message is then moved by its own rules (D-287)
 # v3.6.367: a drag of messages of several accounts is taken by a folder of any account of the list; the drop gives each message with its account (D-272)
 # v3.6.366: messages dropped on a folder of another account are moved there; the drop names the account they come from (D-272)
@@ -95,8 +97,39 @@ class FolderItemDelegate(QStyledItemDelegate):
         return size
 
 
+KEYS_DOWN: frozenset[QAbstractItemView.CursorAction] = frozenset({
+    QAbstractItemView.CursorAction.MoveDown, QAbstractItemView.CursorAction.MoveNext, QAbstractItemView.CursorAction.MovePageDown,
+    QAbstractItemView.CursorAction.MoveEnd,
+})
+
+
+def holds_only_folders(index: QModelIndex | QPersistentModelIndex) -> bool:
+    """A folder entry that exists only as the parent of other folders (Gmail's [Gmail]): it cannot be selected (D-335)."""
+    return index.isValid() and str(index.data(KIND_ROLE)) == "folder" and not bool(index.flags() & Qt.ItemFlag.ItemIsSelectable)
+
+
 class FolderTree(QTreeView):
     """The folder tree. Messages dragged from the list can be dropped on a folder of their own account or of another (D-272)."""
+
+    @override
+    def moveCursor(self, cursorAction: QAbstractItemView.CursorAction, modifiers: Qt.KeyboardModifier) -> QModelIndex:  # noqa: N802, N803 - Qt's names
+        """The keyboard never stops on a folder that only holds folders: down it opens and goes on to its first folder, up it goes on to
+        the entry above; with nothing beyond it, the current entry stays."""
+        index = super().moveCursor(cursorAction, modifiers)
+        if holds_only_folders(index) and cursorAction is QAbstractItemView.CursorAction.MoveLeft:
+            return self.currentIndex()  # Left from a folder inside it: stay, as at the top of a tree
+        down = cursorAction in KEYS_DOWN
+        while holds_only_folders(index):
+            if down:
+                self.setExpanded(index, True)
+            onward = self.indexBelow(index) if down else self.indexAbove(index)
+            if not onward.isValid():
+                return self.currentIndex()
+            index = onward
+        if cursorAction is QAbstractItemView.CursorAction.MoveEnd:
+            while self.indexBelow(index).isValid():  # End: the last entry, also inside a holder that opened on the way
+                index = self.indexBelow(index)
+        return index
 
     messages_dropped = Signal(str, str, list, int, str)  # account id, target folder path, [(folder, message id)], the list's places_epoch when the
     # rest of the selection follows (-1: nothing follows)
@@ -156,8 +189,8 @@ class FolderTree(QTreeView):
         """The (account, folder) under the pointer when the dragged messages may go there."""
         dragged = read_messages_summary(event.mimeData())  # never the whole list: it is read at every pointer move (RV-205)
         index = self.indexAt(event.position().toPoint())
-        if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder":
-            return None
+        if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder" or holds_only_folders(index):
+            return None  # Gmail's [Gmail] holds only folders: no mail can go there (D-335)
         account, folder, role = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE)), str(index.data(FOLDER_ROLE_ROLE))
         sources = frozenset({dragged[0]}) if dragged[0] else read_messages_accounts(event.mimeData())  # several accounts: each message's (D-272)
         if not sources or role == "outbox" or (sources == {account} and dragged[1] == {folder}):

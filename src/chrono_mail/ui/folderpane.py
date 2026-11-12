@@ -22,7 +22,7 @@ from chrono_mail.ui.backend import AnyStep, Backend
 from chrono_mail.ui.burst import Burst
 from chrono_mail.ui.currentview import EntryKind
 from chrono_mail.ui.deletekey import DeleteKey
-from chrono_mail.ui.foldertree import FolderTree
+from chrono_mail.ui.foldertree import FolderTree, holds_only_folders
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messagelistpane import MessageListPane
@@ -38,9 +38,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.585"
+__version__ = "folderpane.py 4.4.596"
 
 # --- Version history ----------------------------------------------------
+# v4.4.596: a folder that only holds folders (Gmail's [Gmail]) is never what the list shows: a click opens or closes it, the keyboard moves past it (FolderTree.moveCursor); Show on startup lists it as a heading
 # v4.4.585: No Tags entries in the folder list (D-334): a start-up choice or last view that was a tag opens All Inboxes, said once
 # v4.4.581: Tags lists only the tags some mail carries, each with its number (the owner, D-327); the tag shown stays until it is left, and then goes (D-146)
 # v4.4.572: A tag under Tags has Show everything tagged… in its right-click menu: the Tag overview (D-328)
@@ -270,7 +271,7 @@ class FolderPane(QObject):
                     wanted.append((startup.account, startup.entry_kind, startup.path))  # the folder chosen in Settings; when it is gone, the last selected one
                 if saved_folder and (saved_account or saved_kind in (EntryKind.FAVORITE, EntryKind.GROUPINBOX)):
                     wanted.append((saved_account, saved_kind, saved_folder))
-            target = next((found for found in (self.find_item(key) for key in wanted) if found is not None), None)
+            target = next((found for found in (self.find_item(key) for key in wanted) if found is not None and not holds_only_folders(found)), None)  # [Gmail], saved by 4.4.595: the next choice
             if target is None:
                 target = self._first_inbox()
             if target is None:
@@ -317,8 +318,8 @@ class FolderPane(QObject):
         def entry(item: TreeEntry, depth: int) -> None:
             visible = node_key(item) in shown
             name = data(item, NAME_ROLE) or data(item, Qt.ItemDataRole.DisplayRole)
-            if data(item, KIND_ROLE) in (EntryKind.ACCOUNT, EntryKind.GROUP, EntryKind.SECTION):
-                choices.append((name, "-", False, depth, visible))  # a heading
+            if data(item, KIND_ROLE) in (EntryKind.ACCOUNT, EntryKind.GROUP, EntryKind.SECTION) or not item.selectable:
+                choices.append((name, "-", False, depth, visible))  # a heading, or a folder that only holds folders (Gmail's [Gmail], D-335)
             else:
                 choices.append((name, "mail\t" + "\t".join((data(item, ACCOUNT_ROLE), data(item, KIND_ROLE), data(item, FOLDER_PATH_ROLE))), visible, depth, visible))
 
@@ -460,8 +461,8 @@ class FolderPane(QObject):
     # --- choosing an entry ----------------------------------------------------------------------------------------------------
 
     def _clicked(self, index: QModelIndex) -> None:
-        """A click on a heading folds it open or shut (a heading is never selected)."""
-        if str(index.data(KIND_ROLE)) == EntryKind.SECTION:
+        """A click on a heading, or on a folder that only holds folders (Gmail's [Gmail]), folds it open or shut (it is never selected)."""
+        if str(index.data(KIND_ROLE)) == EntryKind.SECTION or _only_holds_folders(index):
             self.tree.setExpanded(index, not self.tree.isExpanded(index))
 
     def _current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
@@ -469,7 +470,7 @@ class FolderPane(QObject):
         if not current.isValid() or self._key_of(current) == (view.account, view.key_kind, view.path):
             return  # the entry of the view that is shown (the highlight going back from a heading): nothing to open again
         kind = EntryKind(str(current.data(KIND_ROLE)))
-        if kind is EntryKind.SECTION:  # a heading is never what the list shows: the highlight goes back to the folder that is shown
+        if kind is EntryKind.SECTION or _only_holds_folders(current):  # never what the list shows: the highlight goes back to the folder shown
             if previous.isValid() and str(previous.data(KIND_ROLE)) != EntryKind.SECTION:
                 self.tree.setCurrentIndex(previous)
             return
@@ -774,6 +775,8 @@ class FolderPane(QObject):
 
     def _tree_menu(self, position: QPoint) -> None:
         clicked = self.tree.indexAt(position)
+        if holds_only_folders(clicked):
+            return  # Gmail's [Gmail] holds only folders: nothing to do with it, and never an action meant for the folder selected before
         if clicked.isValid() and clicked != self.tree.currentIndex():
             self.tree.setCurrentIndex(clicked)
         menu = QMenu(self._parent)
@@ -847,3 +850,10 @@ class FolderPane(QObject):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._backend.ask(FOLDER_DELETE, FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True), lambda result: self._status.show(with_rules("Folder deleted", result.rules)), lambda error: self._status.report("Could not delete the folder", error), owner=self)
+
+
+def _only_holds_folders(index: QModelIndex) -> bool:
+    """A folder entry that exists only as the parent of other folders (Gmail's [Gmail]): it cannot be selected; the keyboard moves past it
+    (FolderTree.moveCursor), a click or right-click leaves the selection where it was."""
+    return holds_only_folders(index)
+

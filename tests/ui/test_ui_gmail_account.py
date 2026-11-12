@@ -8,9 +8,10 @@ from chrono_mail.ui.accountdialog import GMAIL, GOOGLE, AccountDialog
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_gmail_account.py 4.4.595"
+__version__ = "test_ui_gmail_account.py 4.4.596"
 
 # --- Version history ----------------------------------------------------
+# v4.4.596: a folder that only holds folders cannot be selected; App password with its hint, its spaces dropped (D-335)
 # v4.4.595: Gmail needs only the Account tab, Servers and Options greyed; the window never taller than the screen with its title bar (D-336)
 # v4.4.594: Gmail hides Outgoing mail and Options: the window is shorter than with IMAP (D-335)
 # v4.4.593: Google Calendar and Contacts: Sign in with Google, greyed with the reason without the client file (D-335)
@@ -188,3 +189,125 @@ def test_an_empty_server_brings_the_servers_tab_to_the_front_with_its_name(world
     dialog.password.clear()
     dialog.test_button.click()
     assert dialog.tabs.currentIndex() == ACCOUNT_TAB and "password" in dialog.result_label.text()
+
+
+def test_a_folder_that_only_holds_folders_cannot_be_selected_and_a_real_one_can() -> None:
+    from typing import cast
+
+    from PySide6.QtCore import QModelIndex, Qt
+
+    from chrono_mail.engine.commands_folders import FolderInfo
+    from chrono_mail.ui.models import FolderTreeModel
+    from tests.ui.test_ui_models import Account, Info
+
+    model = FolderTreeModel()
+    model.show_favorites = False
+    infos = cast(list[FolderInfo], [Info("Inbox", "inbox"), Info("[Gmail]/Starred", "other"), Info("Archive/2026", "other"), Info("Archive", "archive")])
+    model.populate([Account("a" * 32, "ann@gmail.com")], {"a" * 32: infos})  # Info stands in for FolderInfo, as in test_ui_models.py
+    found: dict[str, QModelIndex] = {}
+
+    def walk(parent: QModelIndex) -> None:
+        for row in range(model.rowCount(parent)):
+            index = model.index(row, 0, parent)
+            found[str(index.data())] = index
+            walk(index)
+
+    walk(QModelIndex())
+    selectable = Qt.ItemFlag.ItemIsSelectable
+    assert not model.flags(found["[Gmail]"]) & selectable  # Gmail's container: no folder of its own (D-335)
+    assert model.flags(found["Starred"]) & selectable and model.flags(found["Archive"]) & selectable  # a parent that is a real folder stays selectable
+
+
+def test_gmail_asks_for_an_app_password_and_drops_its_spaces(world: World, qtbot: QtBot) -> None:
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
+    qtbot.addWidget(dialog)
+    label = dialog._password_label  # pyright: ignore[reportPrivateUsage]
+    assert label is not None and label.text() == "Password" and dialog.password.placeholderText() == ""
+    dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
+    assert label.text() == "App password" and dialog.password.placeholderText() == "16 letters from Google"
+    dialog.password.setText(" ocue ajiu ewtd nlqd\n")
+    assert dialog._values().password == "ocueajiuewtdnlqd"  # pyright: ignore[reportPrivateUsage]
+    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
+    assert label.text() == "Password" and dialog.password.placeholderText() == ""
+    assert dialog._values().password == " ocue ajiu ewtd nlqd\n"  # pyright: ignore[reportPrivateUsage]  # another server's password is its own
+
+
+def test_the_arrow_keys_move_past_a_folder_that_only_holds_folders(world: World, qtbot: QtBot) -> None:
+    from typing import cast
+
+    from PySide6.QtCore import Qt
+
+    from chrono_mail.engine.commands_folders import FolderInfo
+    from tests.ui.test_ui_models import Account, Info
+
+    pane = world.window.folders
+    pane.model.show_favorites = False
+    infos = cast(list[FolderInfo], [Info("Inbox", "inbox"), Info("Trash", "trash"), Info("[Gmail]/Spam", "other"), Info("[Gmail]/Starred", "other")])
+    pane.model.populate([Account("a" * 32, "ann@gmail.com")], {"a" * 32: infos})  # Info stands in for FolderInfo, as in test_ui_models.py
+    world.window.show()
+    tree = pane.tree
+    tree.expandAll()
+    tree.collapse(next(index for index in pane.model.match(pane.model.index(0, 0), Qt.ItemDataRole.DisplayRole, "[Gmail]", 1, Qt.MatchFlag.MatchRecursive)))
+    trash = pane.model.match(pane.model.index(0, 0), Qt.ItemDataRole.DisplayRole, "Trash", 1, Qt.MatchFlag.MatchRecursive)[0]
+    tree.setCurrentIndex(trash)
+    tree.setFocus()
+    qtbot.keyClick(tree, Qt.Key.Key_Down)
+    assert tree.currentIndex().data() == "Spam"  # past [Gmail], which opened on the way (D-335)
+    qtbot.keyClick(tree, Qt.Key.Key_Up)
+    assert tree.currentIndex().data() == "Trash"  # and back past it
+    holder = pane.model.match(pane.model.index(0, 0), Qt.ItemDataRole.DisplayRole, "[Gmail]", 1, Qt.MatchFlag.MatchRecursive)[0]
+    tree.setCurrentIndex(holder)  # what a right-click does (on Windows with no button held): the selection stays where it was
+    assert tree.currentIndex().data() == "Trash"
+    from PySide6.QtWidgets import QMenu
+
+    shown: list[QMenu] = []
+    monkeypatch_exec = QMenu.exec
+    try:
+        QMenu.exec = lambda self, *args: shown.append(self)  # type: ignore[method-assign]  # pyright: ignore[reportAttributeAccessIssue]
+        pane._tree_menu(tree.visualRect(holder).center())  # pyright: ignore[reportPrivateUsage]
+    finally:
+        QMenu.exec = monkeypatch_exec  # type: ignore[method-assign]
+    assert shown == [] and tree.currentIndex().data() == "Trash"  # no menu on [Gmail], so no action on the folder selected before
+    from chrono_mail.ui.dragdata import messages_mime_data
+    from tests.ui.test_ui_dragdrop import move_probe
+
+    spam = pane.model.match(pane.model.index(0, 0), Qt.ItemDataRole.DisplayRole, "Spam", 1, Qt.MatchFlag.MatchRecursive)[0]
+    data = messages_mime_data("", [("Inbox", "m" * 32)], sources=["a" * 32])
+    assert move_probe(world, tree.visualRect(spam).center(), data)  # a real folder takes the mail
+    assert not move_probe(world, tree.visualRect(holder).center(), data)  # [Gmail] takes none
+
+
+def test_show_on_startup_lists_a_folder_that_only_holds_folders_as_a_heading(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typing import cast
+
+    from chrono_mail.engine.commands_folders import FolderInfo
+    from tests.ui.test_ui_models import Account, Info
+
+    pane = world.window.folders
+    state = pane._state  # pyright: ignore[reportPrivateUsage]
+    accounts = [*state.accounts, Account("a" * 32, "ann@gmail.com", kind="imap")]
+    folders = {**state.folders, "a" * 32: cast(list[FolderInfo], [Info("Inbox", "inbox"), Info("[Gmail]/Starred", "other")])}
+    monkeypatch.setattr(state, "accounts", accounts)
+    monkeypatch.setattr(state, "folders", folders)
+    choices = {text: (value, can) for text, value, can, _depth, _shown in pane.startup_choices()}
+    assert choices["[Gmail]"] == ("-", False)  # a heading, not a folder to open at start (D-335)
+    assert choices["Starred"][0].startswith("mail\t")  # the folder inside it is a choice
+
+
+def test_a_start_saved_on_gmails_container_opens_the_next_choice(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typing import cast
+
+    from PySide6.QtCore import QModelIndex
+
+    from chrono_mail.engine.commands_folders import FolderInfo
+    from tests.ui.test_ui_models import Account, Info
+
+    pane = world.window.folders
+    state = pane._state  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(state, "accounts", [*state.accounts, Account("a" * 32, "ann@gmail.com", kind="imap")])
+    monkeypatch.setattr(state, "folders", {**state.folders, "a" * 32: cast(list[FolderInfo], [Info("Inbox", "inbox"), Info("[Gmail]/Starred", "other")])})
+    pane._memory.remember_view("a" * 32, "[Gmail]", "folder")  # pyright: ignore[reportPrivateUsage]  # what 4.4.595 saved after a click on it
+    pane.tree.selectionModel().clear()
+    pane.tree.setCurrentIndex(QModelIndex())
+    pane.lay_out(select_saved=True)
+    assert pane.tree.currentIndex().isValid() and pane.tree.currentIndex().data() != "[Gmail]"  # the next choice opens (D-335)

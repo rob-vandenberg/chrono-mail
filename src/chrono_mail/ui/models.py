@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 4.4.590"
+__version__ = "models.py 4.4.596"
 
 # --- Version history ----------------------------------------------------
+# v4.4.596: a parent that exists only as part of a path (Gmail's [Gmail]) cannot be selected: it holds folders, never mail
 # v4.4.590: Favorites starts with All Messages, then All Inboxes; All Messages written with capitals as All Inboxes (the owner)
 # v4.4.586: Favorites > All messages after All Inboxes: every message there is (D-334)
 # v4.4.585: The Tags section leaves the folder list: tags are Mail's Tags block (D-334)
@@ -355,13 +356,16 @@ class FolderTreeModel(QAbstractItemModel):
             path = tuple(info.path.split("/"))
             if account_id == local_id and path[0] in hidden_tops:
                 continue  # switched off in Settings > Sidebar, with the folders inside it
-            for depth in range(1, len(path)):  # parents that exist only as part of a path
+            for depth in range(1, len(path)):  # parents that exist only as part of a path (Gmail's [Gmail]): they hold folders, never mail
                 if path[:depth] not in nodes:
-                    nodes[path[:depth]] = (nodes[path[:depth - 1]] if depth > 1 else top).append(self._folder_entry(account_id, path[:depth], "other", 0, 0))
+                    holder = self._folder_entry(account_id, path[:depth], "other", 0, 0)
+                    holder.selectable = False  # a click opens or closes it; selecting it asked for a folder that is not there
+                    nodes[path[:depth]] = (nodes[path[:depth - 1]] if depth > 1 else top).append(holder)
             role, unread = info.role, info.unread
             entry = self._folder_entry(account_id, path, role, unread, shown_number(info))
-            if path in nodes:  # made earlier as a parent: it takes its real role and number now
+            if path in nodes:  # made earlier as a parent: it takes its real role and number now, and is a folder to choose
                 nodes[path].values.update(entry.values)
+                nodes[path].selectable = True
             else:
                 nodes[path] = (nodes[path[:-1]] if len(path) > 1 else top).append(entry)
         top.children.insert(_place_after(top.children, "drafts"), flagged_entry)  # Inbox, Unread, Outbox, Sent, Drafts, Flagged (the owner, D-232)
