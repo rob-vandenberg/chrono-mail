@@ -8,9 +8,10 @@ from tests.ui.test_ui_window import open_folder, select, started
 from tests.ui.world import World, menu_named, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 3.6.369"
+__version__ = "test_ui_shortcuts.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: F9 hides the folder list with its Tags block (D-334)
 # v3.6.369: Not junk shows the junk key in the menus (or its own key), in Junk the Message menu shows Not junk only, Ctrl+J there brings it back;
 #           Not junk works in Favorites > Junk, greyed with nothing selected and outside Junk
 # v2.0.305: Menu > Message > Go to holds the five ways to move to another message or folder; their keys work as before
@@ -132,9 +133,9 @@ def test_the_folder_menu_and_go_to_folder(world: World, qtbot: QtBot, monkeypatc
     assert any(item == "me@example.com / Sent" for item in asked[0])
     wait(qtbot, lambda: window.mail_state.view.folder == "Sent")  # noqa: SLF001
     window.act_toggle_folders.trigger()
-    assert window.tree.isHidden()
+    assert window.mail_side.isHidden()  # the folder list and its Tags block (D-334)
     window.act_toggle_folders.trigger()
-    assert not window.tree.isHidden()
+    assert not window.mail_side.isHidden()
 
 
 def test_the_composer_and_the_message_window_have_the_same_keys(world: World, qtbot: QtBot) -> None:

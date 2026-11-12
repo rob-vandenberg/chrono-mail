@@ -16,9 +16,10 @@ from chrono_mail.ui.prefs import StartupView
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebarpage.py 4.4.578"
+__version__ = "sidebarpage.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Show on startup no longer forces Tags shown: tags are no entry of the folder list (D-334)
 # v4.4.578: Four tabs in the order of the sections: Mail, Calendar, Contacts (new: the address books and the Tags tick) and Tasks (the owner, D-331)
 # v4.4.575: The Calendar and Tasks tabs have a Tags tick: that sidebar's Tags list shown or not (D-327)
 # v4.4.568: Three tabs: Mail (as before), Calendar and Tasks, which tick the calendars and task lists their sidebars show; the last one shown cannot be left out (D-326)
@@ -41,7 +42,6 @@ class StartupForces:
 
     views: frozenset[str] = field(default_factory=frozenset)  # a standard favorite
     favorites: bool = False  # the Favorites heading (a favorite or a pinned folder was chosen)
-    tags: bool = False  # the Tags heading (a tag was chosen)
     trees: frozenset[str] = field(default_factory=frozenset)  # the account (or Local Folders) of a chosen folder
     folders: frozenset[tuple[str, str]] = field(default_factory=frozenset)  # (account, folder) of a chosen folder
 
@@ -56,8 +56,6 @@ def startup_forces(startup: StartupView) -> StartupForces:
         return StartupForces(views=frozenset({path}), favorites=True)
     if kind == "pinlink":
         return StartupForces(favorites=True)
-    if kind == "tagview":
-        return StartupForces(tags=True)
     if account and kind == "folder":
         return StartupForces(trees=frozenset({account}), folders=frozenset({(account, path)}))
     if account and kind in ("account", "unread", "flagged"):
@@ -152,8 +150,6 @@ class SidebarPage(QWidget):
         if forces.favorites:
             forced.add(self.favorites_box)
         forced.update(self.standard_boxes[view] for view in forces.views if view in self.standard_boxes)
-        if forces.tags and self.tags_box is not None:
-            forced.add(self.tags_box)
         for account in forces.trees:
             forced.add(self.local_box if account == self._local_id else self.account_boxes.get(account, self.local_box))
         for account, folder in forces.folders:  # a folder of Local Folders: its standard folder (or the one it is inside)

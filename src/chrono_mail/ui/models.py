@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 4.4.581"
+__version__ = "models.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: The Tags section leaves the folder list: tags are Mail's Tags block (D-334)
 # v4.4.581: Tags lists only the tags some mail carries, each with how many in bold at the right, as a folder's unread (the owner, D-327)
 # v4.2.426: TIMED_ROLES: Snoozed, Scheduled and the Outbox, whose messages leave at a time
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -183,12 +184,10 @@ class FolderTreeModel(QAbstractItemModel):
 
     show_favorites: bool = True
     show_local_folders: bool = True
-    show_tags: bool = True
     leaving = Signal(QModelIndex, int, int)  # these rows of this parent are about to go: told before Qt hears it (its selection moves on its own then)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.tags: list[tuple[str, str, int]] = []  # (name, #rrggbb, how many mails carry it) of the tags some mail carries, in the person's order: the Tags at the bottom
         self.pins: list[tuple[str, str, str, str]] = []  # pin id, account, folder, name
         self.groups: list[tuple[str, str, tuple[str, ...]]] = []  # group id, name, account ids
         self.hidden: set[str] = set()  # standard favorites that are switched off
@@ -196,7 +195,6 @@ class FolderTreeModel(QAbstractItemModel):
         # What Show on startup chose is always shown, with its parent, whatever is switched off (Settings > Sidebar):
         self.forced: set[str] = set()  # a standard favorite
         self.force_favorites: bool = False
-        self.force_tags: bool = False
         self.forced_trees: set[str] = set()  # an account (or Local Folders) whose folder or view was chosen
         self.hidden_local: set[str] = set()  # standard folders of Local Folders that are switched off (LOCAL_FOLDER_KINDS)
         self.forced_folders: set[tuple[str, str]] = set()  # (account, folder) chosen by Show on startup: shown with its parents
@@ -293,12 +291,10 @@ class FolderTreeModel(QAbstractItemModel):
             places = [account for account in places if account.kind != "local" or account.account_id in self.forced_trees]
         mailboxes = places
         mailbox_ids = [account.account_id for account in mailboxes]
-        # A hidden account tree hides only the tree: its mail is still in Favorites and Tags.
+        # A hidden account tree hides only the tree: its mail is still in Favorites.
         places = [account for account in places if account.account_id not in hidden_trees]
         if mailboxes and (everything or self.show_favorites or self.force_favorites):
             top.append(self._favorites(mailbox_ids, folders, everything))
-        if mailboxes and (everything or self.show_tags or self.force_tags) and self.tags:
-            top.append(self._tags_entry())  # right after Favorites
         members = {member for _, _, accounts_of in self.groups for member in accounts_of}
         shown = {account.account_id: account for account in places}
         known = {account.account_id for account in accounts}
@@ -320,16 +316,6 @@ class FolderTreeModel(QAbstractItemModel):
         font.setBold(True)
         values: dict[int, object] = {Qt.ItemDataRole.DisplayRole: title, KIND_ROLE: kind, ACCOUNT_ROLE: "", Qt.ItemDataRole.FontRole: font}
         return TreeEntry(key, values, selectable)
-
-    def _tags_entry(self) -> TreeEntry:
-        """Tags: one entry per tag, showing the mail of every mailbox that carries it (the combined view "tagged")."""
-        section = self._heading("Tags", "section", ("section", "", "Tags", ""), selectable=False)
-        for name, colour, count in self.tags:  # count: how many mails carry it, drawn as a folder's unread (D-327)
-            section.append(TreeEntry(("tagview", "", name, ""), {
-                Qt.ItemDataRole.DisplayRole: name, NAME_ROLE: name, COUNT_ROLE: count, Qt.ItemDataRole.DecorationRole: tag_icon(QColor(colour)), ICON_NAME_ROLE: f"tag:{colour}",
-                KIND_ROLE: "tagview", ACCOUNT_ROLE: "", FOLDER_PATH_ROLE: name,
-            }))
-        return section
 
     def _group(
         self, group_id: str, name: str, present: list[AccountSummary], member_ids: tuple[str, ...], folders: Mapping[str, Sequence[FolderInfo]], local_id: str,

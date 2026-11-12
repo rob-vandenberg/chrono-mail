@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.4.581"
+__version__ = "test_ui_tags.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Mail's Tags block: a click filters the open folder, one filter with Tagged with, the Sidebar tick (D-334)
 # v4.4.581: Settings > Tags is one list edited in place (D-332): the names read from the lines; the tests of the tabs and of the Name and
 #           Shortcut columns' shared width went with them
 # v4.4.580: The list and its buttons inside the tab page, as Settings > Sidebar (the owner, D-331); no longer tabs as wide as the list (v1.1.186)
@@ -83,26 +84,30 @@ def test_the_list_is_filtered_by_a_tag_and_the_filter_button_shows_it(world: Wor
     assert not world.window.filters.button.isChecked()
 
 
-def test_the_tags_section_of_the_folder_list_shows_the_mail_of_a_tag(world: World, qtbot: QtBot) -> None:
+def test_a_click_on_a_tag_in_mails_tags_block_shows_only_its_mail_of_the_open_folder_and_a_second_click_all(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
+    folder = window.mail_state.view.folder
     tagged = sorted([subjects(window)[0], subjects(window)[2]])
+    every = window.list_model.rowCount()
     tag_rows(world, qtbot, 0, 2)
-    wait(qtbot, lambda: window.folders.find_item(("", "tagview", "Work")) is not None)
-    found = window.folders.find_item(("", "tagview", "Work"))
-    assert found is not None
-    window.tree.setCurrentIndex(found)
-    wait(qtbot, lambda: window.mail_state.view.combined == "tagged" and window.list_model.rowCount() == 2)
-    assert sorted(subjects(window)) == tagged  # the two tagged messages, from the combined view
+    wait(qtbot, lambda: window.mail_tags.list.count() == 1)
+    window.mail_tags.choose("Work")  # a click on the tag in the Tags block
+    wait(qtbot, lambda: window.mail_state.view.tag == "Work" and window.list_model.rowCount() == 2)
+    assert sorted(subjects(window)) == tagged and window.mail_state.view.folder == folder  # the open folder, filtered (D-334)
+    assert window.mail_state.view.filtered and window.filters.button.isChecked()  # the Filter button is blue: a filter is on
+    window.mail_tags.choose("")  # a second click
+    wait(qtbot, lambda: window.mail_state.view.tag is None and window.list_model.rowCount() == every)
 
 
-def test_the_tags_section_comes_right_after_favorites(world: World, qtbot: QtBot) -> None:
+def test_mails_tags_block_stands_below_the_folder_list_and_never_in_it(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
     tag_rows(world, qtbot, 0)
-    wait(qtbot, lambda: window.folders.find_item(("", "tagview", "Work")) is not None)
+    wait(qtbot, lambda: window.mail_tags.list.count() == 1)
     titles = [window.tree_model.item(row).text() for row in range(window.tree_model.rowCount())]
-    assert titles.index("Tags") == titles.index("Favorites") + 1
+    assert "Tags" not in titles and window.folders.find_item(("", "tagview", "Work")) is None  # no Tags entries in the folder list (D-334)
+    assert window.mail_side.widget(0) is window.tree and window.mail_side.widget(1) is window.mail_tags
 
 
 def test_the_reading_pane_shows_the_tags_of_the_message(world: World, qtbot: QtBot) -> None:
@@ -222,24 +227,21 @@ def test_the_filters_narrow_a_favorites_view(world: World, qtbot: QtBot) -> None
     window.filters.clear_filters()
 
 
-def test_tagged_with_narrows_a_tags_view(world: World, qtbot: QtBot) -> None:
+def test_tagged_with_and_the_tags_block_are_one_filter(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
+    every = window.list_model.rowCount()
     tag_rows(world, qtbot, 0, 2)
     urgent = window.list_model.index(2, 0).data(ROW_ROLE).subject
     tag_rows(world, qtbot, 2, name="Urgent")
-    wait(qtbot, lambda: window.folders.find_item(("", "tagview", "Work")) is not None)
-    found = window.folders.find_item(("", "tagview", "Work"))
-    assert found is not None
-    window.tree.setCurrentIndex(found)
-    wait(qtbot, lambda: window.mail_state.view.combined == "tagged" and window.list_model.rowCount() == 2)
-    window.filters.set_tag("Urgent")
-    wait(qtbot, lambda: window.list_model.rowCount() == 1)
-    assert subjects(window) == [urgent]
-    spec = window.messages.view_spec()
-    assert spec is not None and spec.combined_tag == "Work" and spec.tag == "Urgent"
-    window.filters.clear_filters()
-    wait(qtbot, lambda: window.list_model.rowCount() == 2)
+    wait(qtbot, lambda: window.mail_tags.list.count() == 2)
+    window.filters.set_tag("Urgent")  # Filter > Tagged with
+    wait(qtbot, lambda: window.list_model.rowCount() == 1 and window.mail_tags.tag() == "Urgent")  # the block shows the same filter (D-334)
+    assert subjects(window) == [urgent] and window.mail_tags.title.text() == "Tags: Urgent"
+    window.mail_tags.choose("Work")  # a click on another tag in the block: Tagged with follows
+    wait(qtbot, lambda: window.mail_state.view.tag == "Work" and window.list_model.rowCount() == 2)
+    window.filters.clear_filters()  # Filter > Clear
+    wait(qtbot, lambda: window.list_model.rowCount() == every and window.mail_tags.tag() == "")
 
 
 def test_a_message_coming_into_a_filtered_favorites_view_must_match_the_filter(world: World) -> None:
@@ -255,3 +257,36 @@ def test_a_message_coming_into_a_filtered_favorites_view_must_match_the_filter(w
     model._spec = ViewSpec("", combined="tagged", combined_tag="Work", tag="Urgent")
     assert not model._may_hold(arrival((), ("Work",)))
     assert model._may_hold(arrival((), ("work", "urgent")))
+
+
+def test_the_tag_filter_stays_on_another_folder_and_the_sidebar_tick_hides_the_block_and_its_filter(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    started(qtbot, world)
+    window = world.window
+    every = window.list_model.rowCount()
+    tag_rows(world, qtbot, 0)
+    wait(qtbot, lambda: window.mail_tags.list.count() == 1)
+    window.mail_tags.choose("Work")
+    wait(qtbot, lambda: window.list_model.rowCount() == 1)
+    unread = window.folders.find_item(("", "favorite", "unread"))
+    assert unread is not None
+    window.tree.setCurrentIndex(unread)  # another entry of the folder list: the filter stays on it (D-334)
+    wait(qtbot, lambda: window.mail_state.view.combined == "unread" and window.mail_state.view.tag == "Work")
+    assert window.mail_tags.tag() == "Work"
+
+    def untick_and_ok(dialog: SettingsDialog) -> QDialog.DialogCode:
+        box = dialog.sidebar_page.tags_box
+        assert box is not None and box.isChecked()
+        box.setChecked(False)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SettingsDialog, "exec", untick_and_ok)
+    window.open_settings("Sidebar")
+    wait(qtbot, lambda: window.mail_tags.isHidden() and window.mail_state.view.tag is None)  # hidden, it filters nothing
+    inbox = window.folders.find_item(("", "favorite", "inboxes"))
+    assert inbox is not None
+    window.tree.setCurrentIndex(inbox)
+    wait(qtbot, lambda: window.list_model.rowCount() == every)

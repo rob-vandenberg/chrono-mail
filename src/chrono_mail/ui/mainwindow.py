@@ -54,7 +54,7 @@ from chrono_mail.ui.scale import px
 from chrono_mail.ui.searchfilters import ListFilters, MailSearch
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
-from chrono_mail.ui.splitter import PaneSplitter
+from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.syncconflicts import SyncConflictsWindow
 from chrono_mail.ui.syncmarks import CONFLICT, SyncMarks, mark_icon
@@ -62,7 +62,7 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
-from chrono_mail.ui.tagfilter import tags_shown_key
+from chrono_mail.ui.tagfilter import TagFilter, tags_shown_key
 from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.578"
+__version__ = "mainwindow.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Mail's Tags block below the folder list, its own separator place; the block and Filter > Tagged with are one filter; Settings > Sidebar > Mail's Tags tick shows it (D-334)
 # v4.4.578: Settings > Sidebar's Contacts tab: the address books left out and the Tags tick reach Contacts; the Contact icon of a sender in a left-out address book opens the contact in its own window (D-331)
 # v4.4.577: Quitting keeps the place of the separator above the Tags list of Calendar, Tasks and Contacts, each its own (D-330)
 # v4.4.575: Settings > Sidebar's Tags tick of Calendar and Tasks shows or hides that sidebar's Tags list (D-327)
@@ -464,7 +465,10 @@ class MainWindow(QMainWindow):
         self.splitter.setObjectName("mainSplitter")
         self.content_splitter.setObjectName("contentSplitter")
         self.side_stack = QStackedWidget(self)  # the left side: the folders of the mail, or the sidebar of the section that is shown
-        self.side_stack.addWidget(self.tree)
+        self.mail_tags = TagFilter(self.tags.book, self)  # Mail's Tags block below the folder list: the filter Tagged with of what the list shows (D-334)
+        self.mail_side = SideSplitter("mail_side_splitter", self.settings, self.tree, self.mail_tags, self)  # its own place (D-330)
+        self.mail_tags.setVisible(self.prefs.read().show_tags)  # Settings > Sidebar > Mail's Tags tick
+        self.side_stack.addWidget(self.mail_side)
         self.content_stack = QStackedWidget(self)
         self.content_stack.addWidget(self.content_splitter)
         self.section_bar = SectionBar(self)
@@ -498,7 +502,7 @@ class MainWindow(QMainWindow):
             calendar_page.answer_wanted.connect(self.reading.answer_event)
             calendar_page.delegate_wanted.connect(self.reading.delegate_event)
         self.tag_overviews: dict[str, TagOverviewWindow] = {}  # the Tag overview windows open, by their tag in lower case (D-328)
-        self.folders.tag_overview_wanted.connect(self.show_tag_overview)
+        self.mail_tags.overview_wanted.connect(self.show_tag_overview)
         self.contacts_page.tag_overview_wanted.connect(self.show_tag_overview)
         for filtered in (self.pages[TASKS], self.pages[CALENDAR]):
             if isinstance(filtered, (TasksPage, CalendarPage)):
@@ -580,7 +584,7 @@ class MainWindow(QMainWindow):
         self.act_copy_to = self._action("Copy to folder…", lambda: actions.popup_folders("copy"), "Ctrl+Shift+C")
         self.act_quick_copy = self._action("Quick copy", lambda: actions.popup_folders("copy"), "C")
         self.act_go_to_folder = self._action("Go to folder…", self.folders.go_to_folder, "G")
-        self.act_toggle_folders = self._action("Folder list", lambda: self.tree.setVisible(self.act_toggle_folders.isChecked()), "F9")
+        self.act_toggle_folders = self._action("Folder list", lambda: self.mail_side.setVisible(self.act_toggle_folders.isChecked()), "F9")  # the folder list with its Tags block (D-334)
         self.act_toggle_folders.setCheckable(True)
         self.act_toggle_folders.setChecked(True)
         self.act_unread = self._action("Mark as unread", lambda: actions.mark_selected(seen=False), "Ctrl+U")
@@ -861,6 +865,9 @@ class MainWindow(QMainWindow):
         self.list_view.doubleClicked.connect(self._row_double_clicked)
         self.list_view.icon_clicked.connect(self._icon_clicked)
         self.messages.view_changed.connect(self.filters.show_state)
+        self.messages.view_changed.connect(self._mail_tag_shown)
+        self.tags.arrived.connect(self._mail_tags_arrived)
+        self.mail_tags.chosen.connect(self._mail_tag_chosen)
         self.messages.view_changed.connect(self.search.show_state)
         self.backend.busy_changed.connect(self.report.busy_changed)
         self.backend.jobs_changed.connect(self.report.jobs_changed)
@@ -946,6 +953,7 @@ class MainWindow(QMainWindow):
         self.memory.remember_sizes("splitter2", self.splitter.sizes())
         if self.reading.place != "off":
             self.memory.remember_sizes("content_splitter", self.content_splitter.sizes())
+        self.mail_side.remember()  # the separator above Mail's Tags block (D-330, D-334)
         for page in self.pages.values():  # the separator above each section's Tags list, each its own place (D-330)
             if isinstance(page, (CalendarPage, TasksPage, ContactsPage)):
                 page.side_splitter.remember()
@@ -1222,7 +1230,7 @@ class MainWindow(QMainWindow):
             tray_available=self.tray.available, shortcut_actions=self._shortcut_registry(), accounts=tuple(state.mail_accounts()),
             folders=state.rule_folders, current_folder=self._rule_folder_now, startup_choices=tuple(self.folders.startup_choices()),
             tags=state.tags, favorites=state.favorites_in_use(), hidden_favorites=frozenset(model.hidden), pins=tuple(self.folders.pin_labels()),
-            has_tags=bool(model.tags), local_id=state.local_id(), tree_accounts=tuple(state.tree_accounts()),
+            has_tags=bool(state.tags), local_id=state.local_id(), tree_accounts=tuple(state.tree_accounts()),
             hidden_trees=frozenset(model.hidden_trees), local_folders=tuple(state.local_standard_folders()),
             hidden_local=frozenset(model.hidden_local), columns=self.columns.columns, column_choices=self.columns.picker_setup(),
         )
@@ -1241,6 +1249,21 @@ class MainWindow(QMainWindow):
     def open_tags(self) -> None:
         """Menu > Tags: make, change, order and delete tags, on the Tags page of the Settings window."""
         self.open_settings("Tags")
+
+    def _mail_tags_arrived(self) -> None:
+        """The tags some mail carries, with their numbers, in Mail's Tags block (D-334)."""
+        self.mail_tags.follow([(tag.name, tag.mails) for tag in self.mail_state.tags if tag.mails > 0])
+
+    def _mail_tag_chosen(self, name: str) -> None:
+        """A click in Mail's Tags block: the same filter as Filter > Tagged with, on what the list shows (D-334)."""
+        view = self.mail_state.view
+        wanted = name or None
+        if (view.tag or "").casefold() != (wanted or "").casefold():
+            self.messages.change_view(changed(view, tag=wanted))
+
+    def _mail_tag_shown(self) -> None:
+        """The view changed (Filter > Tagged with, Filter > Clear, another folder): the Tags block shows its filter."""
+        self.mail_tags.show_quietly(self.mail_state.view.tag or "")
 
     def apply_preferences(self) -> None:
         """Take into use what changed in the settings file since the window last took them in (Settings OK): each group in its
@@ -1281,7 +1304,11 @@ class MainWindow(QMainWindow):
             self.composing.set_text_size()
         if differ("shortcuts"):
             self._apply_shortcuts()
-        if differ("show_favorites", "show_tags", "show_local_folders") and self.mail_state.accounts:
+        if differ("show_tags"):  # Settings > Sidebar > Mail's Tags tick: the block shown or not; hidden, it filters nothing (D-334)
+            if not after.show_tags and self.mail_state.view.tag is not None:
+                self.mail_tags.choose("")
+            self.mail_tags.setVisible(after.show_tags)
+        if differ("show_favorites", "show_local_folders") and self.mail_state.accounts:
             self.folders.lay_out()  # the sections of the folder list follow the settings
 
     def try_list_settings(self, chosen: object) -> None:

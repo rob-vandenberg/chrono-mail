@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_startup_view.py 4.4.561"
+__version__ = "test_ui_startup_view.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: A start-up choice or last view that was a tag opens All Inboxes (D-334)
 # v4.4.561: the program started again gets a new backend: the closed one hands out no answers since 4.4.542
 # v2.0.298: the owner's order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied in Favorites (D-061, D-232)
 # v2.0.290: Favorites and the standard folders in the owner's order (D-061, D-232)
@@ -259,3 +260,16 @@ def test_a_click_on_the_arrow_of_a_folder_unfolds_it_and_the_list_stays_open(qtb
     QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, tree.visualRect(projects).center())
     wait(qtbot, lambda: not popup.isVisible())
     assert chooser.currentText() == "Projects"  # a click on the name picks it and closes the list
+
+
+def test_a_start_up_choice_or_last_view_that_was_a_tag_opens_all_inboxes_and_says_so(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    again = restarted(world, qtbot, startup_view="mail\t\ttagview\tWork")  # chosen before 4.4.585, when a tag was an entry of the folder list
+    wait(qtbot, lambda: again.mail_state.view.combined == "inboxes")  # Favorites > All Inboxes instead (D-334)
+    assert again.tree.currentIndex().data(KIND_ROLE) == "favorite"
+    assert "Tags are now a filter" in again.status_label.text()
+    assert str(again.settings.value("startup_view")) == "mail\t\tfavorite\tinboxes"  # told once: the choice is All Inboxes now
+    again.close()
+    third = restarted(world, qtbot, startup_view="", last_kind="tagview", last_account="", last_folder="Work")  # the last view was a tag
+    wait(qtbot, lambda: third.mail_state.view.combined == "inboxes")
+    third.close()

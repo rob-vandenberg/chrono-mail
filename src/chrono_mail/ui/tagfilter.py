@@ -11,9 +11,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.584"
+__version__ = "tagfilter.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: show_quietly: a filter set elsewhere (Mail's Filter > Tagged with) shown in the block, its line in view (D-334)
 # v4.4.584: One Tags block for every section (D-334): no "All …" line; a click on a tag turns its filter on, a second click (or Space, Enter) off; the active
 #           line stays blue wherever the focus is, a check mark in place of its number, a hover text; the heading names the tag; the coloured tag shape of Mail
 # v4.4.581: The number after a tag is drawn as a folder's unread, in bold at the right (the owner, D-327)
@@ -102,6 +103,7 @@ class TagFilter(QWidget):
         super().__init__(parent)
         self._colours = colours
         self._active: str = ""
+        self._tags: list[tuple[str, int]] = []  # the tags in use last told, with their numbers
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -138,6 +140,17 @@ class TagFilter(QWidget):
             self.list.scrollToItem(self.list.item(row))  # turned on from elsewhere: its line comes into view (a refresh of the tags never scrolls)
         self.chosen.emit(self._active)
 
+    def show_quietly(self, name: str) -> None:
+        """The filter as it was set elsewhere (Mail's Filter > Tagged with): shown here, its line in view, without telling anyone; a tag no item
+        carries gets its line while it is on."""
+        if name.casefold() == self._active.casefold():
+            return
+        self._active = name
+        self.follow(self._tags)
+        row = self._row(name) if name else None
+        if row is not None:
+            self.list.scrollToItem(self.list.item(row))
+
     def clear_quietly(self) -> None:
         """No filter, without telling anyone (the caller loads what it shows itself)."""
         self._set_active("")
@@ -145,6 +158,7 @@ class TagFilter(QWidget):
     def follow(self, tags: list[tuple[str, int]]) -> None:
         """The tags as they are now, with how many items carry them, changed in place: a number that changed is written again, a tag that came
         is put at its place, one that went is taken out; the rest stay (D-146). The tag whose filter is on stays, with no number, when it went."""
+        self._tags = list(tags)
         if self._active and not any(name.casefold() == self._active.casefold() for name, _ in tags):
             tags = sorted([*tags, (self._active, 0)], key=lambda pair: pair[0].casefold())
         wanted = {name.casefold() for name, _ in tags}

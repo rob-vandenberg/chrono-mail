@@ -26,9 +26,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_list.py 4.4.584"
+__version__ = "test_ui_tag_list.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Mail's numbers and the active tag in the Tags block (D-334)
 # v4.4.584: The numbers of Contacts' Tags block: no "All contacts" line (D-334)
 # v4.4.583: The Tags column test: the small tags stand in the middle of the column (the owner)
 # v4.4.582: New tag… in a contact or task window refuses a name over 100 characters and asks again with it
@@ -267,20 +268,20 @@ def test_the_contacts_tag_menu_offers_the_tags_shown_there_and_one_a_contact_car
 
 
 def test_the_sidebars_show_the_tags_in_use_with_their_number_drawn_apart(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_tag_filters import rows
+
     started(qtbot, world)
     window = world.window
     world.call("tag.create", name="Unused", colour="#039be5")
     tag_rows(world, qtbot, 0, 2)
-    wait(qtbot, lambda: (found := window.folders.find_item(("", "tagview", "Work"))) is not None and found.data(COUNT_ROLE) == 2)
+    wait(qtbot, lambda: rows(window.mail_tags) == ["Work  (2)"])
     window.tags.load()
     wait(qtbot, lambda: any(str(getattr(tag, "name")) == "Unused" for tag in window.mail_state.tags))
-    assert window.folders.find_item(("", "tagview", "Unused")) is None  # no mail carries it: not listed (D-327)
-    found = window.folders.find_item(("", "tagview", "Work"))
-    assert found is not None and found.data(Qt.ItemDataRole.DisplayRole) == "Work"
-    icon = found.data(Qt.ItemDataRole.DecorationRole)
-    assert isinstance(icon, QIcon) and not icon.isNull()  # its coloured tag
+    assert rows(window.mail_tags) == ["Work  (2)"]  # no mail carries Unused: not listed (D-327)
+    icon = window.mail_tags.list.item(0).icon()
+    assert not icon.isNull()  # its coloured tag
     tag_rows(world, qtbot, 1)
-    wait(qtbot, lambda: (again := window.folders.find_item(("", "tagview", "Work"))) is not None and again.data(COUNT_ROLE) == 3)  # follows the fact
+    wait(qtbot, lambda: rows(window.mail_tags) == ["Work  (3)"])  # follows the fact
 
 
 def test_the_contacts_tags_list_draws_its_numbers_apart(world: World, qtbot: QtBot) -> None:
@@ -394,25 +395,23 @@ def test_facts_that_come_while_the_tags_are_counted_ask_once_more(world: World, 
     wait(qtbot, lambda: len(asked) == 1)
 
 
-def test_the_tag_shown_stays_in_the_sidebar_when_its_last_mail_loses_it(world: World, qtbot: QtBot) -> None:
+def test_the_active_tag_stays_in_mails_tags_block_when_its_last_mail_loses_it(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_tag_filters import rows
+    from tests.ui.test_ui_tags import select as select_mail
+
     started(qtbot, world)
     window = world.window
     tag_rows(world, qtbot, 0)
-    wait(qtbot, lambda: window.folders.find_item(("", "tagview", "Work")) is not None)
-    found = window.folders.find_item(("", "tagview", "Work"))
-    assert found is not None
-    window.tree.setCurrentIndex(found)
-    wait(qtbot, lambda: window.mail_state.view.combined == "tagged" and window.list_model.rowCount() == 1)
-    from tests.ui.test_ui_tags import select as select_mail
+    wait(qtbot, lambda: rows(window.mail_tags) == ["Work  (1)"])
+    window.mail_tags.choose("Work")
+    wait(qtbot, lambda: window.mail_state.view.tag == "Work" and window.list_model.rowCount() == 1)
     select_mail(world, 0)
-    window.tags.toggle_tag("Work", False)  # the last mail loses it, while its mail is shown
-    wait(qtbot, lambda: any(str(tag.name) == "Work" and tag.mails == 0 for tag in window.mail_state.tags))  # the folder list is laid out with them in the same step
-    entry = window.folders.find_item(("", "tagview", "Work"))
-    assert entry is not None and window.mail_state.view.combined == "tagged" and window.mail_state.view.combined_tag == "Work"  # nothing jumps (D-146)
-    inbox = window.folders.find_item(("", "favorite", "inboxes"))
-    assert inbox is not None
-    window.tree.setCurrentIndex(inbox)  # left: the tag no mail carries goes
-    wait(qtbot, lambda: window.folders.find_item(("", "tagview", "Work")) is None)
+    window.tags.toggle_tag("Work", False)  # the last mail loses it, while the filter is on
+    wait(qtbot, lambda: any(tag.name == "Work" and tag.mails == 0 for tag in window.mail_state.tags))
+    assert rows(window.mail_tags) == ["Work"] and window.mail_state.view.tag == "Work"  # it stays, without a number, until clicked off (D-334)
+    window.mail_tags.choose("")
+    window.tags.load()
+    wait(qtbot, lambda: rows(window.mail_tags) == [])  # off: a tag no mail carries goes
 
 
 def test_an_older_answer_of_the_tags_never_overwrites_a_newer_one(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

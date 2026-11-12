@@ -27,9 +27,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.4.563"
+__version__ = "messagelist.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Comments: tags are a block below the folder list, no entries in it (D-334)
 # v4.4.563: the headings know the local day they were counted for: a new day, or an answer counted on another day, asks them again in place;
 #           after midnight the list looks as after a restart: no day heading folded; a failed ask stays silent and the next look asks again
 #           (new_day, D-321)
@@ -168,7 +169,7 @@ class ViewSpec:
     conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
     combined: str | None = None  # a favorite: the same kind of folder in every mailbox (message.combined)
     combined_accounts: tuple[str, ...] = ()  # ... of these accounts only (a group)
-    combined_tag: str | None = None  # the tag of the combined view "tagged" (Tags in the folder list)
+    combined_tag: str | None = None  # the tag of the combined view "tagged" (the Tag overview)
     tag: str | None = None  # Filter > Tagged with
     subfolders: bool = False  # with folder: also every folder inside it, at any depth (a search, D-287)
     sent_from: str | None = None  # YYYY-MM-DD, the message's own Date (D-288)

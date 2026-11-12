@@ -4,9 +4,10 @@ from enum import StrEnum
 from chrono_mail.ui.advancedsearch import DEFAULT_SCOPE, AdvancedSearch, SearchScope
 
 # --- Version ------------------------------------------------------------
-__version__ = "currentview.py 4.2.414"
+__version__ = "currentview.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Comments: tags are a block below the folder list, no entries in it (D-334)
 # v4.2.414: several_folders: a search that shows the messages of several folders (each acts as in its own folder, D-287)
 # v4.2.407: a search looks in all folders until another choice is made (DEFAULT_SCOPE, D-287)
 # v4.2.406: where the search looks is one of three (scope: this folder only, with its subfolders, all folders, D-287)
@@ -20,7 +21,7 @@ class EntryKind(StrEnum):
     FOLDER = "folder"
     FAVORITE = "favorite"  # an entry of Favorites: the same kind of folder in every mailbox
     PINLINK = "pinlink"  # a folder pinned to Favorites (it opens that folder)
-    TAGVIEW = "tagview"  # an entry of Tags
+    TAGVIEW = "tagview"  # an entry of Tags in the folder list before 4.4.585 (D-334): kept to read old settings
     GROUPINBOX = "groupinbox"  # the All Inboxes of a group
     UNREAD = "unread"
     FLAGGED = "flagged"
@@ -41,7 +42,7 @@ class CurrentView:
     path: str = ""  # the folder, favorite or tag of the entry selected in the folder list
     folder: str | None = None  # the folder shown (a folder view only)
     folder_role: str = "other"
-    combined: str | None = None  # the favorite shown (inboxes, unread, …, "tagged" for a Tags entry), or None
+    combined: str | None = None  # the favorite shown (inboxes, unread, …, "tagged" for the Tag overview), or None
     combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose All Inboxes is shown
     combined_tag: str = ""  # the tag of a Tags entry
     query: str = ""  # the search that was run (Enter, the history, Advanced search); text being typed is not part of it

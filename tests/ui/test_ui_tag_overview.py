@@ -1,3 +1,5 @@
+from typing import override
+
 import dataclasses
 
 import pytest
@@ -12,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_overview.py 4.4.572"
+__version__ = "test_ui_tag_overview.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Show everything tagged… from Mail's Tags block (D-334)
 # v4.4.572: Initial tests of tag.overview and the Tag overview window (D-328)
 
 TAG = "Harbourline"
@@ -145,17 +148,24 @@ def test_the_same_tag_twice_brings_its_window_to_the_front(world: World, qtbot: 
     wait(qtbot, lambda: not world.window.tag_overviews)
 
 
-def test_a_tag_in_the_folder_list_offers_show_everything_tagged(world: World, qtbot: QtBot) -> None:
+def test_a_tag_in_mails_tags_block_offers_show_everything_tagged(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     seed(world)
     started(qtbot, world)
-    tag_rows(world, qtbot, 0, name=TAG)  # a click in the Tag menu: the Tags section shows the tag
-    wait(qtbot, lambda: world.window.folders.find_item(("", "tagview", TAG)) is not None)
-    entry = world.window.folders.find_item(("", "tagview", TAG))
-    assert entry is not None
-    menu = QMenu()
-    world.window.folders.tree_extras(menu, entry)
-    action = next(action for action in menu.actions() if action.text() == "Show everything tagged…")
-    action.trigger()
+    tag_rows(world, qtbot, 0, name=TAG)
+    block = world.window.mail_tags
+    wait(qtbot, lambda: block.list.count() == 1)
+
+    from chrono_mail.ui import tagfilter
+
+    class Picked(QMenu):
+        """The tag's menu, never waited on (AGENTS.md 4.5.5): the person picks Show everything tagged…"""
+
+        @override
+        def exec(self, *where: object) -> None:  # pyrefly: ignore[bad-override] - picked, not run
+            next(action for action in self.actions() if action.text() == "Show everything tagged…").trigger()
+
+    monkeypatch.setattr(tagfilter, "QMenu", Picked)  # Qt's own exec cannot be replaced on QMenu itself
+    block._menu(block.list.visualItemRect(block.list.item(0)).center())  # noqa: SLF001 - a right-click on the tag
     wait(qtbot, lambda: TAG.casefold() in world.window.tag_overviews)
 
 

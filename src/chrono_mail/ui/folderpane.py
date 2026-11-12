@@ -38,9 +38,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.581"
+__version__ = "folderpane.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: No Tags entries in the folder list (D-334): a start-up choice or last view that was a tag opens All Inboxes, said once
 # v4.4.581: Tags lists only the tags some mail carries, each with its number (the owner, D-327); the tag shown stays until it is left, and then goes (D-146)
 # v4.4.572: A tag under Tags has Show everything tagged… in its right-click menu: the Tag overview (D-328)
 # v4.2.454: Rename folder opens 360 pixels wide on the owner's screen (TextBox, the owner)
@@ -78,6 +79,8 @@ def with_rules(text: str, rules: tuple[str, ...]) -> str:
     return ". ".join((text, *rules))
 
 
+ALL_INBOXES: tuple[str, str, str] = ("", "favorite", "inboxes")  # Favorites > All Inboxes, as find_item knows it
+
 class FolderMenu:
     """The window's actions the folder list's menu offers (they are the window's: their keys and the Folder menu share them)."""
 
@@ -94,7 +97,6 @@ class FolderPane(QObject):
 
     entry_chosen = Signal(object)  # another entry was selected: the CurrentView it opens (kind NONE: an account without an Inbox)
     numbers_changed = Signal()  # the numbers or the entries changed: the window title and the tray follow
-    tag_overview_wanted = Signal(str)  # Show everything tagged… on a tag: its name (D-328)
     folder_moved = Signal(str, str, str)  # a folder was renamed (account, old path, new path) or deleted (new path ""): its column setup follows
 
     def __init__(
@@ -248,22 +250,24 @@ class FolderPane(QObject):
         forced = startup_forces(chosen.startup)
         model.forced_folders = set(forced.folders)
         model.forced, model.forced_trees = set(forced.views), set(forced.trees)
-        model.force_favorites, model.force_tags = forced.favorites, forced.tags
+        model.force_favorites = forced.favorites
         model.show_favorites = chosen.show_favorites
         model.show_local_folders = chosen.show_local_folders
-        model.show_tags = chosen.show_tags
-        view = self._state.view
-        shown = view.combined_tag.casefold() if view.combined == "tagged" else ""  # the tag whose mail is shown: it stays until it is left (D-146)
-        model.tags = [(tag.name, self._tags.book.colour(tag.name).name(), tag.mails) for tag in self._state.tags if tag.mails > 0 or tag.name.casefold() == shown]  # the tags in use, with their number (D-327)
         new = model.populate(self._state.accounts, self._state.folders)
         target: QModelIndex | None = None
         if not self.tree.currentIndex().isValid():
             wanted: list[tuple[str, str, str]] = []
             if select_saved:
                 startup = chosen.startup
-                if startup.kind == "mail":
-                    wanted.append((startup.account, startup.entry_kind, startup.path))  # the folder chosen in Settings; when it is gone, the last selected one
                 saved_account, saved_folder, saved_kind = self._memory.last_account, self._memory.last_folder, self._memory.last_kind
+                if (startup.kind == "mail" and startup.entry_kind == EntryKind.TAGVIEW) or (startup.kind != "mail" and saved_kind == EntryKind.TAGVIEW):
+                    wanted.append(ALL_INBOXES)  # a tag is no entry of the folder list any more, but a filter of the Tags block (D-334)
+                    if startup.kind == "mail":
+                        self._prefs.settings.setValue("startup_view", "\t".join(("mail", "", EntryKind.FAVORITE.value, "inboxes")))  # told once: Show on startup is All Inboxes now
+                    if startup.kind != "section":  # said only when Mail is what opens
+                        self._status.show("Tags are now a filter below the folder list: All Inboxes is shown instead of the tag.")
+                elif startup.kind == "mail":
+                    wanted.append((startup.account, startup.entry_kind, startup.path))  # the folder chosen in Settings; when it is gone, the last selected one
                 if saved_folder and (saved_account or saved_kind in (EntryKind.FAVORITE, EntryKind.GROUPINBOX)):
                     wanted.append((saved_account, saved_kind, saved_folder))
             target = next((found for found in (self.find_item(key) for key in wanted) if found is not None), None)
@@ -488,9 +492,6 @@ class FolderPane(QObject):
             combined_tag=path if kind is EntryKind.TAGVIEW else "", query="", advanced=None,
             unread=kind is EntryKind.UNREAD, flagged=kind is EntryKind.FLAGGED, attachments=False,
         ))
-        left = view.combined_tag if view.combined == "tagged" else ""
-        if left and any(tag.name.casefold() == left.casefold() and tag.mails == 0 for tag in self._state.tags):
-            self.lay_out()  # the tag left, which no mail carries any more, goes from Tags now (D-146)
 
     def go_to_folder(self) -> None:
         """G: type a part of a folder's name and go to that folder."""
@@ -711,10 +712,6 @@ class FolderPane(QObject):
             up.setEnabled(position > 0)
             down = menu.addAction("Move down", lambda: self.move_pin(order, position, 1))
             down.setEnabled(0 <= position < len(order) - 1)
-        elif kind == EntryKind.TAGVIEW:
-            tag = str(index.data(FOLDER_PATH_ROLE) or "")
-            menu.addSeparator()
-            menu.addAction("Show everything tagged…", lambda: self.tag_overview_wanted.emit(tag))
         elif kind == EntryKind.ACCOUNT and str(index.data(ACCOUNT_ROLE)) and not self._state.is_local(account):
             self._group_menu(menu, account)
         elif kind == EntryKind.GROUP:

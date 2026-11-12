@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.4.562"
+__version__ = "prefs.py 4.4.585"
 
 # --- Version history ----------------------------------------------------
+# v4.4.585: Comments: tags are a block below the folder list, no entries in it (D-334)
 # v4.4.562: secondary_sort: messages with the same value by when they were received, newest (the default) or oldest first (D-320)
 # v4.4.510: send_invitation_answers gone: the choice is per account now (D-310)
 # v4.4.505: send_invitation_answers: Settings > Calendar's tick: Chrono Mail makes the answer to an invitation for the composer (D-310)
@@ -85,7 +86,7 @@ DEFAULTS: dict[str, object] = {
     "conversations": False,
     "show_favorites": True,
     "show_local_folders": True,
-    "show_tags": True,  # the Tags at the bottom of the folder list
+    "show_tags": True,  # the Tags block below the folder list (D-334)
     "tag_text_colour": False,  # the text of a tagged message in the colour of its first tag
     "unread_leaves_on_read": False,  # a message the person marks as read leaves a list of unread mail (D-282)
     "secondary_sort": "newest",  # messages with the same value in a sort: by when they were received, newest or oldest first (D-320)
