@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.588"
+__version__ = "mainwindow.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: every account the Add window added gets its first fill (Google: its calendars and its contacts, D-335)
 # v4.4.588: A tag renamed in Settings > Tags keeps its filter on in the four Tags blocks, Mail's view following (D-334)
 # v4.4.587: A sender's contact in an unticked address book opens in its own window (D-334)
 # v4.4.585: Mail's Tags block below the folder list, its own separator place; the block and Filter > Tagged with are one filter; Settings > Sidebar > Mail's Tags tick shows it (D-334)
@@ -1535,7 +1536,7 @@ class MainWindow(QMainWindow):
 
         def fill() -> None:
             if new:  # the moment the window knows it: no full check of a timer comes before it (D-300)
-                self._first_fill({new}, mail=dialog.created_account_id is not None)  # a mail account only given a calendar server: its calendars
+                self._first_fill(set(dialog.added_account_ids) or {new}, mail=dialog.created_account_id is not None)  # Google: both its accounts  # a mail account only given a calendar server: its calendars
 
         def loaded() -> None:
             if show_code:

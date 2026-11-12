@@ -11,14 +11,16 @@ from types import TracebackType
 from dataclasses import dataclass, field
 
 from chrono_mail.core import AuthenticationError, CertificateError, ConnectionSecurity, ProtocolError
+from chrono_mail.protocols.google import SIGN_IN_AGAIN
 from chrono_mail.protocols.hangup import Held, connect
 from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.542"
+__version__ = "dav.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: bearer: Google sign-in's access code instead of a user name and password; a refusal of it asks to sign in again (D-335)
 # v4.4.542: the connection can be hung up at the end of the program
 # v4.4.512: RemoteCollection.shared: a collection whose DAV:owner is not this user is someone else's (D-310)
 # v4.4.510: announced: the Server header with the DAV header; user_addresses: calendar-user-address-set (D-310)
@@ -251,7 +253,9 @@ class DavClient:
     and reused (R-36), redirects only to the same server. Plain http is refused except to the computer itself (tests). Without a user name and password it asks
     without logging in (to see whether a place is a calendar server before the password goes there)."""
 
-    def __init__(self, base_url: str, username: str, password: str, trusted: frozenset[str] = frozenset(), timeout: float = 30.0) -> None:
+    def __init__(
+        self, base_url: str, username: str, password: str, trusted: frozenset[str] = frozenset(), timeout: float = 30.0, bearer: str = "",
+    ) -> None:
         parsed = urllib.parse.urlsplit(base_url)
         if parsed.scheme not in ("https", "http") or not parsed.hostname:
             raise DavError("A server address starts with https:// and has a host name")
@@ -261,7 +265,8 @@ class DavClient:
         self.host: str = parsed.hostname
         self.port: int = parsed.port or (443 if parsed.scheme == "https" else 80)
         self.base_path: str = parsed.path or "/"
-        self._authorization: str = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii") if username or password else ""
+        self._bearer: bool = bool(bearer)  # Google sign-in: an access code instead of a user name and password (D-335)
+        self._authorization: str = f"Bearer {bearer}" if bearer else "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii") if username or password else ""
         self._context: ssl.SSLContext | None = context_for(trusted, ConnectionSecurity.TLS, "https") if parsed.scheme == "https" else None
         self.timeout: float = timeout
         self._open: http.client.HTTPConnection | None = None  # the connection kept open for the next request
@@ -388,7 +393,7 @@ class DavClient:
                 target = location.path + (f"?{location.query}" if location.query else "")
                 continue
             if result.status == 401:
-                raise AuthenticationError("The server refused the user name or password")
+                raise AuthenticationError(SIGN_IN_AGAIN if self._bearer else "The server refused the user name or password")
             return result
         raise DavError("The server sent us round in circles")
 

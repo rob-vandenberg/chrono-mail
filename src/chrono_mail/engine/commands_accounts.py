@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.537"
+__version__ = "commands_accounts.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: AccountSummary.google (D-335)
 # v4.4.537: account.edit takes none for invitation_answers, as the window sends when its box is unticked (D-310)
 # v4.4.536: Who sends the e-mail reminders in the summary and account.edit (D-313)
 # v4.4.510: the summary tells whether the server always mails the answers; invitation_answers may be none (D-310)
@@ -386,6 +387,7 @@ class AccountSummary:
     dav_auto_schedule: bool = False  # the calendar server announced that it mails those answers itself
     dav_always_answers: bool = False  # the calendar server is one known to mail them whatever it is told
     reminder_emails: str = "chrono"  # who sends the e-mail reminders: "chrono", "server", "none" (D-313)
+    google: bool = False  # Google's calendars or contacts, logged in with Google sign-in (D-335)
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -423,6 +425,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.dav_auto_schedule,
         item.dav_always_answers,
         item.reminder_emails,
+        item.google,
     )
 
 

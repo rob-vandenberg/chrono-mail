@@ -1,4 +1,6 @@
+import json
 import tomllib
+import urllib.parse
 
 import pytest
 
@@ -6,12 +8,16 @@ from chrono_mail.core import AuthenticationError, ConnectionSecurity, ServerSett
 from chrono_mail.core.errors import GMAIL_PASSWORD_ADVICE
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.smtp import check_login
+from chrono_mail.config.google import google_client_codes
+from chrono_mail.protocols.dav import DavClient
+from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, GoogleClient, refresh_access
 from tests.live.account import SETTINGS_DIRECTORY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_gmail.py 4.4.592"
+__version__ = "test_live_gmail.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: Google sign-in's access code renewed and Google Calendar and Google Contacts reached with it (D-335)
 # v4.4.592: Initial live tests on the Gmail test account: login with an app password, Gmail's folders and roles, a refused password's advice (D-335)
 
 pytestmark = pytest.mark.live
@@ -41,3 +47,20 @@ def test_a_wrong_password_on_gmail_says_how_to_make_an_app_password() -> None:
         with ImapClient(ServerSettings("imap.gmail.com", 993, ConnectionSecurity.TLS, user), "not-the-app-password"):
             pass
     assert str(refused.value).startswith(GMAIL_PASSWORD_ADVICE + " (Gmail said: ")
+
+
+GOOGLE_TOKEN_FILE = SETTINGS_DIRECTORY / "gmail-google-token.json"  # the test account's Google sign-in (scratchpad/gmail_live_check.py google)
+
+
+def test_google_calendar_and_contacts_are_reached_with_the_renewed_access_code() -> None:
+    user, _ = gmail_login()
+    codes = google_client_codes()
+    if codes is None or not GOOGLE_TOKEN_FILE.exists():
+        pytest.skip("the Google client file or the test account's Google sign-in is missing")
+    access, seconds = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
+    assert seconds > 60
+    with DavClient(CALDAV_START.format(address=urllib.parse.quote(user)), "", "", bearer=access) as calendars:
+        assert any(collection.kind == "events" for collection in calendars.all_collections())
+    with DavClient(CARDDAV_START, "", "", bearer=access) as contacts:
+        assert any(collection.kind == "contacts" for collection in contacts.all_collections())
+

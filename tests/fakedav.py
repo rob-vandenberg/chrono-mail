@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 4.4.512"
+__version__ = "fakedav.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: bearer: a server that takes only this access code, as Google's does (D-335)
 # v4.4.512: a collection can state its DAV:owner (owners)
 # v4.4.510: announces, product and user_addresses: what a server says about mailing invitations
 # v4.3.498: like Kerio, a contact's PUT may ignore If-Match (no_contact_match); a new item may be stored the server's own way, after
@@ -68,6 +69,7 @@ class FakeDav:
         self.user, self.password = user, password
         self.plain_web: bool = plain_web  # a web server that is no calendar server: every request gets 404
         self.logins: list[bool] = []  # per request: whether it carried a login
+        self.bearer: str = ""  # set: only this access code is taken, no user name and password (Google, D-335)
         self.sync_tokens, self.multiget, self.etag_on_put, self.tls = sync_tokens, multiget, etag_on_put, tls
         self.read_only: tuple[str, ...] = read_only
         self.keeps_colour: bool = True  # PROPPATCH of calendar-color is kept (else 403 for that property)
@@ -214,7 +216,7 @@ class FakeDav:
         if self.plain_web:
             self.respond(handler, 404, "not here")
             return
-        expected = "Basic " + base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
+        expected = f"Bearer {self.bearer}" if self.bearer else "Basic " + base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
         if handler.headers.get("Authorization") != expected:
             self.respond(handler, 401, "no", {"WWW-Authenticate": 'Basic realm="fake"'})
             return

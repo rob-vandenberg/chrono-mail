@@ -312,7 +312,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | # | Task | Status |
 |---|---|---|
 | 5.1 | Gmail mail by IMAP and SMTP with an app password: Add account's Gmail choice, All Mail hidden at first, the app password advice (D-335). | done (4.4.592) |
-| 5.2 | Google sign-in (OAuth with PKCE) through the owner's own Google project; Google Calendar and Google Contacts over CalDAV and CardDAV with it; sign in again when Google ends it (D-335). | in progress |
+| 5.2 | Google sign-in (OAuth with PKCE) through the owner's own Google project; Google Calendar and Google Contacts over CalDAV and CardDAV with it; sign in again when Google ends it (D-335). | done (4.4.593) |
 | 5.3 | Google Tasks through Google's Tasks API (no tasks over CalDAV at Google). | open |
 
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)

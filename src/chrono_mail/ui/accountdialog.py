@@ -1,4 +1,5 @@
 import dataclasses
+import uuid
 import html
 from collections.abc import Callable
 from typing import Literal, override
@@ -19,10 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.config import server_pin
+from chrono_mail.config.google import GOOGLE_CLIENT_FILE, google_client_codes
 from chrono_mail.core import AccountKind, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
     ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult, AccountSummary,
 )
+from chrono_mail.engine.commands_google import GOOGLE_CANCEL_SIGN_IN, GOOGLE_SIGN_IN, CancelParameters, SignInParameters, SignInResult
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.calendaraccount import CALDAV_KINDS, CARDDAV_KINDS, CalendarFields
@@ -32,9 +35,11 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.592"
+__version__ = "accountdialog.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: Account type offers Google Calendar and Contacts: Sign in with Google adds both as accounts of calendars and contacts; greyed with
+#           the reason when Google sign-in is not set up on this computer (D-335)
 # v4.2.449: calendars_account_id: the account that got the calendar server, also a mail account given one (its first fill, D-300)
 # v4.2.447: Test connection always checks the certificates itself; the test after Connect uses the answer; Connect without the tick takes back
 #           a certificate kept here (D-299)
@@ -73,6 +78,10 @@ KINDS: tuple[tuple[AccountKind, str], ...] = ((AccountKind.POP3, "POP3: the mail
 GMAIL: str = "gmail"  # an IMAP account on Gmail's servers, logged in with an app password (D-335)
 GMAIL_LABEL: str = "Gmail: Google mail, with an app password"
 GMAIL_SERVERS: tuple[tuple[str, int], tuple[str, int]] = (("imap.gmail.com", 993), ("smtp.gmail.com", 465))  # both implicit TLS, checked live (D-335)
+GOOGLE: str = "google"  # Google Calendar and Google Contacts, through Google sign-in (D-335)
+GOOGLE_LABEL: str = "Google Calendar and Contacts: sign in with Google"
+GOOGLE_HELP: str = ("Chrono Mail opens Google's sign-in page in your web browser. Sign in, allow access to your calendars and contacts, and they "
+                    "are added here as Google Calendar and Google Contacts. For your Gmail mail, choose Gmail.")
 CALDAV: str = "caldav"  # the Account type choices of a calendar and contacts server (D-185, D-298): one kind of account, other folders ticked
 CARDDAV: str = "carddav"
 CALENDAR_KINDS: tuple[tuple[str, str], ...] = ((CALDAV, "CalDAV: calendars and tasks from a server"), (CARDDAV, "CardDAV: contacts from a server"))
@@ -105,6 +114,8 @@ class AccountDialog(QDialog):
         self._backend: Backend = backend
         self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
         self.created_account_id: str | None = None
+        self._google_ticket: str = ""  # the Google sign-in under way, so Cancel stops exactly it
+        self.added_account_ids: tuple[str, ...] = ()  # every account the window added (Google: its calendars and its contacts)
         self.key_created: bool = False
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
         self.calendars_added: bool = False  # a calendar and contacts server was added or given to a mail account: synchronise it
@@ -123,9 +134,11 @@ class AccountDialog(QDialog):
         for kind, label in KINDS:
             self.kind.addItem(label, kind.value)
         self.kind.addItem(GMAIL_LABEL, GMAIL)
+        self.kind.addItem(GOOGLE_LABEL, GOOGLE)
         for value, label in CALENDAR_KINDS:
             self.kind.addItem(label, value)
         self.gmail_help: QLabel = part(form, QLabel, "gmailHelp")
+        self._gmail_text: str = self.gmail_help.text()
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
         self.name: QLineEdit = part(form, QLineEdit, "yourName")
         self.email: QLineEdit = part(form, QLineEdit, "email")
@@ -186,6 +199,9 @@ class AccountDialog(QDialog):
     def _is_gmail(self) -> bool:
         return str(self.kind.currentData()) == GMAIL
 
+    def _is_google(self) -> bool:
+        return str(self.kind.currentData()) == GOOGLE
+
     def _is_calendar(self) -> bool:
         return str(self.kind.currentData()) in (CALDAV, CARDDAV)
 
@@ -194,13 +210,19 @@ class AccountDialog(QDialog):
         CardDAV: the calendar part instead (the mail fields belong to another kind of account, so they are not shown). Each part keeps what was
         typed, its own result line and what its work answered, so an answer that comes after a change of kind stays with its own part."""
         calendar = self._is_calendar()
-        self.gmail_help.setVisible(self._is_gmail())
-        for widget in (self._who, self.servers.widget, self._options, self.test_button, self.result_label):
-            widget.setVisible(not calendar)
+        google = self._is_google()
+        self.gmail_help.setText(GOOGLE_HELP if google else self._gmail_text)
+        self.gmail_help.setVisible(self._is_gmail() or google)
+        for widget in (self._who, self.servers.widget, self._options, self.test_button):
+            widget.setVisible(not calendar and not google)
+        self.result_label.setVisible(not calendar)
+        self.add_button.setText("Sign in with Google" if google else "Add account")
+        self.add_button.setToolTip("" if not google or google_client_codes() is not None else
+                                   f"Google sign-in is not set up on this computer: {GOOGLE_CLIENT_FILE} is missing")
         self.calendar.setVisible(calendar)
         if calendar:
             self.calendar.ticked_kinds = CARDDAV_KINDS if str(self.kind.currentData()) == CARDDAV else CALDAV_KINDS
-        else:
+        elif not google:
             self.servers.set_kind(AccountKind.IMAP if self._is_gmail() else AccountKind(str(self.kind.currentData())))
             self._gmail_servers()
             self.policy.setEnabled(not self._is_imap())
@@ -256,7 +278,10 @@ class AccountDialog(QDialog):
     def _allow_add(self) -> None:
         """Add account as the kind now shown allows it: the mail part while no test runs, the calendar part once Find found something; never
         while an account is being added."""
-        allowed = self.calendar.found is not None if self._is_calendar() else not self._testing
+        if self._is_google():
+            allowed = google_client_codes() is not None  # greyed with the reason as its hover text (OR-15)
+        else:
+            allowed = self.calendar.found is not None if self._is_calendar() else not self._testing
         self.add_button.setEnabled(allowed and not self._adding)
 
     def _gmail_servers(self) -> None:
@@ -354,6 +379,8 @@ class AccountDialog(QDialog):
         for widget in widgets:
             if widget is not None:
                 widget.setEnabled(not adding)
+        if adding and self._is_google() and self.cancel_button is not None:
+            self.cancel_button.setEnabled(True)  # the browser may never answer: Cancel stops the wait (D-335)
         if not adding and self._testing:  # a test still runs (started before a change of kind): Test waits for it
             self.test_button.setEnabled(False)
         self.kind.setEnabled(not adding)
@@ -396,6 +423,9 @@ class AccountDialog(QDialog):
         self._backend.ask(ACCOUNT_CHECK, self._values(fresh), done, failed, owner=self)
 
     def _add(self) -> None:
+        if self._is_google():
+            self._add_google()
+            return
         if self._is_calendar():
             self._add_calendars()
             return
@@ -427,6 +457,30 @@ class AccountDialog(QDialog):
 
         self._backend.ask(ACCOUNT_ADD, parameters, done, failed, owner=self)
 
+    def _add_google(self) -> None:
+        """Google's sign-in page opens in the browser; once signed in, Google Calendar and Google Contacts are added (D-335)."""
+        self._set_adding(True)
+        self.result_label.setText("Waiting for you to sign in to Google in your web browser…")
+        self._google_ticket = uuid.uuid4().hex
+
+        def done(result: SignInResult) -> None:
+            if self.result() == QDialog.DialogCode.Rejected and not self.isVisible():
+                return  # cancelled: the engine kept nothing
+            self._adding = False
+            self.added_account_ids = result.account_ids
+            self.created_account_id = result.account_ids[0] if result.account_ids else None
+            self.calendars_added = True
+            self.calendars_account_id = self.created_account_id
+            self.key_created = result.key_created
+            self.show_recovery_code = result.show_recovery_code
+            self.accept()
+
+        def failed(error: ChronoMailError) -> None:
+            self._set_adding(False)
+            self.result_label.setText(f'<span style="color:{red()}">{html.escape(str(error))}</span>')
+
+        self._backend.ask(GOOGLE_SIGN_IN, SignInParameters(ticket=self._google_ticket), done, failed, owner=self)
+
     def _add_calendars(self) -> None:
         def added(result: AccountAddResult | None) -> None:
             self._adding = False
@@ -444,6 +498,10 @@ class AccountDialog(QDialog):
     def reject(self) -> None:
         """Cancel, Escape or the close button: not while the account is being added (it is then added, and its recovery code is shown)."""
         if not self._adding:
+            super().reject()
+        elif self._is_google():  # waiting for the browser: Cancel stops the sign-in, which then adds nothing (D-335)
+            self._backend.ask(GOOGLE_CANCEL_SIGN_IN, CancelParameters(self._google_ticket), lambda _: None, lambda _: None)
+            self._adding = False
             super().reject()
 
 

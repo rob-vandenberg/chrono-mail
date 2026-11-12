@@ -1,7 +1,8 @@
 import dataclasses
 import html
+import uuid
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, override
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -28,6 +29,7 @@ from chrono_mail.engine.commands_accounts import (
     TrustParameters,
 )
 from chrono_mail.engine.commands_dav import ACCOUNT_SET_DAV, SetDavParameters
+from chrono_mail.engine.commands_google import GOOGLE_CANCEL_SIGN_IN, GOOGLE_SIGN_IN, CancelParameters, SignInParameters, SignInResult
 from chrono_mail.engine.commands_imap import ACCOUNT_FOLDERS, ACCOUNT_SET_FOLDERS, FolderAccount, FolderChoice, SetFolders
 from chrono_mail.engine.commands_local import ACCOUNT_SET_STORAGE, StorageParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
@@ -44,9 +46,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.536"
+__version__ = "accountedit.py 4.4.593"
 
 # --- Version history ----------------------------------------------------
+# v4.4.593: a Google account: its server, user name and password greyed; Find becomes Sign in with Google, for when Google ends the sign-in (D-335)
 # v4.4.536: Send reminder emails via Chrono Mail or Server, per account on this computer (D-313)
 # v4.4.514: Send confirmation emails via: greyed only when certain beyond doubt; a server that does not announce it can be chosen (D-310)
 # v4.4.510: Send confirmation emails via Chrono Mail or Server replaces the two radio buttons (D-310)
@@ -100,6 +103,7 @@ class AccountEditDialog(QDialog):
         self._backend: Backend = backend
         self._account: AccountSummary = account
         self.dav_changed: bool = False  # the calendar and contacts server was changed: the caller should synchronise
+        self._google_ticket: str = ""  # the Google sign-in under way (D-335)
         kind = kind_of(account)
         calendars_only = kind is AccountKind.DAV  # no mail: only its name and its calendar server can be changed
         self.setWindowTitle(f"Account: {account.email_address or account.shown_name}")
@@ -176,7 +180,14 @@ class AccountEditDialog(QDialog):
         self.dav_url.textChanged.connect(self._reminders_follow)
         self._reminders_follow()
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
-        self.dav_check_button.clicked.connect(self._check_dav)
+        if account.google:  # Google sign-in, no user name and password: the one thing to do is to sign in again when Google asks (D-335)
+            for field in (self.dav_url, self.dav_username, self.dav_password):
+                field.setEnabled(False)
+            self.dav_check_button.setText("Sign in with Google")
+            self.dav_check_button.setToolTip("Opens Google's sign-in page in your web browser; needed again when Google ends the sign-in")
+            self.dav_check_button.clicked.connect(self._google_sign_in)
+        else:
+            self.dav_check_button.clicked.connect(self._check_dav)
 
         self.policy: QComboBox = part(form, QComboBox, "policy")
         for value, label in POLICIES:
@@ -232,6 +243,42 @@ class AccountEditDialog(QDialog):
         account = self._account
         self.servers = ServerFields(parent, kind_of(account), editing=True, start=start_values_of(account))
         return self.servers.widget
+
+    def _google_sign_in(self) -> None:
+        """Google's sign-in page in the browser; once signed in with this account's address, its folders are loaded again (D-335). While it
+        waits the button stops it, and so does closing the window."""
+        if self._google_ticket:
+            self._stop_google()
+            return
+        self._google_ticket = ticket = uuid.uuid4().hex
+        self.dav_check_button.setText("Stop waiting for Google")
+        self.dav_result.setText("Waiting for you to sign in to Google in your web browser…")
+
+        def ended() -> None:
+            if self._google_ticket == ticket:
+                self._google_ticket = ""
+                self.dav_check_button.setText("Sign in with Google")
+
+        def done(_: SignInResult) -> None:
+            ended()
+            self.dav_changed = True  # signed in again: the caller synchronises it
+            self._find_dav_folders(loading=True)
+
+        def failed(error: ChronoMailError) -> None:
+            ended()
+            self.dav_result.setText(f"<span style='{red_style()}'>{str(error).replace('<', '&lt;')}</span>")
+
+        self._backend.ask(GOOGLE_SIGN_IN, SignInParameters(account=self._account.account_id, ticket=ticket), done, failed, owner=self)
+
+    def _stop_google(self) -> None:
+        """The sign-in under way stops and keeps nothing; its answer then says so."""
+        if self._google_ticket:
+            self._backend.ask(GOOGLE_CANCEL_SIGN_IN, CancelParameters(self._google_ticket), lambda _: None, lambda _: None)
+
+    @override
+    def done(self, result: int) -> None:
+        self._stop_google()  # Save, Cancel or the close button: a sign-in still waiting is stopped (D-335)
+        super().done(result)
 
     def _check_dav(self) -> None:
         self._find_dav_folders(loading=False, fresh=True)  # the person's check: the certificates with the usual checks only (D-299)
