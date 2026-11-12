@@ -60,9 +60,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.584"
+__version__ = "contactsview.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: A tick box per address book: the list shows the ticked ones together, a group its members; new contacts go to the book with the blue plus (D-334)
 # v4.4.584: The shared Tags block of Calendar and Tasks replaces the own Tags list: no "All contacts", a click turns a tag filter on and off (D-334)
 # v4.4.582: The chosen tag leaving the Tags list chooses All contacts: every contact shows again, as in Calendar and Tasks (D-327)
 # v4.4.581: The number after a tag in the Tags list drawn as a folder's unread (D-327); the Tag menu and a contact's window offer the tags shown in Contacts (Show in), the menu also one a selected contact carries (D-332)
@@ -89,6 +90,7 @@ __version__ = "contactsview.py 4.4.584"
 
 ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
 PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 2  # true on a contact with an action under way (drawn greyed)
+ONE_BOOK: str = "(select contacts of one address book)"  # a menu of one address book's groups or moves, with contacts of two selected (D-334)
 ROW_HEIGHT: int = 56
 AVATAR_SIZE: int = 36
 
@@ -259,7 +261,7 @@ class ContactsPage(PimListPage):
     """Address books on the left (with the tags to filter by), the contacts in the middle, and one contact on the right."""
 
     kind = "contacts"
-    multiple = False
+    multiple = True  # a tick box per address book: the list shows the ticked ones together (D-334)
     new_label = "New contact"
     new_icon = "contact-new"
     section_name = "Contacts"
@@ -384,7 +386,7 @@ class ContactsPage(PimListPage):
         self.panel.contacts_dropped.connect(self._dropped)
         self.panel.reloaded.connect(self._panel_reloaded)
         self._group_after_reload: str = ""  # the group chosen before the sidebar was filled again: chosen again when it is still there
-        self._listed_view: tuple[str, str] | None = None  # the address book and group whose list has arrived (the count line is only theirs)
+        self._listed_view: tuple[tuple[str, ...], str] | None = None  # the address books and group whose list has arrived (the count line is only theirs)
         self._update_group_actions()
 
     def _tag_chosen(self, name: str) -> None:
@@ -446,27 +448,29 @@ class ContactsPage(PimListPage):
     @override
     def reload_list(self, keep: str = "") -> None:
         keep = keep or self._show_item
-        collection = self.panel.current_id()
-        if not collection:
+        books = self._shown_books()
+        if not books:
             self.model.load([], 0)
             self.count_label.setText("")
+            if self.panel.collections:  # address books there, none ticked (the last one deleted or left out): say what shows them
+                self.detail.show_nothing("Tick an address book to see its contacts")
             return
         self._generation += 1
         generation = self._generation
         self._listed_view = None
         selected = [keep] if keep else self._selected_items()  # what is selected stays selected (several contacts at once, as for tags)
-        parameters = ContactListParameters(collection=collection, text=self.search.text().strip(), tag=self._tag(), limit=0, group=self._group())  # every contact: from the index alone
+        parameters = ContactListParameters(collections=books, text=self.search.text().strip(), tag=self._tag(), limit=0, group=self._group())  # every contact: from the index alone
 
         def arrived(result: ContactList) -> None:
             if generation != self._generation:
                 return
             rows = result.contacts
             self.model.load(rows, result.total)
-            self._listed_view = (collection, parameters.group)
+            self._listed_view = (books, parameters.group)
             self._counted()
             self.status(counted(self.model.total, "contact"))
             positions = [position for position in (self.model.position_of(item) for item in selected) if position >= 0]
-            if collection == self._show_collection:
+            if self._show_collection in books:
                 self._show_item = self._show_collection = ""
             if positions:
                 self.list.selectionModel().clear()
@@ -480,6 +484,18 @@ class ContactsPage(PimListPage):
                 self.detail.show_nothing(self._empty_text() if not self.search.text().strip() else "No contact matches")
 
         self._backend.ask(CONTACT_LIST, parameters, arrived, self._failed, owner=self)
+
+    def _selected_book(self) -> str:
+        """The address book of the contacts selected, when they are all in one ('' otherwise): its groups and the books to move to (D-334)."""
+        books = {self.model.rows[index.row()].collection for index in self.list.selectionModel().selectedRows() if 0 <= index.row() < len(self.model.rows)}
+        return books.pop() if len(books) == 1 else ""
+
+    def _shown_books(self) -> tuple[str, ...]:
+        """The address books whose contacts the list shows: the ticked ones together; with a group chosen, its address book (D-334)."""
+        group = self.panel.current_group()
+        if group is not None:
+            return (group.collection,)
+        return tuple(self.panel.visible_ids())
 
     def _empty_text(self) -> str:
         return "This group has no members yet" if self.panel.current_group() is not None else "There are no contacts here yet"
@@ -522,9 +538,10 @@ class ContactsPage(PimListPage):
 
     @override
     def new_item(self) -> None:
-        if not self.panel.current_id():
+        book = self.panel.new_items_id()  # the address book with the blue plus (D-334)
+        if not book:
             return
-        editor = ContactEditor(self._backend, self._books(), self._tag_names(), None, self.panel.current_id(), self.content, self.colours)
+        editor = ContactEditor(self._backend, self._books(), self._tag_names(), None, book, self.content, self.colours)
         editor.saved.connect(self._after_save)
         editor.exec()
 
@@ -572,8 +589,8 @@ class ContactsPage(PimListPage):
     def apply_item(self, change: Change) -> None:
         """A contact was added, changed, deleted or moved: only that row changes (D-146)."""
         kind, collection, item = str(change.kind), change.folder, change.message_id
-        shown = self.panel.current_id()
-        if kind in ("item_removed", "item_moved") and collection == shown:
+        shown = self._shown_books()
+        if kind in ("item_removed", "item_moved") and collection in shown:
             self.model.pending.discard(item)
             self.model.remove_item(item)
             self._counted()
@@ -583,11 +600,11 @@ class ContactsPage(PimListPage):
         for book in dict.fromkeys((collection, target)):
             if book and self.panel.info(book) is not None:
                 self.reload_groups(book, then=lambda rows, book=book: self._group_changed(book, wanted, item, groups_before, rows))
-        if kind in ("item_added", "item_changed", "item_moved") and target == shown:
-            parameters = ContactListParameters(collection=shown, text=self.search.text().strip(), tag=self._tag(), item=wanted, group=self._group())
+        if kind in ("item_added", "item_changed", "item_moved") and target in shown:
+            parameters = ContactListParameters(collections=shown, text=self.search.text().strip(), tag=self._tag(), item=wanted, group=self._group())
 
             def arrived(result: ContactList) -> None:
-                if self.panel.current_id() != shown:
+                if self._shown_books() != shown:
                     return
                 rows = result.contacts
                 if rows:
@@ -603,7 +620,7 @@ class ContactsPage(PimListPage):
 
     def _counted(self) -> None:
         group = self.panel.current_group()
-        if self._listed_view != (self.panel.current_id(), group.item if group is not None else ""):
+        if self._listed_view != (self._shown_books(), group.item if group is not None else ""):
             return  # the list of what is chosen has not arrived yet: its numbers are not known
         if group is None:
             self.count_label.setText(f"Contacts ({self.model.total})")
@@ -643,13 +660,14 @@ class ContactsPage(PimListPage):
     def _group_changed(self, collection: str, wanted: str, item: str, before: set[str], rows: tuple[GroupRow, ...]) -> None:
         """A fact about an item of an address book whose groups were just fetched: when that item is (or was) a group, who is in which group
         changed, so the list follows in place: the members of the group shown, or the tick marks of the address book shown."""
-        if collection != self.panel.current_id() or not ({wanted, item} & (before | {row.item for row in rows})):
+        shown = self._shown_books()
+        if collection not in shown or not ({wanted, item} & (before | {row.item for row in rows})):
             return
         group = self._group()
-        parameters = ContactListParameters(collection=collection, text=self.search.text().strip(), tag=self._tag(), limit=0, group=group)
+        parameters = ContactListParameters(collections=shown, text=self.search.text().strip(), tag=self._tag(), limit=0, group=group)
 
         def arrived(result: ContactList) -> None:
-            if self.panel.current_id() != collection or self._group() != group:
+            if self._shown_books() != shown or self._group() != group:
                 return
             self.model.follow(result.contacts)
             self._counted()
@@ -712,9 +730,12 @@ class ContactsPage(PimListPage):
         """Add to group: a tick at each group of the address book that every selected contact is in; a click puts them all in, or takes them all out."""
         self.group_menu.clear()
         items = self._selected_items()
-        collection = self.panel.current_id()
+        collection = self._selected_book()
         if not items:
             self.group_menu.addAction("(select contacts first)").setEnabled(False)
+            return
+        if not collection:
+            self.group_menu.addAction(ONE_BOOK).setEnabled(False)  # contacts of two address books: a group is of one
             return
         groups = self._groups_shown(collection)
         if not groups:
@@ -743,8 +764,16 @@ class ContactsPage(PimListPage):
             self._set_group(group.item, False)
 
     def _dropped(self, group: str, items: list[str]) -> None:
-        """Contacts dropped on a group in the sidebar: put in it."""
-        self._set_group(group, True, items)
+        """Contacts dropped on a group in the sidebar: put in it; a group holds only contacts of its own address book, so contacts of another
+        book (the list shows the ticked books together, D-334) are left out, and the status line says so."""
+        book = next((row.collection for info in self.panel.collections for row in self._groups_shown(info.collection) if row.item == group), "")
+        books = {row.item: row.collection for row in self.model.rows}
+        own = [item for item in items if books.get(item, book) == book]
+        if len(own) < len(items):
+            name = next((info.name for info in self.panel.collections if info.collection == book), "its address book")
+            self.status(f"Only contacts of {name} can join this group: {counted(len(items) - len(own), 'contact')} left out")
+        if own:
+            self._set_group(group, True, own)
 
     def _fill_tag_menu(self) -> None:
         self.tag_menu.clear()
@@ -814,8 +843,11 @@ class ContactsPage(PimListPage):
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
         items = self._selected_items()
-        current = next((info for info in self._books() if info.collection == self.panel.current_id()), None)
+        current = next((info for info in self._books() if info.collection == self._selected_book()), None)
         others = [info for info in self._books() if current is not None and info.account == current.account and info is not current]
+        if items and current is None:
+            self.move_menu.addAction(ONE_BOOK).setEnabled(False)  # contacts of two address books (D-334)
+            return
         if not items or not others:
             self.move_menu.addAction("(no other address book)").setEnabled(False)
             return
@@ -825,7 +857,7 @@ class ContactsPage(PimListPage):
 
     def import_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self.content, "Import contacts", "", "vCard files (*.vcf *.vcard);;All files (*)")
-        collection = self.panel.current_id()
+        collection = self.panel.current_id() or self.panel.new_items_id()  # the address book chosen, else the one with the blue plus
         if not path or not collection:
             return
         try:
@@ -840,7 +872,7 @@ class ContactsPage(PimListPage):
         self._backend.ask(CONTACT_IMPORT, ContactImport(collection, text), done, self._failed, owner=self)
 
     def export_file(self) -> None:
-        collection = self.panel.current_id()
+        collection = self.panel.current_id() or self.panel.new_items_id()  # the address book chosen, else the one with the blue plus
         if not collection:
             return
         path, _ = QFileDialog.getSaveFileName(self.content, "Export contacts", "contacts.vcf", "vCard files (*.vcf)")

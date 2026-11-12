@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.585"
+__version__ = "mainwindow.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: A sender's contact in an unticked address book opens in its own window (D-334)
 # v4.4.585: Mail's Tags block below the folder list, its own separator place; the block and Filter > Tagged with are one filter; Settings > Sidebar > Mail's Tags tick shows it (D-334)
 # v4.4.578: Settings > Sidebar's Contacts tab: the address books left out and the Tags tick reach Contacts; the Contact icon of a sender in a left-out address book opens the contact in its own window (D-331)
 # v4.4.577: Quitting keeps the place of the separator above the Tags list of Calendar, Tasks and Contacts, each its own (D-330)
@@ -1758,7 +1759,7 @@ class MainWindow(QMainWindow):
             return
         found = self.list_model.index(row, 0).data(CONTACT_ROLE)
         if column_id == "contact" and isinstance(found, tuple) and len(found) == 2:
-            if str(found[1]) in self.contacts_page.panel.left_out():  # its address book is left out of the sidebar: the contact in its own window (the owner, D-331)
+            if str(found[1]) in self.contacts_page.panel.left_out() or str(found[1]) in self.contacts_page.panel.unticked():  # its address book is left out or unticked: the contact in its own window (the owner, D-331, D-334)
                 self.contacts_page.open_contact(str(found[0]))
                 return
             self.contacts_page.show_contact(str(found[0]), str(found[1]))

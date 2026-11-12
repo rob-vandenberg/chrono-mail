@@ -19,9 +19,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 4.4.584"
+__version__ = "test_ui_contacts.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: Contacts has a tick box per address book: the ticked ones together, the last one stays, new contacts to the blue plus (D-334)
 # v4.4.584: The Tags block of D-334: no "All contacts" line; a tag chosen through the block
 # v4.4.581: a contact's tags are given in the Tags box, as in the appointment window (D-332)
 # v3.2.342: what the window does not show of e-mail addresses, phone numbers and postal addresses survives a Save (RV-20)
@@ -47,7 +48,7 @@ def open_contacts(world: World, qtbot: QtBot, count: int) -> ContactsPage:
     started(qtbot, world)
     world.window.switch_section(CONTACTS)
     page = world.window.contacts_page
-    wait(qtbot, lambda: page.model.rowCount() == count and page.panel.current_id() != "" and page.count_label.text() == f"Contacts ({count})")  # the list has arrived, not just the empty model
+    wait(qtbot, lambda: page.model.rowCount() == count and page.panel.visible_ids() != [] and page.count_label.text() == f"Contacts ({count})")  # the list of the ticked address books has arrived (D-334)
     return page
 
 
@@ -249,16 +250,16 @@ def test_tags_are_set_from_the_menu_for_several_contacts_and_contacts_are_moved_
     page._fill_move_menu()  # noqa: SLF001
     assert [a.text() for a in page.move_menu.actions()] == ["Friends"]
     page.move_menu.actions()[0].trigger()
-    wait(qtbot, lambda: page.model.rowCount() == 2)
-    assert [c.name for c in world.call("contact.list", collection=other).contacts] == ["Zoë Åberg"]
+    wait(qtbot, lambda: [c.name for c in world.call("contact.list", collection=other).contacts] == ["Zoë Åberg"])
+    wait(qtbot, lambda: page.model.rowCount() == 3 and any(row.collection == other for row in page.model.rows))  # Friends is ticked too: it stays in the list (D-334)
     select_rows(page, 0)
     monkeypatch.setattr(QMessageBox, "question", answer_no)
     page.act_delete.trigger()
     qtbot.wait(200)
-    assert page.model.rowCount() == 2
+    assert page.model.rowCount() == 3
     monkeypatch.setattr(QMessageBox, "question", answer_yes)
     page.act_delete.trigger()
-    wait(qtbot, lambda: page.model.rowCount() == 1)
+    wait(qtbot, lambda: page.model.rowCount() == 2)
     assert world.call("contact.list").total == 2  # one in each book now
 
 
@@ -370,11 +371,11 @@ def test_the_tag_list_follows_in_place_and_keeps_the_chosen_tag(world: World, qt
 
 
 def groups(page: ContactsPage) -> list[str]:
-    return [entry.text(0) for entry in page.panel.group_entries(page.panel.current_id())]
+    return [entry.text(0) for entry in page.panel.group_entries(page.panel.visible_ids()[0])]  # the groups of the first address book shown (D-334)
 
 
 def choose_group(page: ContactsPage, qtbot: QtBot, number: int, count: int) -> None:
-    page.panel.tree.setCurrentItem(page.panel.group_entries(page.panel.current_id())[number])
+    page.panel.tree.setCurrentItem(page.panel.group_entries(page.panel.visible_ids()[0])[number])  # the groups of the first address book shown
     wait(qtbot, lambda: page.model.rowCount() == count and page.count_label.text().startswith(f"Members ({count})"))
 
 
@@ -424,7 +425,7 @@ def test_contacts_dropped_on_a_group_are_put_in_it(world: World, qtbot: QtBot) -
     page = open_contacts(world, qtbot, 3)
     wait(qtbot, lambda: groups(page) == ["Club  (0)"])
     data = page.model.mimeData([page.model.index(2)])
-    entry = page.panel.group_entries(page.panel.current_id())[0]
+    entry = page.panel.group_entries(page.panel.visible_ids()[0])[0]
     place = QPointF(page.panel.tree.visualItemRect(entry).center())
     viewport = page.panel.tree.viewport()
     enter = QDragEnterEvent(place.toPoint(), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
@@ -433,7 +434,7 @@ def test_contacts_dropped_on_a_group_are_put_in_it(world: World, qtbot: QtBot) -
     drop = QDropEvent(place, Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     QApplication.sendEvent(viewport, drop)
     wait(qtbot, lambda: groups(page) == ["Club  (1)"])
-    book_entry = page.panel._entry(page.panel.current_id())  # noqa: SLF001
+    book_entry = page.panel._entry(page.panel.visible_ids()[0])  # noqa: SLF001
     assert book_entry is not None
     on_book = QDropEvent(QPointF(page.panel.tree.visualItemRect(book_entry).center()), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     QApplication.sendEvent(viewport, on_book)
@@ -443,7 +444,7 @@ def test_contacts_dropped_on_a_group_are_put_in_it(world: World, qtbot: QtBot) -
 def test_a_group_is_made_renamed_written_to_and_deleted_from_the_sidebar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     seed(world)
     page = open_contacts(world, qtbot, 3)
-    b = page.panel.current_id()
+    b = page.panel.visible_ids()[0]  # the address book (D-334: none is chosen at the start, every one is ticked)
     book_entry = page.panel._entry(b)  # noqa: SLF001
     assert book_entry is not None
     labels = [action.text() for action in page.panel.menu_at(page.panel.tree.visualItemRect(book_entry).center()).actions()]
@@ -476,3 +477,91 @@ def test_a_group_is_made_renamed_written_to_and_deleted_from_the_sidebar(world: 
     page.delete_group(renamed)
     wait(qtbot, lambda: groups(page) == [] and page.panel.current_group() is None and page.count_label.text() == "Contacts (3)")
     assert world.call("contact.list").total == 3
+
+
+def test_a_tick_per_address_book_shows_the_ticked_ones_together_and_the_last_one_stays(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt as QtFlags
+
+    seed(world)
+    own = book(world)
+    work = str(world.call("collection.create", kind="contacts", name="Work").collection)
+    world.call("contact.add", collection=work, given="Lena", family="Brouwer")
+    page = open_contacts(world, qtbot, 4)  # both ticked: their contacts together (D-334)
+    own_entry, work_entry = page.panel._entry(own), page.panel._entry(work)  # noqa: SLF001
+    assert own_entry is not None and work_entry is not None
+    assert own_entry.flags() & QtFlags.ItemFlag.ItemIsUserCheckable  # a tick box, as calendars and task lists have
+    work_entry.setCheckState(0, QtFlags.CheckState.Unchecked)
+    wait(qtbot, lambda: page.model.rowCount() == 3 and "Lena Brouwer" not in [r.name for r in page.model.rows])
+    page.panel.tree.setCurrentItem(own_entry)  # a click on an address book no longer narrows the list
+    qtbot.wait(100)
+    assert page.model.rowCount() == 3
+    own_entry.setCheckState(0, QtFlags.CheckState.Unchecked)  # the last one ticked
+    assert own_entry.checkState(0) == QtFlags.CheckState.Checked and page.model.rowCount() == 3  # it stays: one is always shown
+    assert "At least one address book stays shown" in world.window.status_label.text()
+    work_entry.setCheckState(0, QtFlags.CheckState.Checked)
+    wait(qtbot, lambda: page.model.rowCount() == 4)
+
+
+def test_new_contacts_go_to_the_address_book_with_the_blue_plus(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed(world)
+    own = book(world)
+    work = str(world.call("collection.create", kind="contacts", name="Work").collection)
+    page = open_contacts(world, qtbot, 3)
+    assert page.panel.new_items_id() == own  # the first that takes contacts, at first
+    work_entry = page.panel._entry(work)  # noqa: SLF001
+    assert work_entry is not None
+    menu = page.panel.menu_at(page.panel.tree.visualItemRect(work_entry).center())
+    use = next(action for action in menu.actions() if action.text() == "Use for new contacts")
+    use.trigger()
+    assert page.panel.new_items_id() == work and work_entry.toolTip(1) == "New contacts go here"  # the blue plus moved (D-326, D-334)
+    chosen: list[str] = []
+
+    def look(editor: ContactEditor) -> int:
+        chosen.append(str(editor.book.currentData()))
+        return 0
+
+    monkeypatch.setattr(ContactEditor, "exec", look)
+    page.new_item()
+    assert chosen == [work]  # the new contact's address book is the one with the blue plus
+
+
+def test_contacts_of_two_address_books_selected_get_a_menu_that_says_so_and_no_book_ticked_says_what_to_do(world: World, qtbot: QtBot) -> None:
+    seed(world)
+    own = book(world)
+    work = str(world.call("collection.create", kind="contacts", name="Work").collection)
+    world.call("contact.add", collection=work, given="Lena", family="Brouwer")
+    page = open_contacts(world, qtbot, 4)
+    rows = page.model.rows
+    lena = next(number for number, row in enumerate(rows) if row.name == "Lena Brouwer")
+    other = next(number for number, row in enumerate(rows) if row.collection == own)
+    select_rows(page, lena, other)
+    page._fill_group_menu()  # noqa: SLF001
+    page._fill_move_menu()  # noqa: SLF001
+    assert [a.text() for a in page.group_menu.actions()] == ["(select contacts of one address book)"]
+    assert [a.text() for a in page.move_menu.actions()] == ["(select contacts of one address book)"]
+    world.window.settings.setValue("hidden_contacts", [own, work])  # nothing ticked, as after the last ticked one went
+    page.panel.reload()
+    wait(qtbot, lambda: page.model.rowCount() == 0 and "Tick an address book" in page.detail.text.toPlainText())
+
+
+def test_contacts_of_two_address_books_dropped_on_a_group_put_in_only_those_of_its_book(world: World, qtbot: QtBot) -> None:
+    seed(world)
+    own = book(world)
+    work = str(world.call("collection.create", kind="contacts", name="Work").collection)
+    world.call("contact.add", collection=work, given="Lena", family="Brouwer")
+    world.call("contact-group.create", collection=own, name="Club")
+    page = open_contacts(world, qtbot, 4)
+    wait(qtbot, lambda: groups(page) == ["Club  (0)"])
+    rows = page.model.rows
+    mine = next(number for number, row in enumerate(rows) if row.collection == own)
+    lena = next(number for number, row in enumerate(rows) if row.name == "Lena Brouwer")
+    data = page.model.mimeData([page.model.index(mine), page.model.index(lena)])  # one of each book, the group's book first
+    entry = page.panel.group_entries(own)[0]
+    place = QPointF(page.panel.tree.visualItemRect(entry).center())
+    viewport = page.panel.tree.viewport()
+    enter = QDragEnterEvent(place.toPoint(), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(viewport, enter)
+    drop = QDropEvent(place, Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(viewport, drop)
+    wait(qtbot, lambda: groups(page) == ["Club  (1)"])  # the one of its own book joined; the other was left out, no error (D-334)
+    assert "1 contact left out" in world.window.status_label.text()

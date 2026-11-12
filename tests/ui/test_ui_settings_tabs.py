@@ -16,9 +16,10 @@ from tests.ui.test_ui_tag_overview import open_overview
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings_tabs.py 4.4.584"
+__version__ = "test_ui_settings_tabs.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: A sender's contact in an unticked address book opens in its own window; both address books ticked together (D-334)
 # v4.4.584: The Tags block of D-334 in Contacts
 # v4.4.581: Settings > Tags is one list without tabs, its Show in columns in the sections' order; a contact's window offers the tags shown in
 #           Contacts in Add tag… (D-332)
@@ -69,11 +70,10 @@ def test_an_address_book_left_out_in_settings_leaves_the_contacts_sidebar(world:
     own = book(world)
     work = str(world.call("collection.create", kind="contacts", name="Work").collection)
     world.call("contact.add", collection=work, given="Lena", family="Brouwer")
-    page = open_contacts(world, qtbot, 3)
-    assert page.panel.current_id() == own
+    page = open_contacts(world, qtbot, 4)  # both address books ticked: their contacts together (D-334)
     enabled = ticks_and_ok(world, qtbot, monkeypatch, [own])
     assert enabled == [False]  # Work, the last one shown, cannot be left out
-    wait(qtbot, lambda: page.panel._entry(own) is None and page.panel.current_id() == work)  # noqa: SLF001 - the one shown gave way to the first left
+    wait(qtbot, lambda: page.panel._entry(own) is None and page.panel.visible_ids() == [work])  # noqa: SLF001 - only the one left
     wait(qtbot, lambda: page.model.rowCount() == 1)
     assert own in [info.collection for info in page.panel.every]  # still kept and synchronised
 
@@ -132,3 +132,26 @@ def test_the_contact_icon_of_a_sender_in_a_left_out_address_book_opens_the_conta
     assert known == [["Harbourline"]]
     assert world.window._section == MAIL  # noqa: SLF001 - Mail stays; the hidden address book is not shown
     assert world.window.contacts_page._show_item == ""  # noqa: SLF001 - nothing waits to be selected later
+
+
+def test_the_contact_icon_of_a_sender_in_an_unticked_address_book_opens_the_contact_in_its_own_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    shown(world, qtbot)
+    model, view = world.window.list_model, world.window.list_view
+    column = model.columns.index("contact")
+    world.call("pim.enable")
+    own = book(world)
+    sender = str(getattr(model.row_at(0), "sender"))
+    added = world.call("contact.add", collection=own, name="The sender", email=(sender.split("<")[-1].rstrip(">").strip(),))
+    world.window.messages.load_contact_addresses()
+    wait(qtbot, lambda: model.index(0, column).data(CONTACT_ROLE) == (added.item, own))
+    world.window.settings.setValue("hidden_contacts", [own])  # its tick is off in Contacts (D-334)
+    opened: list[str] = []
+
+    def answer(editor: ContactEditor) -> int:
+        opened.append(str(editor.book.currentData()))
+        return 0  # Cancel
+
+    monkeypatch.setattr(ContactEditor, "exec", answer)
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(model.index(0, column)).center())
+    wait(qtbot, lambda: opened == [own])
+    assert world.window._section == MAIL  # noqa: SLF001 - Mail stays

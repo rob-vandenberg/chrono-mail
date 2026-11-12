@@ -19,9 +19,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_pim_changes.py 1.1.205"
+__version__ = "test_ui_pim_changes.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: The address book of the panel test: none is chosen at the start (D-334)
 # v1.1.205: the rows of given tasks (a page, or a task that changed) are not a whole list; nor may the places of every task be asked again (R-02)
 # v0.5.159: Initial tests: calendar, contacts and tasks follow the facts; one item changes, nothing is fetched again (D-146 step 5)
 
@@ -107,7 +108,7 @@ def test_the_panel_changes_one_entry_and_its_numbers(world: World, qtbot: QtBot,
     wait(qtbot, lambda: any(str(item.data(0, 0x100 + 1)) == made for item in collection_items(page.panel.tree)))
     world.call("collection.edit", collection=made, name="Close friends", colour="#336699")
     wait(qtbot, lambda: any(item.text(0) == "Close friends" for item in collection_items(page.panel.tree)))
-    book = page.panel.current_id()
+    book = next(collection for collection in page.panel.visible_ids() if collection != made)  # the first address book (D-334: none is chosen at the start)
     world.call("contact.add", collection=book, given="Ada", family="Lovelace")
     wait(qtbot, lambda: int(getattr(page.panel.info(book), "items")) == 4)
     world.call("collection.delete", collection=made)

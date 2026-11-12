@@ -12,9 +12,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 3.6.349"
+__version__ = "commands_addressbook.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: contact.list takes several address books (collections), the ones ticked in Contacts (D-334)
 # v3.6.349: each earlier phone, address or other entry is matched once: two with the same value and first kind stay two (RV-191)
 # v3.2.342: an entry given again with the same value and first kind keeps its other kinds, preferred mark and details (RV-20)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -125,6 +126,7 @@ def _info(item: str, account: str, collection: str, contact: Contact, groups: tu
 @dataclass(frozen=True, slots=True)
 class ListParameters:
     collection: str | None = field(default=None, metadata=option("Only this address book (default: all)"))
+    collections: tuple[str, ...] = field(default=(), metadata=option("Only these address books, together (default: all; with collection, that one only)"))
     text: str = field(default="", metadata=option("Words to find in names, addresses, phone numbers, organisations and notes (a part of a word is enough)"))
     tag: str = field(default="", metadata=option("Only contacts with this tag"))
     limit: int = field(default=200, metadata=option("How many contacts at most (0: every one)"))
@@ -187,11 +189,13 @@ def contact_list(engine: Engine, parameters: ListParameters) -> ContactList:
     total = 0
     limit = EVERY if parameters.limit == 0 else max(1, min(parameters.limit, MAXIMUM_ROWS))
     group_found = False
+    wanted_books = (parameters.collection,) if parameters.collection else parameters.collections  # the address books ticked in the window (D-334)
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
-            if parameters.collection is not None and not any(c.collection_id == parameters.collection for c in store.collections(CollectionKind.CONTACTS)):
+            books = tuple(book for book in wanted_books if any(c.collection_id == book for c in store.collections(CollectionKind.CONTACTS)))
+            if wanted_books and not books:
                 continue
-            query = ItemQuery(CollectionKind.CONTACTS, (parameters.collection,) if parameters.collection else (), parameters.text, parameters.tag, limit=EVERY, groups=False)
+            query = ItemQuery(CollectionKind.CONTACTS, books, parameters.text, parameters.tag, limit=EVERY, groups=False)
             if parameters.group:
                 group = store.index.get(parameters.group)
                 if group is None or not group.is_group:

@@ -10,9 +10,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import REGISTRY, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pim_lists.py 1.9.266"
+__version__ = "test_engine_pim_lists.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: contact.list takes several address books together (D-334)
 # v1.9.266: R-45: the shown calendars stay under the cap of 5,000 per range (D-174); the old test asked 6,000
 # v1.1.205: Initial tests: contacts, tasks and events are never cut at 5,000; hidden lists and calendars take no room (R-02)
 
@@ -79,3 +80,15 @@ def test_an_event_that_happens_too_often_is_said_to_be_cut(engine: Engine) -> No
     call(engine, "event.add", calendar=collection(engine, "events"), summary="Tick", start="2026-11-02T00:00", end="2026-11-02T00:01", time_zone="UTC", rrule="FREQ=MINUTELY")
     listed = call(engine, "event.list", from_date="2026-11-02", to_date="2026-11-07")
     assert listed.cut and len(listed.events) == 5_000
+
+
+def test_contact_list_takes_several_address_books_together(engine: Engine) -> None:
+    first = collection(engine, "contacts")
+    second = str(call(engine, "collection.create", kind="contacts", name="Work").collection)
+    third = str(call(engine, "collection.create", kind="contacts", name="Club").collection)
+    for book, name in ((first, "Ann"), (second, "Bob"), (third, "Cas")):
+        call(engine, "contact.add", collection=book, given=name, family="Lee")
+    together = call(engine, "contact.list", collections=(first, second), limit=0)
+    assert sorted(row.name for row in together.contacts) == ["Ann Lee", "Bob Lee"] and together.total == 2  # the ticked ones together (D-334)
+    assert call(engine, "contact.list", collection=third, collections=(first,), limit=0).total == 1  # collection: that one only
+    assert call(engine, "contact.list", limit=0).total == 3  # neither: every address book

@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.578"
+__version__ = "collectionpanel.py 4.4.587"
 
 # --- Version history ----------------------------------------------------
+# v4.4.587: Contacts has a tick box per address book and the blue plus for new contacts; the last ticked address book stays; a click on a group shows its members (D-334)
 # v4.4.578: Address books left out in Settings > Sidebar are not in the Contacts list; the one shown when it is left out gives way to the first (D-331)
 # v4.4.575: The Month tick is Fill colour for timed events, in the menu only while Month is shown (the owner, D-297)
 # v4.4.573: No Edit colours…: a calendar's menu has Show timed events in colour in Month, ticked or not, the account's choice (D-329, D-297)
@@ -76,7 +77,7 @@ ROLE_INFO: int = Qt.ItemDataRole.UserRole + 2
 ROLE_ACCOUNT: int = Qt.ItemDataRole.UserRole + 3  # on an account's heading: its id
 ROLE_GROUP: int = Qt.ItemDataRole.UserRole + 4  # on a contact group's entry (under its address book): its GroupRow
 KIND_WORDS: dict[str, tuple[str, str]] = {"events": ("Calendar", "calendar"), "tasks": ("Tasks", "task list"), "contacts": ("Contacts", "address book")}
-NEW_ITEMS: dict[str, str] = {"events": "appointments", "tasks": "tasks"}  # what goes to the collection with the blue plus (D-326)
+NEW_ITEMS: dict[str, str] = {"events": "appointments", "tasks": "tasks", "contacts": "contacts"}  # what goes to the collection with the blue plus (D-326)
 PLUS_COLUMN: int = 1  # the column of the blue plus, at the right of the list
 PLUS_SIZE: int = 14
 
@@ -234,6 +235,10 @@ class CollectionPanel(QWidget):
 
     def _set_of(self, key: str) -> set[str]:
         return settings_set(self._settings, key)
+
+    def unticked(self) -> set[str]:
+        """The collections whose tick is off (this computer's view only), also before the list was ever filled."""
+        return self._hidden()
 
     def left_out(self) -> set[str]:
         """The collections left out of the list in Settings > Sidebar (D-326)."""
@@ -447,13 +452,19 @@ class CollectionPanel(QWidget):
     def _ticked(self, item: QTreeWidgetItem, column: int) -> None:
         if self._loading or not self._multiple:
             return
+        if self.kind == "contacts" and item.checkState(0) != Qt.CheckState.Checked and not self.visible_ids():  # the last address book shown stays (D-334)
+            self._loading = True
+            item.setCheckState(0, Qt.CheckState.Checked)
+            self._loading = False
+            self.target_moved.emit("At least one address book stays shown")
+            return
         hidden = {str(entry.data(0, ROLE_COLLECTION)) for entry in collection_items(self.tree) if entry.checkState(0) != Qt.CheckState.Checked}
         self._settings.setValue(self._key, sorted(hidden))
         self._mark_target()
         self.changed.emit()
 
     def _chosen(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
-        if not self._loading and not self._multiple:
+        if not self._loading and (not self._multiple or self.kind == "contacts"):  # Contacts: a group chosen shows its members, an address book every ticked one (D-334)
             self.changed.emit()
 
     # --- changing -----------------------------------------------------------------------------
