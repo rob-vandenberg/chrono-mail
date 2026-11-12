@@ -16,9 +16,10 @@ from tests.ui.test_ui_calendar import open_calendar, summaries
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_colours.py 4.4.575"
+__version__ = "test_ui_tag_colours.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: No "All events" line any more (D-334)
 # v4.4.575: The window opens 780 wide in Qt's own units and then as it was closed; the width shared alike; Settings > Sidebar's Tags ticks
 # v4.4.574: Add tag… with one click, selecting and removing a tag, the field colour; only the latest answer about the tags counts
 # v4.4.573: Initial tests: the Tags box of the appointment window and its radio buttons, the window's layout, the tag icons and the hover text (D-329)
@@ -368,7 +369,7 @@ def test_the_tags_tick_of_settings_sidebar_hides_the_tags_of_calendar_and_tasks(
 
     page = open_calendar(world, qtbot, layout.WEEK)
     assert page.tag_filter.isVisibleTo(page.side)
-    wait(qtbot, lambda: page.tag_filter.list.count() > 1)
+    wait(qtbot, lambda: page.tag_filter.list.count() > 0)
     page.tag_filter.choose("Food")
     wait(qtbot, lambda: summaries(page) == ["Lunch"])
 

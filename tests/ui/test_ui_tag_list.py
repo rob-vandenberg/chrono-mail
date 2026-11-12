@@ -26,9 +26,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_list.py 4.4.583"
+__version__ = "test_ui_tag_list.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The numbers of Contacts' Tags block: no "All contacts" line (D-334)
 # v4.4.583: The Tags column test: the small tags stand in the middle of the column (the owner)
 # v4.4.582: New tag… in a contact or task window refuses a name over 100 characters and asks again with it
 # v4.4.581: Initial: Settings > Tags edited in place, the key fields' ✕, Show in per section, the sidebars' numbers, the Tags box of contacts
@@ -285,8 +286,8 @@ def test_the_sidebars_show_the_tags_in_use_with_their_number_drawn_apart(world: 
 def test_the_contacts_tags_list_draws_its_numbers_apart(world: World, qtbot: QtBot) -> None:
     seed_contacts(world)
     page = open_contacts(world, qtbot, 3)
-    wait(qtbot, lambda: page.tag_list.count() > 1)
-    item = page.tag_list.item(1)
+    wait(qtbot, lambda: page.tag_filter.list.count() > 0)
+    item = page.tag_filter.list.item(0)
     assert item.text() == "Business" and item.data(COUNT_ROLE) == 1
 
 

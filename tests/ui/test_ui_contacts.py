@@ -19,9 +19,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 4.4.581"
+__version__ = "test_ui_contacts.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The Tags block of D-334: no "All contacts" line; a tag chosen through the block
 # v4.4.581: a contact's tags are given in the Tags box, as in the appointment window (D-332)
 # v3.2.342: what the window does not show of e-mail addresses, phone numbers and postal addresses survives a Save (RV-20)
 # v3.0.339: a birthday without a year is shown and survives a Save that changed something else (RV-16)
@@ -89,8 +90,7 @@ def test_the_contacts_are_listed_by_family_name_and_one_is_shown_in_full(world: 
 def test_search_and_the_tag_list_filter_the_contacts(world: World, qtbot: QtBot) -> None:
     seed(world)
     page = open_contacts(world, qtbot, 3)
-    wait(qtbot, lambda: page.tag_list.count() == 4)  # all contacts, Business, Important, Key Customer
-    assert [page.tag_list.item(i).text() for i in range(page.tag_list.count())][0] == "All contacts"
+    wait(qtbot, lambda: page.tag_filter.list.count() == 3)  # Business, Important, Key Customer (D-334: no "All contacts" line)
     page.search.setText("rey")
     wait(qtbot, lambda: page.model.rowCount() == 1 and page.count_label.text() == "Contacts (1)")
     page.search.setText("zzz")
@@ -98,10 +98,9 @@ def test_search_and_the_tag_list_filter_the_contacts(world: World, qtbot: QtBot)
     assert "No contact matches" in page.detail.text.toPlainText()
     page.search.setText("")
     wait(qtbot, lambda: page.model.rowCount() == 3)
-    business = next(i for i in range(page.tag_list.count()) if page.tag_list.item(i).text().startswith("Business"))
-    page.tag_list.setCurrentRow(business)
+    page.tag_filter.choose("Business")
     wait(qtbot, lambda: [str(getattr(r, "name")) for r in page.model.rows] == ["Rebecca Hoffman"])
-    page.tag_list.setCurrentRow(0)
+    page.tag_filter.choose("")
     wait(qtbot, lambda: page.model.rowCount() == 3)
 
 
@@ -233,7 +232,7 @@ def test_tags_are_set_from_the_menu_for_several_contacts_and_contacts_are_moved_
     seed(world)
     other = world.call("collection.create", kind="contacts", name="Friends").collection
     page = open_contacts(world, qtbot, 3)
-    wait(qtbot, lambda: page.tag_list.count() == 4)  # the tags have arrived (the menu is made from them)
+    wait(qtbot, lambda: page.tag_filter.list.count() == 3)  # the tags have arrived (the menu is made from them)
     select_rows(page, 0, 1)
     page._fill_tag_menu()  # noqa: SLF001
     labels = [a.text() for a in page.tag_menu.actions()]
@@ -346,18 +345,17 @@ def test_the_tag_list_follows_in_place_and_keeps_the_chosen_tag(world: World, qt
 
     seed(world)
     page = open_contacts(world, qtbot, 3)
-    wait(qtbot, lambda: page.tag_list.count() == 4)
-    business = next(page.tag_list.item(i) for i in range(page.tag_list.count()) if page.tag_list.item(i).text().startswith("Business"))
-    page.tag_list.setCurrentItem(business)
+    wait(qtbot, lambda: page.tag_filter.list.count() == 3)
+    business, important = page.tag_filter.list.item(0), page.tag_filter.list.item(1)
+    page.tag_filter.choose("Business")
     wait(qtbot, lambda: page.model.rowCount() == 1)
-    everyone, important = page.tag_list.item(0), page.tag_list.item(2)
-    changes: list[bool] = []
-    page.tag_list.currentItemChanged.connect(lambda *_: changes.append(True))
+    changes: list[str] = []
+    page.tag_filter.chosen.connect(changes.append)
     world.call("contact.add", collection=book(world), given="Ann", family="Lee", tag=("Business", "Family"))
     page.reload_tags()  # what a save does
-    wait(qtbot, lambda: [counted_row(page.tag_list.item(i)) for i in range(page.tag_list.count())] == ["All contacts", "Business  (2)", "Family  (1)", "Important  (1)", "Key Customer  (1)"])  # the number drawn apart (D-327)
-    assert page.tag_list.item(0) is everyone and page.tag_list.item(1) is business and page.tag_list.item(3) is important  # changed in place, not made again
-    assert page.tag_list.currentItem() is business and changes == []  # the chosen tag stays; nothing is loaded again
+    wait(qtbot, lambda: [counted_row(page.tag_filter.list.item(i)) for i in range(page.tag_filter.list.count())] == ["Business  (2)", "Family  (1)", "Important  (1)", "Key Customer  (1)"])  # the number drawn apart (D-327)
+    assert page.tag_filter.list.item(0) is business and page.tag_filter.list.item(2) is important  # changed in place, not made again
+    assert page.tag_filter.tag() == "Business" and changes == []  # the chosen tag stays; nothing is loaded again
 
     def refused(command: str, values: object, done: object, failed: object, owner: object = None, **options: object) -> None:  # options: what ask passes on
         assert callable(failed)

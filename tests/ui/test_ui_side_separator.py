@@ -11,9 +11,10 @@ from tests.ui.test_ui_startup_view import restarted
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_side_separator.py 4.4.577"
+__version__ = "test_ui_side_separator.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: Contacts has the shared Tags block below the separator (D-334)
 # v4.4.577: Initial tests of the separator between a section's folder list and its Tags list, its place kept per section (D-330)
 
 DRAGGED: list[int] = [100, 400]  # the folder list a fifth of the height: far from the first place, 3 to 2
@@ -38,9 +39,7 @@ def test_calendar_tasks_and_contacts_each_have_a_separator_above_their_tags(worl
     assert isinstance(calendar, CalendarPage) and isinstance(tasks, TasksPage) and isinstance(contacts, ContactsPage)
     assert calendar.side_splitter.widget(0) is calendar.panel and calendar.side_splitter.widget(1) is calendar.tag_filter
     assert tasks.side_splitter.widget(0) is tasks.panel and tasks.side_splitter.widget(1) is tasks.tag_filter
-    assert contacts.side_splitter.widget(0) is contacts.panel
-    below = contacts.side_splitter.widget(1)
-    assert below is not None and contacts.tag_title.parent() is below and contacts.tag_list.parent() is below  # the heading moves with its list
+    assert contacts.side_splitter.widget(0) is contacts.panel and contacts.side_splitter.widget(1) is contacts.tag_filter  # the heading moves with its list
     assert not calendar.side_splitter.childrenCollapsible()
     wait(qtbot, lambda: abs(share(calendar.side_splitter) - 0.6) < 0.05)  # the first time: 3 to 2, as before
 

@@ -2,6 +2,7 @@
 Read before work on the message list, search, rules, settings.
 See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 
+- [[D-334]] One Tags block for every section
 - [[D-305]] Marked-mail views read only marked mail
 - [[D-306]] Sorting reads only the index
 - [[D-260]] Recovery code shown until stored

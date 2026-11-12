@@ -54,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.577"
+__version__ = "calendarview.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The Tags block without "All events": a click turns a tag filter on and off (D-334)
 # v4.4.577: A separator to drag between the calendars and the Tags list, its place remembered for this section (D-330)
 # v4.4.576: A double click, Enter, Edit… (first in every appointment's menu) and the toolbar's Edit open an appointment ready to change; one of a read-only calendar only to read (the owner, D-318)
 # v4.4.575: The calendar sidebar knows when Month is shown, for its Fill colour tick (D-297); the Tags list follows Settings > Sidebar's Tags tick (D-327)
@@ -228,7 +229,7 @@ class CalendarPage(PimPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        self.tag_filter = TagFilter("All events", self.colours, side)
+        self.tag_filter = TagFilter(self.colours, side)
         self.side_splitter = SideSplitter("calendar_side_splitter", settings, self.panel, self.tag_filter, side)  # its own place (D-330)
         self.tag_filter.setVisible(tags_shown(settings, "events"))  # Settings > Sidebar's Tags tick (D-327)
         side_layout.addWidget(self.side_splitter, 1)

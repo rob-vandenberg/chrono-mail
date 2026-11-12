@@ -11,8 +11,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QLabel,
     QListView,
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
     QStyleOptionViewItem,
@@ -26,7 +24,7 @@ from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_pim import COLLECTION_LIST, CollectionSummary
 from chrono_mail.engine.commands_pim import ListParameters as CollectionListParameters
 from chrono_mail.core import ChronoMailError
-from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR, NEW_TAG
+from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_addressbook import (
     CONTACT_DELETE, CONTACT_EDIT, CONTACT_EXPORT, CONTACT_IMPORT, CONTACT_LIST, CONTACT_MOVE, CONTACT_SHOW, ContactInfo, ContactList,
@@ -47,7 +45,7 @@ from chrono_mail.engine.commands_addressbook import ListParameters as ContactLis
 from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, paint_mark
-from chrono_mail.ui.collectionpanel import ROLE_GROUP, colour_icon
+from chrono_mail.ui.collectionpanel import ROLE_GROUP
 from chrono_mail.ui.contactdetail import ContactDetail, avatar_pixmap
 from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
@@ -57,15 +55,15 @@ from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import tag_icon
-from chrono_mail.ui.tagfilter import tags_shown
-from chrono_mail.ui.foldertree import FolderItemDelegate
+from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.582"
+__version__ = "contactsview.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The shared Tags block of Calendar and Tasks replaces the own Tags list: no "All contacts", a click turns a tag filter on and off (D-334)
 # v4.4.582: The chosen tag leaving the Tags list chooses All contacts: every contact shows again, as in Calendar and Tasks (D-327)
 # v4.4.581: The number after a tag in the Tags list drawn as a folder's unread (D-327); the Tag menu and a contact's window offer the tags shown in Contacts (Show in), the menu also one a selected contact carries (D-332)
 # v4.4.578: The Tags list follows Settings > Sidebar's Tags tick of Contacts; hidden, it filters nothing; a contact's window asks for the address books and tags itself and names its own also when it is left out (D-331)
@@ -93,7 +91,6 @@ ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
 PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 2  # true on a contact with an action under way (drawn greyed)
 ROW_HEIGHT: int = 56
 AVATAR_SIZE: int = 36
-ALL_TAGS: str = ""
 
 
 class ContactListModel(PimItemModel):
@@ -285,22 +282,8 @@ class ContactsPage(PimListPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        tags = QWidget(side)  # the Tags heading and its list, below the separator (D-330)
-        tags_layout = QVBoxLayout(tags)
-        tags_layout.setContentsMargins(0, 0, 0, 0)
-        tags_layout.setSpacing(0)
-        self.tag_title = QLabel("Tags", tags)
-        font = self.tag_title.font()
-        font.setBold(True)
-        self.tag_title.setFont(font)
-        self.tag_title.setContentsMargins(10, 6, 10, 4)
-        tags_layout.addWidget(self.tag_title)
-        self.tag_list = QListWidget(tags)
-        self.tag_list.setFrameShape(QListWidget.Shape.NoFrame)
-        self.tag_list.setItemDelegate(FolderItemDelegate(self.tag_list))  # the number in bold at the right, as a folder's unread (D-327)
-        self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tag_list.customContextMenuRequested.connect(self._tag_menu)
-        tags_layout.addWidget(self.tag_list, 1)
+        self.tag_filter = TagFilter(self.colours, side)  # the Tags block, below the separator (D-330, D-334)
+        tags = self.tag_filter
         self.tag_side = tags
         self.side_splitter = SideSplitter("contacts_side_splitter", settings, self.panel, tags, side)  # its own place (D-330)
         tags.setVisible(tags_shown(settings, "contacts"))  # Settings > Sidebar's Tags tick (D-331)
@@ -389,7 +372,8 @@ class ContactsPage(PimListPage):
         self.toolbar.set_search(self.search_field)
 
         self.search.textChanged.connect(self._search_changed)
-        self.tag_list.currentItemChanged.connect(self._tag_chosen)
+        self.tag_filter.chosen.connect(self._tag_chosen)
+        self.tag_filter.overview_wanted.connect(self.tag_overview_wanted)
         self.list.selectionModel().selectionChanged.connect(self._selection_changed)
         self.list.doubleClicked.connect(self._double_clicked)
         self.list.customContextMenuRequested.connect(self._list_menu)
@@ -403,16 +387,8 @@ class ContactsPage(PimListPage):
         self._listed_view: tuple[str, str] | None = None  # the address book and group whose list has arrived (the count line is only theirs)
         self._update_group_actions()
 
-    def _tag_chosen(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
+    def _tag_chosen(self, name: str) -> None:
         self.reload_list()
-
-    def _tag_menu(self, position: QPoint) -> None:
-        item = self.tag_list.itemAt(position)
-        name = str(item.data(ROW_ROLE) or "") if item is not None else ""
-        if name:
-            menu = QMenu(self.tag_list)
-            menu.addAction("Show everything tagged…", lambda: self.tag_overview_wanted.emit(name))
-            menu.exec(self.tag_list.viewport().mapToGlobal(position))
 
     # --- showing ------------------------------------------------------------------------------
 
@@ -442,60 +418,19 @@ class ContactsPage(PimListPage):
             tags = [tag for tag in result if tag.contacts > 0]
             self._tags_known = [tag.name for tag in result if "contacts" in tag.kinds]  # the tags shown in Contacts (Show in, D-332)
             self.colours.update(list(result))
-            self._follow_tags([(tag.name, tag.contacts) for tag in tags])
+            self.tag_filter.follow([(tag.name, tag.contacts) for tag in tags])
             self.list.viewport().update()
 
         self._backend.ask(TAG_LIST, NoParameters(), listed, lambda error: self.status(f"The tags of the contacts could not be read: {error}"), owner=self)
 
-    def _follow_tags(self, tags: list[tuple[str, int]]) -> None:
-        """The tag list as it is now, changed in place: a number that changed is written again, a tag that came is put at its place, one with
-        no contacts left goes; the rest, and the tag chosen, stay as they are (D-146). The chosen tag going chooses All contacts."""
-        if self.tag_list.count() == 0 or str(self.tag_list.item(0).data(ROW_ROLE)) != ALL_TAGS:
-            everyone = QListWidgetItem("All contacts")
-            everyone.setData(ROW_ROLE, ALL_TAGS)
-            self.tag_list.insertItem(0, everyone)
-            if self.tag_list.currentItem() is None:
-                self.tag_list.blockSignals(True)  # the first filling: All contacts is chosen as it was, nothing to load again
-                self.tag_list.setCurrentItem(everyone)
-                self.tag_list.blockSignals(False)
-        wanted = {name.casefold() for name, _ in tags}
-        for row in range(self.tag_list.count() - 1, 0, -1):
-            if str(self.tag_list.item(row).data(ROW_ROLE)).casefold() not in wanted:
-                if self.tag_list.currentRow() == row:
-                    self.tag_list.setCurrentRow(0)  # the chosen tag went: All contacts, every contact shows again (D-327)
-                self.tag_list.takeItem(row)
-        for number, (name, contacts) in enumerate(tags, start=1):
-            text = name
-            item = self.tag_list.item(number)
-            if item is None or str(item.data(ROW_ROLE)).casefold() != name.casefold():
-                elsewhere = next((row for row in range(number + 1, self.tag_list.count()) if str(self.tag_list.item(row).data(ROW_ROLE)).casefold() == name.casefold()), None)
-                if elsewhere is not None:  # its place in the order changed (a rename)
-                    chosen = self.tag_list.currentRow() == elsewhere
-                    item = self.tag_list.takeItem(elsewhere)
-                    self.tag_list.insertItem(number, item)
-                    if chosen:
-                        self.tag_list.blockSignals(True)
-                        self.tag_list.setCurrentItem(item)  # the same tag stays chosen: nothing to load again
-                        self.tag_list.blockSignals(False)
-                else:
-                    item = QListWidgetItem(text)
-                    item.setData(ROW_ROLE, name)
-                    self.tag_list.insertItem(number, item)
-            if item.text() != text:
-                item.setText(text)
-            if item.data(COUNT_ROLE) != contacts:
-                item.setData(COUNT_ROLE, contacts)
-            item.setIcon(colour_icon(self.colours.colour(name).name() or COLLECTION_WITHOUT_COLOUR))
-
     def show_tags(self, shown: bool) -> None:
         """Settings > Sidebar's Tags tick (D-331): the Tags list shown or not; hidden, it filters nothing and every contact shows again."""
         if not shown and self._tag():
-            self.tag_list.setCurrentRow(0)  # All contacts
+            self.tag_filter.choose("")  # no filter: every contact shows again
         self.tag_side.setVisible(shown)
 
     def _tag(self) -> str:
-        item = self.tag_list.currentItem()
-        return str(item.data(ROW_ROLE) or "") if item is not None else ""
+        return self.tag_filter.tag()
 
     def show_contact(self, item: str, collection: str) -> None:
         """Show this contact: its address book is chosen, the search and the tag filter are cleared, and the contact is selected."""
@@ -503,9 +438,7 @@ class ContactsPage(PimListPage):
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
-        self.tag_list.blockSignals(True)
-        self.tag_list.setCurrentRow(-1)
-        self.tag_list.blockSignals(False)
+        self.tag_filter.clear_quietly()  # the contact's list is loaded below
         self.panel.prefer = collection
         if self._enabled:  # otherwise the first load of the address books chooses it
             self.panel.reload(then_choose=collection)

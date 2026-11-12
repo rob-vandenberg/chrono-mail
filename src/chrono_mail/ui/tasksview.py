@@ -61,9 +61,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.581"
+__version__ = "tasksview.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The Tags block without "All tasks": a click turns a tag filter on and off (D-334)
 # v4.4.581: The answer about one changed task, asked before the list was asked again, is not used: it was asked with the old tag, tab or
 #           search (a task losing the chosen tag left the list of every task, D-146); a task just saved is then selected by the list's own answer. The Tag menu offers the tags shown in Tasks (Show in), and a tag a selected task carries all the same (D-332)
 # v4.4.577: A separator to drag between the task lists and the Tags list, its place remembered for this section (D-330)
@@ -470,7 +471,7 @@ class TasksPage(PimListPage):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.setSpacing(0)
-        self.tag_filter = TagFilter("All tasks", self.colours, side)
+        self.tag_filter = TagFilter(self.colours, side)
         self.side_splitter = SideSplitter("tasks_side_splitter", settings, self.panel, self.tag_filter, side)  # its own place (D-330)
         self.tag_filter.setVisible(tags_shown(settings, "tasks"))  # Settings > Sidebar's Tags tick (D-327)
         side_layout.addWidget(self.side_splitter, 1)

@@ -2,6 +2,7 @@
 Read before work on appointments, tasks, contacts, reminders.
 See also: [[sync-conflicts]]
 
+- [[D-334]] One Tags block for every section
 - [[D-193]] An account is a faithful copy
 - [[D-201]] Unsupported data stays local
 - [[D-180]] Never accept an unaccepted certificate

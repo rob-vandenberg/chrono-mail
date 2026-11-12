@@ -2,6 +2,7 @@
 Read before work on tags.
 See also: [[mail-window]]
 
+- [[D-334]] One Tags block for every section
 - [[D-329]] Tags give appointments their colour
 - [[D-330]] A separator above the Tags list, its place kept per section
 - [[D-331]] The same tabs on Settings > Sidebar and Settings > Tags

@@ -16,9 +16,10 @@ from tests.ui.test_ui_tag_overview import open_overview
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings_tabs.py 4.4.581"
+__version__ = "test_ui_settings_tabs.py 4.4.584"
 
 # --- Version history ----------------------------------------------------
+# v4.4.584: The Tags block of D-334 in Contacts
 # v4.4.581: Settings > Tags is one list without tabs, its Show in columns in the sections' order; a contact's window offers the tags shown in
 #           Contacts in Add tag… (D-332)
 # v4.4.580: Settings > Tags has the same tab page as Settings > Sidebar, in the same place, the list inside its frame (the owner)
@@ -80,8 +81,8 @@ def test_an_address_book_left_out_in_settings_leaves_the_contacts_sidebar(world:
 def test_the_tags_tick_of_contacts_hides_its_tags_list_and_every_contact_shows_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     seed(world)
     page = open_contacts(world, qtbot, 3)
-    wait(qtbot, lambda: page.tag_list.count() > 1)
-    page.tag_list.setCurrentRow(1)  # one tag chosen: fewer contacts
+    wait(qtbot, lambda: page.tag_filter.list.count() > 0)
+    page.tag_filter.choose("Business")  # one tag chosen: fewer contacts
     wait(qtbot, lambda: page.model.rowCount() == 1)
     ticks_and_ok(world, qtbot, monkeypatch, [], tags=False)
     wait(qtbot, lambda: page.tag_side.isHidden() and page.model.rowCount() == 3)
@@ -116,7 +117,7 @@ def test_the_contact_icon_of_a_sender_in_a_left_out_address_book_opens_the_conta
     world.window.messages.load_contact_addresses()
     wait(qtbot, lambda: model.index(0, column).data(CONTACT_ROLE) == (added.item, own))
     world.window.settings.setValue("left_out_contacts", [own])  # as Settings > Sidebar keeps it, in a run that never opened Contacts: its lists never came
-    assert world.window.contacts_page.panel.every == [] and world.window.contacts_page.tag_list.count() == 0
+    assert world.window.contacts_page.panel.every == [] and world.window.contacts_page.tag_filter.list.count() == 0
     opened: list[str] = []
     known: list[list[str]] = []
 
