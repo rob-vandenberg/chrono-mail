@@ -35,13 +35,13 @@ from chrono_mail.ui.scale import px
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, TASKS
 from chrono_mail.ui.sidebarpage import startup_forces
 from chrono_mail.ui.statusreport import StatusReport
-from chrono_mail.ui.tagging import offered_for_mail
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.572"
+__version__ = "folderpane.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Tags lists only the tags some mail carries, each with its number (the owner, D-327); the tag shown stays until it is left, and then goes (D-146)
 # v4.4.572: A tag under Tags has Show everything tagged… in its right-click menu: the Tag overview (D-328)
 # v4.2.454: Rename folder opens 360 pixels wide on the owner's screen (TextBox, the owner)
 # v4.2.453: Rename folder and Delete folder… say what the rules that move mail to the folder did (D-302)
@@ -252,7 +252,9 @@ class FolderPane(QObject):
         model.show_favorites = chosen.show_favorites
         model.show_local_folders = chosen.show_local_folders
         model.show_tags = chosen.show_tags
-        model.tags = [(tag.name, self._tags.book.colour(tag.name).name()) for tag in self._state.tags if offered_for_mail(tag)]
+        view = self._state.view
+        shown = view.combined_tag.casefold() if view.combined == "tagged" else ""  # the tag whose mail is shown: it stays until it is left (D-146)
+        model.tags = [(tag.name, self._tags.book.colour(tag.name).name(), tag.mails) for tag in self._state.tags if tag.mails > 0 or tag.name.casefold() == shown]  # the tags in use, with their number (D-327)
         new = model.populate(self._state.accounts, self._state.folders)
         target: QModelIndex | None = None
         if not self.tree.currentIndex().isValid():
@@ -486,6 +488,9 @@ class FolderPane(QObject):
             combined_tag=path if kind is EntryKind.TAGVIEW else "", query="", advanced=None,
             unread=kind is EntryKind.UNREAD, flagged=kind is EntryKind.FLAGGED, attachments=False,
         ))
+        left = view.combined_tag if view.combined == "tagged" else ""
+        if left and any(tag.name.casefold() == left.casefold() and tag.mails == 0 for tag in self._state.tags):
+            self.lay_out()  # the tag left, which no mail carries any more, goes from Tags now (D-146)
 
     def go_to_folder(self) -> None:
         """G: type a part of a folder's name and go to that folder."""

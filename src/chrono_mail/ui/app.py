@@ -12,6 +12,7 @@ from chrono_mail.config import AppDirectories, KeyringPasswordStore, default_dir
 from chrono_mail.core import CredentialBackend
 from chrono_mail.config.autostart import MINIMIZED_OPTION
 from chrono_mail.config.running import program_is_running, set_process_name
+from chrono_mail.config.tags import first_start, give_starting_tags
 from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine import Engine
 from chrono_mail.ui import appearance
@@ -23,9 +24,10 @@ from chrono_mail.ui.invitationwindow import is_calendar_file
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_open, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 4.4.541"
+__version__ = "app.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: the very first start (no settings or data folder yet) begins with the eleven starting tags (the owner, D-333)
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.507: an .ics file as first argument opens as a card; a second start hands it to the running program (D-310 step 4)
 # v4.2.459: credential_stores: a profile's entries not moved yet are found under its former wallet name (D-274)
@@ -151,7 +153,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if program_is_running():  # two copies would change the same mail at once
         return 0 if minimized and not calendar_file else second_start(calendar_file)  # a start at login while it runs already: it is there, nothing to show
     directories, settings = directories_and_settings(profile)
+    starting = first_start(directories.config_directory, directories.data_directory)  # never ran here before: nothing of it yet
     engine = Engine(directories, *credential_stores(directories))
+    if starting:
+        give_starting_tags(directories.tags_file)  # the eleven starting tags, only at the very first start (the owner, D-333)
     backend = Backend(engine)
     appearance.start(app, settings)  # the colour theme and the style, before any window is made
     window = MainWindow(backend, settings)

@@ -6,7 +6,6 @@ from PySide6.QtCore import QDate, QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QCompleter,
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
@@ -28,15 +27,19 @@ from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.collectionpanel import grey_read_only
+from chrono_mail.ui.tagbox import TagBox, TagEditing
+from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.569"
+__version__ = "taskeditor.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Tasks,
+#           Remove tag and Delete; no radio buttons, a tag colours no task (the owner, D-332)
 # v4.4.569: The List field of a new task greys a read-only task list, with why (D-326)
 # v4.4.548: the width of a reminder row is measured without a row in the window: a row removed again stayed on screen over Done and Repeat while the window was open
 # v4.4.547: the reminders are the rows of an appointment (eventreminders.py): every reminder of a task is shown and kept, each Notification or Email, a number and a unit or a set time, at most 5 (D-316)
@@ -111,14 +114,18 @@ class TaskEditor(QDialog):
 
     saved = Signal(str)
 
-    def __init__(self, backend: Backend, lists: list[CollectionSummary], known_tags: list[str], task: TaskInfo | None = None, collection: str = "", parent: QWidget | None = None) -> None:
+    def __init__(
+        self, backend: Backend, lists: list[CollectionSummary], known_tags: list[str], task: TaskInfo | None = None, collection: str = "", parent: QWidget | None = None,
+        colours: TagColourBook | None = None,
+    ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
         self._original: TaskInfo | None = task
         self._repeat_before: str = ""  # the repeat choice as the task had it: sent only when changed (RV-19)
         self._item: str | None = None if task is None else task.item
         self.setWindowTitle("New task" if task is None else f"Task: {task.summary}")
-        form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent)})  # D-276
+        self.tag_box = TagBox(colour_choice=False)  # a tag colours no task: no radio buttons (D-332)
+        form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent), "tagBox": self._place_tag_box})  # D-276
         self.summary: QLineEdit = part(form, QLineEdit, "summary")
         self.list: QComboBox = part(form, QComboBox, "list")
         for info in lists:
@@ -145,10 +152,7 @@ class TaskEditor(QDialog):
         self.location: QLineEdit = part(form, QLineEdit, "location")
         self.note: QPlainTextEdit = part(form, QPlainTextEdit, "note")
         self.note.setMinimumHeight(wpx(90))
-        self.tags: QLineEdit = part(form, QLineEdit, "tags")
-        completer = QCompleter(known_tags, self.tags)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.tags.setCompleter(completer)
+        self.tags = TagEditing(self.tag_box, part(form, QPushButton, "addTag"), part(form, QPushButton, "removeTag"), known_tags, colours or TagColourBook(), self)  # as in every window with tags (D-332)
         self.result_label: QLabel = part(form, QLabel, "result")
         buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -160,6 +164,10 @@ class TaskEditor(QDialog):
             self._fill(task)
         self.due.enabled.toggled.connect(self.reminders.follow_due)
         self.reminders.follow_due(self.due.enabled.isChecked())
+
+    def _place_tag_box(self, parent: QWidget) -> QWidget:
+        self.tag_box.setParent(parent)
+        return self.tag_box
 
     def _fill(self, task: TaskInfo) -> None:
         self.summary.setText(task.summary)
@@ -176,11 +184,11 @@ class TaskEditor(QDialog):
         self._repeat_before = str(self.repeat.currentData())
         self.note.setPlainText(task.description)
         self.location.setText(task.location)
-        self.tags.setText(", ".join(task.tags))
+        self.tag_box.set_tags(list(task.tags))
 
     def parameters(self) -> TaskEdit:
         """What is in the editor, as task.add and task.edit take it: the fields, and the lists emptied here (clear)."""
-        tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
+        tags = tuple(self.tag_box.tags())
         original = self._original
         reminder_changed = self.reminders.changed()  # sent only when changed; one left alone is kept whole (keep:, RV-19)
         reminder = self.reminders.values() if reminder_changed else ()

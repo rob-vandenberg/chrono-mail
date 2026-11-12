@@ -7,7 +7,7 @@ from chrono_mail.ui.sections import MAIL, SECTIONS
 from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.messagelist import CONTACT_ROLE
 from chrono_mail.ui.settingsdialog import SettingsDialog
-from chrono_mail.ui.tagsdialog import TagsPanel
+from chrono_mail.ui.tagsdialog import SHOW_IN, TagsPanel
 from chrono_mail.ui.windowstate import restore_geometry
 from tests.ui.test_ui_contacts import book, open_contacts, seed
 from tests.ui.test_ui_columns import shown
@@ -16,9 +16,11 @@ from tests.ui.test_ui_tag_overview import open_overview
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings_tabs.py 4.4.580"
+__version__ = "test_ui_settings_tabs.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Settings > Tags is one list without tabs, its Show in columns in the sections' order; a contact's window offers the tags shown in
+#           Contacts in Add tag… (D-332)
 # v4.4.580: Settings > Tags has the same tab page as Settings > Sidebar, in the same place, the list inside its frame (the owner)
 # v4.4.578: Initial: Settings > Sidebar and Settings > Tags have the same tabs, Mail, Calendar, Contacts and Tasks; the Contacts tab of
 #           Settings > Sidebar (D-331); the Contact icon of a sender in a left-out address book opens the contact in its own window (the owner); a Tag overview keeps its size when the program quits with it open (D-328)
@@ -32,32 +34,15 @@ def sidebar_tabs(dialog: SettingsDialog) -> QTabWidget:
     return tabs
 
 
-def test_settings_sidebar_and_settings_tags_have_the_same_tabs_in_the_same_style(world: World, qtbot: QtBot) -> None:
+def test_settings_sidebar_has_the_sections_as_tabs_and_settings_tags_shows_them_in_that_order(world: World, qtbot: QtBot) -> None:
     dialog = open_settings(world, qtbot)
-    dialog.resize(900, 500)
     tags = dialog.findChild(TagsPanel)
     assert tags is not None
-    dialog.show_page("Tags")
     sidebar = sidebar_tabs(dialog)
     assert [sidebar.tabText(number) for number in range(sidebar.count())] == SECTION_NAMES == ["Mail", "Calendar", "Contacts", "Tasks"]
-    assert [tags.tabs.tabText(number) for number in range(tags.tabs.count())] == SECTION_NAMES
-    assert type(tags.tabs) is type(sidebar)  # the same tab page: its frame around what the tab holds, as Settings > Sidebar (the owner)
-
-    def place(tabs: QTabWidget) -> tuple[QRect, list[QRect]]:
-        """Where the tab page and each tab are in the Settings window."""
-        corner = tabs.mapTo(dialog, QPoint(0, 0))
-        return QRect(corner, tabs.size()), [tabs.tabBar().tabRect(number).translated(tabs.tabBar().mapTo(dialog, QPoint(0, 0))) for number in range(4)]
-
-    wait(qtbot, lambda: tags.isVisible() and tags.tabs.width() > 0)
-    tags_place = place(tags.tabs)
-    dialog.show_page("Sidebar")
-    wait(qtbot, lambda: sidebar.isVisible())
-    assert place(sidebar) == tags_place  # the same frame and the same tabs, in exactly the same place
-    dialog.show_page("Tags")
-    assert tags.page.parentWidget() is tags.tabs.widget(0)  # the list inside the frame
-    tags.tabs.setCurrentIndex(1)
-    assert tags.page.parentWidget() is tags.tabs.widget(1)  # the list goes along to the tab shown
-    assert tags.kind() == "events"  # Calendar shows the tags of appointments, as Events did
+    header = tags.list.headerItem()
+    assert [header.text(column) for _, column in SHOW_IN] == SECTION_NAMES  # one list, its Show in columns in the sections' order (D-332)
+    assert tags.findChild(QTabWidget) is None  # no tabs: one list, as the tags are (the owner)
 
 
 def ticks_and_ok(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, untick: list[str], tags: bool = True) -> list[bool]:
@@ -137,9 +122,7 @@ def test_the_contact_icon_of_a_sender_in_a_left_out_address_book_opens_the_conta
 
     def answer(editor: ContactEditor) -> int:
         opened.append(str(editor.book.currentData()))  # the contact's own address book, also when it is left out
-        completer = editor.tags.completer()
-        model = completer.model() if completer is not None else None
-        known.append([str(model.index(row, 0).data()) for row in range(model.rowCount())] if model is not None else [])  # suggested, also with Contacts not opened yet
+        known.append(list(editor.tags.known))  # offered by Add tag…, also with Contacts not opened yet
         return 0  # Cancel
 
     monkeypatch.setattr(ContactEditor, "exec", answer)

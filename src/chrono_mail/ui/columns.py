@@ -10,9 +10,10 @@ from chrono_mail.engine.commands_mail import contact_address
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 4.2.430"
+__version__ = "columns.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The Tags column is called Tags, in its header too (the owner)
 # v4.2.430: From / To for mail one sent shows the person as the index keeps it (to_shown); the Contact column takes the first address from the address columns
 # v4.2.426: the From / To column sorts by its own sort (from_to), what it shows, never together with From
 # v4.2.421: one From and one To column, shown one way each (D-291): every way is called From or To; a saved list keeps at most one way of
@@ -63,7 +64,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("to_addresses", "To", 200, "to_addresses"),  # the To column shown as the addresses only
     Column("account", "Account", 140, "account"),
     Column("subject", "Subject", 300, "subject"),
-    Column("tag", "Tag", 60, symbol=True),  # a narrow column of its own width, as the icon columns: Subject keeps its room
+    Column("tag", "Tags", 60, symbol=True),  # a narrow column of its own width, as the icon columns: Subject keeps its room
     Column("date", "Received", 110, "date"),
     Column("sent", "Sent", 110, "sent"),  # the message's own Date line; called Saved in Drafts (SAVED_LABEL)
     Column("size", "Size", 64, "size", right=True),
@@ -87,7 +88,7 @@ PEOPLE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {  # From and To: one c
     "from": (("from_full", "Name and email"), ("from", "Name only"), ("from_address", "Email only")),
     "to": (("to", "Name and email"), ("to_names", "Name only"), ("to_addresses", "Email only")),
 }
-SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": "", "tag": ""}  # Contact and Delete draw icons, their headers stay empty
+SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": ""}  # Contact and Delete draw icons, their headers stay empty; Tags has its name (the owner)
 READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
 
 

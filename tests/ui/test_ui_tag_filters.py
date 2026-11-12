@@ -1,22 +1,36 @@
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from PySide6.QtWidgets import QListWidgetItem
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.sections import TASKS
+from chrono_mail.engine.commands_tasklist import TASK_PLACES
+from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagfilter import TagFilter
 from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.test_ui_calendar import open_calendar, summaries
-from tests.ui.test_ui_tasks import names, open_tasks, seed, select
+from tests.ui.test_ui_tasks import lists, names, open_tasks, seed, select
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tag_filters.py 4.4.571"
+__version__ = "test_ui_tag_filters.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: a late answer about one task, asked with the old tag, never takes it out of the list of every task (D-146); a row's number is read from where it is drawn apart, as a folder's unread (D-327)
 # v4.4.571: Initial tests of the tag filters in the Tasks and Calendar sidebars (D-327)
 
 
 def rows(tag_filter: TagFilter) -> list[str]:
-    return [tag_filter.list.item(row).text() for row in range(tag_filter.list.count())]
+    """Each row as "name  (count)": the count is drawn apart, as a folder's unread (D-327)."""
+    return [counted_row(tag_filter.list.item(row)) for row in range(tag_filter.list.count())]
+
+
+def counted_row(item: QListWidgetItem) -> str:
+    count = item.data(COUNT_ROLE)
+    return f"{item.text()}  ({count})" if count else item.text()
 
 
 def test_the_tasks_sidebar_lists_the_tags_of_tasks_and_a_tag_shows_only_its_tasks(world: World, qtbot: QtBot) -> None:
@@ -88,3 +102,51 @@ def test_a_tag_given_another_colour_in_settings_shows_it_in_the_tags_lists_of_ta
     world.call("tag.colour", name="Food", colour="#654321")
     tasks.reload_tags()
     wait(qtbot, lambda: icon_colour(tasks.tag_filter, 1) == "#654321")
+
+
+def test_an_answer_about_one_task_asked_before_the_list_was_asked_again_is_not_used(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed(world)
+    page = open_tasks(world, qtbot, 4)
+    wait(qtbot, lambda: rows(page.tag_filter) == ["All tasks", "Home  (1)"])
+    page.tag_filter.choose("Home")
+    wait(qtbot, lambda: names(page) == ["Pay rent"])
+    held: list[Callable[[], None]] = []
+    ask = page._backend.ask  # noqa: SLF001
+
+    def hold_one_task(command: Any, parameters: Any, done: Callable[[Any], None], failed: Any, owner: Any = None) -> None:  # noqa: ANN401 - forwarded as given
+        if command is TASK_PLACES and getattr(parameters, "item", ""):  # the answer about the one task: it comes late, as on a busy computer
+            ask(command, parameters, lambda result: held.append(lambda: done(result)), failed, owner=owner)
+            return
+        ask(command, parameters, done, failed, owner=owner)
+
+    monkeypatch.setattr(page._backend, "ask", hold_one_task)  # noqa: SLF001
+    select(page, "Pay rent")
+    page._edit_selected(remove_tag=("Home",))  # noqa: SLF001 - the Tag menu's own step
+    wait(qtbot, lambda: rows(page.tag_filter) == ["All tasks"] and len(names(page)) == 4 and len(held) >= 1)
+    for late in held:
+        late()  # the answer asked with Home chosen comes after every task was asked again
+    assert len(names(page)) == 4 and "Pay rent" in names(page)
+
+
+def test_a_task_just_saved_is_selected_also_when_the_list_was_asked_again_before_its_own_answer(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed(world)
+    page = open_tasks(world, qtbot, 4)
+    held: list[Callable[[], None]] = []
+    ask = page._backend.ask  # noqa: SLF001
+
+    def hold_one_task(command: Any, parameters: Any, done: Callable[[Any], None], failed: Any, owner: Any = None) -> None:  # noqa: ANN401 - forwarded as given
+        if command is TASK_PLACES and getattr(parameters, "item", ""):
+            ask(command, parameters, lambda result: held.append(lambda: done(result)), failed, owner=owner)
+            return
+        ask(command, parameters, done, failed, owner=owner)
+
+    monkeypatch.setattr(page._backend, "ask", hold_one_task)  # noqa: SLF001
+    saved = world.call("task.add", list=lists(world), summary="Water the plants")
+    page._after_save(str(saved.item))  # noqa: SLF001 - what the task window does after Save
+    wait(qtbot, lambda: len(held) >= 1)  # its own answer is late
+    page.reload_list()  # the list is asked again first (a search, a tag, a tab)
+    wait(qtbot, lambda: "Water the plants" in names(page) and page._selected_items() == [str(saved.item)])  # noqa: SLF001
+    assert page._select_when_there == ""  # noqa: SLF001 - nothing waits to jump to it later
+    for late in held:
+        late()
+    assert page._selected_items() == [str(saved.item)]  # noqa: SLF001

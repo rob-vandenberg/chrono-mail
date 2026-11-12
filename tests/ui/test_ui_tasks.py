@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tasks.py 4.4.548"
+__version__ = "test_ui_tasks.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: a task's tags are given in the Tags box, as in the appointment window (D-332)
 # v4.4.548: New task opened the way the program does: inside its event loop, with a loop of the window's own on top; no reminder row outside the Reminder part
 # v4.4.547: a task's reminders are the rows of an appointment: every reminder shown and kept, a number and a unit or a set time, at most 5, and the rows counted from the due date greyed without one (D-316)
 # v4.4.546: a task without a due date has only a set-time reminder: the list, the date and time, the greyed choices and a due date taken away and given back (D-316)
@@ -229,7 +230,8 @@ def test_a_task_is_made_and_changed_in_the_editor(world: World, qtbot: QtBot, mo
         editor.reminders.rows[0].number.setValue(1)
         choose(editor.reminders.rows[0], 60)
         editor.note.setPlainText("Use the template")
-        editor.tags.setText("Work, Urgent")
+        editor.tag_box.add("Work")
+        editor.tag_box.add("Urgent")
 
     monkeypatch.setattr(TaskEditor, "exec", fake_exec(fill))
     page.act_new.trigger()
@@ -239,12 +241,12 @@ def test_a_task_is_made_and_changed_in_the_editor(world: World, qtbot: QtBot, mo
     assert (made.due, made.priority, made.rrule, minutes(made), made.description, made.tags) == ("2099-03-01", 1, "FREQ=WEEKLY", [60], "Use the template", ("Work", "Urgent"))
 
     def change(editor: TaskEditor) -> None:
-        assert editor.summary.text() == "Write the report" and editor.due.enabled.isChecked() and editor.due.all_day.isChecked() and editor.tags.text() == "Work, Urgent"
+        assert editor.summary.text() == "Write the report" and editor.due.enabled.isChecked() and editor.due.all_day.isChecked() and editor.tag_box.names() == ["Work", "Urgent"]
         assert editor.repeat.currentData() == "FREQ=WEEKLY" and said(editor.reminders.rows[0]) == (1, "hours") and editor.priority.currentData() == 1
         editor.due.enabled.setChecked(False)
         editor.repeat.setCurrentIndex(0)
         editor.reminders.remove(editor.reminders.rows[0])
-        editor.tags.setText("")
+        editor.tag_box.set_tags([])
         editor.status.setCurrentIndex(editor.status.findData("in-process"))
         editor.percent.setValue(40)
 

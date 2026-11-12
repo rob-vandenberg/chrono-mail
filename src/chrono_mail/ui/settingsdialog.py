@@ -42,6 +42,7 @@ from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, K
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
 from chrono_mail.ui import appearance, forms, prefs, scale
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.keyfield import KeyField
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.serverfields import account_line
@@ -61,9 +62,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.578"
+__version__ = "settingsdialog.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Settings > Keyboard: each key field has a ✕ that clears it; Backspace and Delete clear it too (the owner)
 # v4.4.578: Settings > Sidebar's Contacts tab gets the address books and its Tags tick (D-331)
 # v4.4.575: The Calendar and Tasks tabs of Settings > Sidebar get their Tags tick as it is now (D-327)
 # v4.4.568: Settings > Sidebar gets every calendar and task list for its Calendar and Tasks tabs (D-326)
@@ -843,7 +845,7 @@ class SettingsDialog(QDialog):
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             item.setData(Qt.ItemDataRole.UserRole, action_id)
             self.shortcut_table.setItem(row, 0, item)
-            edit = QKeySequenceEdit(QKeySequence(chosen.get(action_id, default)), self.shortcut_table)
+            edit = KeyField(QKeySequence(chosen.get(action_id, default)), self.shortcut_table)  # a ✕ in it, Backspace and Delete clear it
             self.shortcut_table.setCellWidget(row, 1, edit)
             self.shortcut_edits[action_id] = edit
         self.shortcut_note = part(page, QLabel, "shortcutNote")

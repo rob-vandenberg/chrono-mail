@@ -61,9 +61,11 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.577"
+__version__ = "tasksview.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The answer about one changed task, asked before the list was asked again, is not used: it was asked with the old tag, tab or
+#           search (a task losing the chosen tag left the list of every task, D-146); a task just saved is then selected by the list's own answer. The Tag menu offers the tags shown in Tasks (Show in), and a tag a selected task carries all the same (D-332)
 # v4.4.577: A separator to drag between the task lists and the Tags list, its place remembered for this section (D-330)
 # v4.4.575: The Tags list follows Settings > Sidebar's Tags tick (D-327)
 # v4.4.574: Only the answer to the latest request for the tags counts: an older one arriving later brought back old tag colours or numbers (D-329)
@@ -619,7 +621,11 @@ class TasksPage(PimListPage):
             self.model.load(result.places, today)  # every task's place; the rows are asked for as they come into view
             self._counted()
             self.status(self.count_label.text())
-            positions = [position for position in (self.model.position_of(item) for item in selected) if position >= 0]
+            chosen = selected
+            if self._select_when_there and self.model.position_of(self._select_when_there) >= 0:
+                chosen = [self._select_when_there]  # a task just saved, whose own answer this list came before (it is not used): selected now
+                self._select_when_there = ""
+            positions = [position for position in (self.model.position_of(item) for item in chosen) if position >= 0]
             self.list.selectionModel().clear()
             for position in positions:
                 self.list.selectionModel().select(self.model.index(position), QItemSelectionModel.SelectionFlag.Select)
@@ -673,7 +679,7 @@ class TasksPage(PimListPage):
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
         self.colours.update(tags)
-        self._tags_known = [tag.name for tag in tags]
+        self._tags_known = [tag.name for tag in tags if "tasks" in tag.kinds]  # the tags shown in Tasks (Show in, D-332)
         self.tag_filter.follow([(tag.name, tag.tasks) for tag in tags if tag.tasks > 0])
         self.list.viewport().update()
 
@@ -772,7 +778,7 @@ class TasksPage(PimListPage):
     def new_item(self) -> None:
         if not self._takes_new():
             return
-        editor = TaskEditor(self._backend, self._lists(), self._tags_known, None, self._current_list(), self.content)
+        editor = TaskEditor(self._backend, self._lists(), self._tags_known, None, self._current_list(), self.content, self.colours)
         editor.saved.connect(self._after_save)
         editor.exec()
 
@@ -794,7 +800,7 @@ class TasksPage(PimListPage):
         """This task in its editor (a double click here, or in the Tag overview, D-328)."""
 
         def opened(result: TaskInfo) -> None:
-            editor = TaskEditor(self._backend, self._lists(), self._tags_known, result, result.collection, self.content)
+            editor = TaskEditor(self._backend, self._lists(), self._tags_known, result, result.collection, self.content, self.colours)
             editor.saved.connect(self._after_save)
             editor.exec()
 
@@ -835,8 +841,11 @@ class TasksPage(PimListPage):
         target = change.to_folder if kind == "item_moved" else collection
         if kind in ("item_added", "item_changed", "item_moved") and target in visible:
             parameters = TaskPlacesParameters(lists=tuple(sorted(visible)), state=self._state(), text=self.search.text().strip(), tag=self.tag_filter.tag(), item=wanted)
+            generation = self._generation
 
             def arrived(result: TaskPlaces) -> None:
+                if generation != self._generation:
+                    return  # the list was asked again since (another tag, tab or search): its answer has this task as it is now
                 others = [place for place in self.model.places() if place.item != wanted]
                 self.model.forget(wanted)  # its row changed: asked for again
                 if result.position is not None and result.places:  # its place in the engine's order, among the others
@@ -876,7 +885,8 @@ class TasksPage(PimListPage):
         for row in rows:
             for tag in row.tags:
                 have[tag.casefold()] = have.get(tag.casefold(), 0) + 1
-        for name in self._tags_known:
+        carried = [tag for row in rows for tag in row.tags if tag.casefold() not in {name.casefold() for name in self._tags_known}]
+        for name in [*self._tags_known, *dict.fromkeys(carried)]:  # the tags shown in Tasks, and one a selected task carries all the same (D-332)
             action = self.tag_menu.addAction(name)
             action.setCheckable(True)
             action.setChecked(have.get(name.casefold(), 0) == len(rows))

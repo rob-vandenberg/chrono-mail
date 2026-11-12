@@ -58,12 +58,15 @@ from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tagfilter import tags_shown
+from chrono_mail.ui.foldertree import FolderItemDelegate
+from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.578"
+__version__ = "contactsview.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The number after a tag in the Tags list drawn as a folder's unread (D-327); the Tag menu and a contact's window offer the tags shown in Contacts (Show in), the menu also one a selected contact carries (D-332)
 # v4.4.578: The Tags list follows Settings > Sidebar's Tags tick of Contacts; hidden, it filters nothing; a contact's window asks for the address books and tags itself and names its own also when it is left out (D-331)
 # v4.4.577: A separator to drag between the address books and the Tags list, its place remembered for this section (D-330)
 # v4.4.572: A tag in the Tags list has Show everything tagged… in its right-click menu (D-328)
@@ -273,6 +276,7 @@ class ContactsPage(PimListPage):
         self.mail_accounts_source: Callable[[], list[str]] = lambda: []
         self._generation: int = 0
         self._tags_loaded: bool = False
+        self._tags_known: list[str] = []  # the tags shown in Contacts (Show in, D-332)
         self._show_item: str = ""  # the contact to select when the list of its address book has loaded
         self._select_when_there: str = ""  # a contact just saved: selected when its row has come in
         self._show_collection: str = ""
@@ -292,6 +296,7 @@ class ContactsPage(PimListPage):
         tags_layout.addWidget(self.tag_title)
         self.tag_list = QListWidget(tags)
         self.tag_list.setFrameShape(QListWidget.Shape.NoFrame)
+        self.tag_list.setItemDelegate(FolderItemDelegate(self.tag_list))  # the number in bold at the right, as a folder's unread (D-327)
         self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self._tag_menu)
         tags_layout.addWidget(self.tag_list, 1)
@@ -434,6 +439,7 @@ class ContactsPage(PimListPage):
     def reload_tags(self) -> None:
         def listed(result: tuple[TagInfo, ...]) -> None:
             tags = [tag for tag in result if tag.contacts > 0]
+            self._tags_known = [tag.name for tag in result if "contacts" in tag.kinds]  # the tags shown in Contacts (Show in, D-332)
             self.colours.update(list(result))
             self._follow_tags([(tag.name, tag.contacts) for tag in tags])
             self.list.viewport().update()
@@ -456,7 +462,7 @@ class ContactsPage(PimListPage):
             if str(self.tag_list.item(row).data(ROW_ROLE)).casefold() not in wanted:
                 self.tag_list.takeItem(row)
         for number, (name, contacts) in enumerate(tags, start=1):
-            text = f"{name}  ({contacts})"
+            text = name
             item = self.tag_list.item(number)
             if item is None or str(item.data(ROW_ROLE)).casefold() != name.casefold():
                 elsewhere = next((row for row in range(number + 1, self.tag_list.count()) if str(self.tag_list.item(row).data(ROW_ROLE)).casefold() == name.casefold()), None)
@@ -474,6 +480,8 @@ class ContactsPage(PimListPage):
                     self.tag_list.insertItem(number, item)
             if item.text() != text:
                 item.setText(text)
+            if item.data(COUNT_ROLE) != contacts:
+                item.setData(COUNT_ROLE, contacts)
             item.setIcon(colour_icon(self.colours.colour(name).name() or COLLECTION_WITHOUT_COLOUR))
 
     def show_tags(self, shown: bool) -> None:
@@ -567,14 +575,20 @@ class ContactsPage(PimListPage):
     def _books(self) -> list[CollectionSummary]:
         return [info for info in self.panel.collections]
 
+    def _known_from(self, tags: tuple[TagInfo, ...]) -> list[str]:
+        """The tags shown in Contacts, their colours taken in for the window's labels (asked here: Contacts may not have been opened yet)."""
+        self.colours.update(list(tags))
+        return [tag.name for tag in tags if "contacts" in tag.kinds]
+
     def _tag_names(self) -> list[str]:
-        return [str(self.tag_list.item(row).data(ROW_ROLE)) for row in range(self.tag_list.count()) if str(self.tag_list.item(row).data(ROW_ROLE))]
+        """The tags shown in Contacts (Show in, D-332): what the Tag menu and a contact's window offer."""
+        return list(self._tags_known)
 
     @override
     def new_item(self) -> None:
         if not self.panel.current_id():
             return
-        editor = ContactEditor(self._backend, self._books(), self._tag_names(), None, self.panel.current_id(), self.content)
+        editor = ContactEditor(self._backend, self._books(), self._tag_names(), None, self.panel.current_id(), self.content, self.colours)
         editor.saved.connect(self._after_save)
         editor.exec()
 
@@ -593,11 +607,11 @@ class ContactsPage(PimListPage):
                 books = [info for info in every if info.collection not in left_out or info.collection == result.collection]  # its own book also when left out (D-331)
 
                 def show(tag_names: list[str]) -> None:
-                    editor = ContactEditor(self._backend, books, tag_names, result, result.collection, self.content)
+                    editor = ContactEditor(self._backend, books, tag_names, result, result.collection, self.content, self.colours)
                     editor.saved.connect(self._after_save)
                     editor.exec()
 
-                self._backend.ask(TAG_LIST, NoParameters(), lambda tags: show([tag.name for tag in tags if tag.contacts > 0]), lambda error: show(self._tag_names()), owner=self)
+                self._backend.ask(TAG_LIST, NoParameters(), lambda tags: show(self._known_from(tags)), lambda error: show(self._tag_names()), owner=self)
 
             # the address books and the tags asked here: Contacts may not have been opened yet in this run, its lists then still empty (D-331)
             self._backend.ask(COLLECTION_LIST, CollectionListParameters("contacts"), books_arrived, self._failed, owner=self)
@@ -806,7 +820,9 @@ class ContactsPage(PimListPage):
         for index in self.list.selectionModel().selectedRows():
             for tag in self.model.rows[index.row()].tags:
                 have[tag.casefold()] = have.get(tag.casefold(), 0) + 1
-        for name in self._tag_names():
+        carried = [tag for index in self.list.selectionModel().selectedRows() for tag in self.model.rows[index.row()].tags]
+        known = {name.casefold() for name in self._tag_names()}
+        for name in [*self._tag_names(), *dict.fromkeys(tag for tag in carried if tag.casefold() not in known)]:  # and one a selected contact carries all the same
             action = self.tag_menu.addAction(name)
             action.setCheckable(True)
             action.setChecked(have.get(name.casefold(), 0) == len(items))

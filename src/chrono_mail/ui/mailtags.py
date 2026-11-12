@@ -1,11 +1,11 @@
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.changes import MessageRow
+from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_tags import MESSAGE_TAG, MailTagParameters, MessageTagsResult
@@ -18,9 +18,11 @@ from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 4.2.394"
+__version__ = "mailtags.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: only the answer to the latest tag.list counts (an older one may come after it); the tags are asked again after every fact that changes how many mails carry a tag, once per round of facts: the Tags of the
+#           folder list show their numbers (the owner, D-327)
 # v4.2.394: a held tag shortcut stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
 # v3.6.352: new tag colours paint the whole message list through the list's own repaint_all (D-266)
 # v3.6.350: a tag by key acts on the messages still there without an action under way; the menu's ticks never hold Undo (RV-206);
@@ -33,6 +35,9 @@ __version__ = "mailtags.py 4.2.394"
 # v1.9.270: R-19: tag.list and message.tag typed
 # v1.9.264: R-17: the tags of the mail as a part of their own (out of ui/mainwindow.py): the tags with their colours and keys, the Tag
 #           menu, giving and taking a tag; the one owner of the tags the parts share
+
+
+COUNTED_FACTS: frozenset[str] = frozenset({"added", "removed", "tags", "folder_emptied", "folder_deleted", "mailbox_changed"})  # facts after which a tag may count other mails
 
 
 class MailTags(QObject):
@@ -56,6 +61,14 @@ class MailTags(QObject):
         self._parent: QWidget = parent  # the tag keys are the window's
         self.ready: bool = False  # tag.list has answered since the accounts were last loaded
         self._shortcuts: list[QAction] = []
+        self._again = QTimer(self)  # the facts of one round ask once
+        self._again.setSingleShot(True)
+        self._again.setInterval(0)
+        self._again.timeout.connect(self.load)
+        self._counting: bool = False  # tag.list asked and not answered yet
+        self._count_again: bool = False  # a fact came while counting: ask once more after the answer
+        self._asked: int = 0  # tag.list asks: only the answer to the latest counts, an older one may come after it
+        backend.changed.connect(self._fact)
 
     def reload(self) -> None:
         """The accounts are loaded again: the tags too, and the folder list waits for them."""
@@ -65,7 +78,13 @@ class MailTags(QObject):
     def load(self) -> None:
         """The tags with their colours, order and shortcuts: for the menus, the list, the reading pane and the folder list."""
 
+        self._asked += 1
+        mine = self._asked
+
         def loaded(result: tuple[TagInfo, ...]) -> None:
+            if mine != self._asked:
+                return  # a later ask is on its way: its answer is the newer one
+            self._answered()
             self._state.tags = result
             self.book.update(self._state.tags)
             self._make_shortcuts()
@@ -73,10 +92,29 @@ class MailTags(QObject):
             self._messages.view.repaint_all()
 
         def failed(error: ChronoMailError) -> None:
+            if mine != self._asked:
+                return
+            self._answered()
             self._status.report("Tags", error)
             self._arrived()
 
+        self._counting = True
         self._backend.ask(TAG_LIST, NoParameters(), loaded, failed, owner=self)
+
+    def _answered(self) -> None:
+        self._counting = False
+        if self._count_again:
+            self._count_again = False
+            self._again.start()  # what came while counting, counted once
+
+    def _fact(self, change: Change) -> None:
+        """A fact that may change how many mails carry a tag: the numbers are asked again (D-327); while they are being counted, once more
+        when that answer is in (a mail check brings many facts: never a count per fact)."""
+        if str(change.kind) in COUNTED_FACTS and self.ready:
+            if self._counting:
+                self._count_again = True
+            else:
+                self._again.start()
 
     def _arrived(self) -> None:
         self.ready = True

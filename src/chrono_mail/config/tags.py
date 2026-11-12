@@ -6,12 +6,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from chrono_mail.core import ConfigurationError
+from chrono_mail.core.colours import SUGGESTED_EVENT_COLOURS
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "tags.py 3.6.350"
+__version__ = "tags.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: starting_tags, first_start and give_starting_tags: the eleven starting tags of a first start, shown in every section (the owner, D-333)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v0.5.135: The person's order of the tags, a shortcut key and what each tag is for (Tags window); older files still load
 # v0.0.60: Initial colours of tags
@@ -192,3 +194,26 @@ def save_tags(path: Path, tags: TagColours) -> None:
     except OSError as error:
         temporary.unlink(missing_ok=True)
         raise ConfigurationError(f"The tags could not be saved: {error.strerror}") from None
+
+
+def starting_tags() -> TagColours:
+    """The tags a first start begins with (D-333): the eleven colours of the palette under their names, Tomato to Graphite, shown in every
+    section, without a shortcut. A person renames or deletes them as any other."""
+    tags = TagColours()
+    for _, name, colour in SUGGESTED_EVENT_COLOURS:
+        tags = tags.with_colour(name, colour)
+    return tags
+
+
+def first_start(config_directory: Path, data_directory: Path) -> bool:
+    """Whether Chrono Mail never ran here before: neither its settings folder nor its data folder exists yet (asked before the program makes them)."""
+    return not config_directory.exists() and not data_directory.exists()
+
+
+def give_starting_tags(path: Path) -> bool:
+    """Write the starting tags when there is no tags file yet; never over tags a person has. True when they were written."""
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_tags(path, starting_tags())
+    return True

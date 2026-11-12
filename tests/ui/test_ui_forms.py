@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.4.580"
+__version__ = "test_ui_forms.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The tag window is gone (Settings > Tags is edited in place, D-332): not among the windows whose texts must fit; Tab goes from the list to Add tag
 # v4.4.580: The Tags page is a tab page as Settings > Sidebar: Tab stops at its tabs, then at the list (D-331)
 # v4.4.573: The Event colours window is gone (D-329): it is no longer among the windows whose texts must fit, and its tab order test went
 # v4.2.439: the calendar part is in the Add window (D-298)
@@ -140,7 +141,7 @@ def test_a_part_of_the_program_takes_the_place_of_its_placeholder_in_the_tab_ord
     while current is not None and current is not panel and len(order) <= len(dialog.findChildren(QWidget)):  # once round
         order.append(current)
         current = current.nextInFocusChain()
-    assert order.index(panel.tabs.tabBar()) < order.index(panel.list)  # the tabs of the tab page, then the list in it (D-331)
+    assert order.index(panel.list) < order.index(panel.add_button)  # the list, then Add tag below it (D-332)
     labels = [label for label in dialog.findChildren(QLabel) if label.text() == "Show on startup:"]
     assert len(labels) == 1 and labels[0].buddy() is dialog.startup_box
 
@@ -514,7 +515,6 @@ def test_every_text_of_the_mail_windows_fits(world: World, qtbot: QtBot, factor:
     from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
     from chrono_mail.ui.ruleedit import RuleEditDialog
     from chrono_mail.ui.sourcedialog import SourceDialog
-    from chrono_mail.ui.tagsdialog import TagEditor, TagRow
     from chrono_mail.ui.whendialog import WhenDialog
 
     rule = RuleInfo("r1", "News", True, "any", (), ("from:contains:news", "header.List-Id:contains:club", "attachment:is:yes"), ("move_to:Archive", "stop"))
@@ -522,7 +522,7 @@ def test_every_text_of_the_mail_windows_fits(world: World, qtbot: QtBot, factor:
     try:
         windows: list[QWidget] = [
             AdvancedSearchDialog(world.window), ColumnsDialog(ListChoice("columns", ("from", "subject"), "right", "short", "normal"), world.window),
-            RuleEditDialog(world.backend, [], ["Inbox"], rule, world.window), TagEditor(TagRow("Work", "#3366cc"), set(), world.window),
+            RuleEditDialog(world.backend, [], ["Inbox"], rule, world.window),
             WhenDialog("Schedule", "Send this message at:", "Schedule", world.window, datetime(2026, 10, 26, 14, 30), True),
             SourceDialog("Hello", SourceResult("From: a@example.com\n", 20, True), world.window),
         ]

@@ -4,11 +4,14 @@ from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QVBox
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
 from chrono_mail.ui.collectionpanel import colour_icon
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.foldertree import FolderItemDelegate
+from chrono_mail.ui.models import COUNT_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.575"
+__version__ = "tagfilter.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The number after a tag is drawn as a folder's unread, in bold at the right (the owner, D-327)
 # v4.4.575: Settings > Sidebar's Tags tick on the Calendar and Tasks tabs: tags_shown, kept on this computer (D-327)
 # v4.4.572: A tag's right-click menu has Show everything tagged…: the Tag overview (D-328)
 # v4.4.571: Initial tag filter of a section's sidebar: "All …" and the tags in use with their counts, followed in place (D-327)
@@ -49,6 +52,7 @@ class TagFilter(QWidget):
         layout.addWidget(self.title)
         self.list = QListWidget(self)
         self.list.setFrameShape(QListWidget.Shape.NoFrame)
+        self.list.setItemDelegate(FolderItemDelegate(self.list))  # the number in bold at the right, as a folder's unread (D-327)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.list, 1)
         self.list.currentItemChanged.connect(self._current_changed)
@@ -84,7 +88,7 @@ class TagFilter(QWidget):
                     self.list.setCurrentRow(0)  # the chosen tag went: everything is shown again
                 self.list.takeItem(row)
         for number, (name, count) in enumerate(tags, start=1):
-            text = f"{name}  ({count})"
+            text = name
             item = self.list.item(number)
             if item is None or str(item.data(TAG_ROLE)).casefold() != name.casefold():
                 elsewhere = next((row for row in range(number + 1, self.list.count()) if str(self.list.item(row).data(TAG_ROLE)).casefold() == name.casefold()), None)
@@ -102,6 +106,8 @@ class TagFilter(QWidget):
                     self.list.insertItem(number, item)
             if item.text() != text:
                 item.setText(text)
+            if item.data(COUNT_ROLE) != count:
+                item.setData(COUNT_ROLE, count)
             item.setIcon(colour_icon(self._colours.colour(name).name() or COLLECTION_WITHOUT_COLOUR))
 
     def _current_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:

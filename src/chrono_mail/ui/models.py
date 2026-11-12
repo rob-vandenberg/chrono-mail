@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 4.2.426"
+__version__ = "models.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Tags lists only the tags some mail carries, each with how many in bold at the right, as a folder's unread (the owner, D-327)
 # v4.2.426: TIMED_ROLES: Snoozed, Scheduled and the Outbox, whose messages leave at a time
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232); Favorites the same with
@@ -187,7 +188,7 @@ class FolderTreeModel(QAbstractItemModel):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.tags: list[tuple[str, str]] = []  # (name, #rrggbb) of the tags for mail, in the person's order: the Tags at the bottom
+        self.tags: list[tuple[str, str, int]] = []  # (name, #rrggbb, how many mails carry it) of the tags some mail carries, in the person's order: the Tags at the bottom
         self.pins: list[tuple[str, str, str, str]] = []  # pin id, account, folder, name
         self.groups: list[tuple[str, str, tuple[str, ...]]] = []  # group id, name, account ids
         self.hidden: set[str] = set()  # standard favorites that are switched off
@@ -323,9 +324,9 @@ class FolderTreeModel(QAbstractItemModel):
     def _tags_entry(self) -> TreeEntry:
         """Tags: one entry per tag, showing the mail of every mailbox that carries it (the combined view "tagged")."""
         section = self._heading("Tags", "section", ("section", "", "Tags", ""), selectable=False)
-        for name, colour in self.tags:
+        for name, colour, count in self.tags:  # count: how many mails carry it, drawn as a folder's unread (D-327)
             section.append(TreeEntry(("tagview", "", name, ""), {
-                Qt.ItemDataRole.DisplayRole: name, NAME_ROLE: name, COUNT_ROLE: 0, Qt.ItemDataRole.DecorationRole: tag_icon(QColor(colour)), ICON_NAME_ROLE: f"tag:{colour}",
+                Qt.ItemDataRole.DisplayRole: name, NAME_ROLE: name, COUNT_ROLE: count, Qt.ItemDataRole.DecorationRole: tag_icon(QColor(colour)), ICON_NAME_ROLE: f"tag:{colour}",
                 KIND_ROLE: "tagview", ACCOUNT_ROLE: "", FOLDER_PATH_ROLE: name,
             }))
         return section

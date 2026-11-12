@@ -8,12 +8,13 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainter
 from PySide6.QtWidgets import QMenu
 
 from chrono_mail.engine.commands_pim import TagInfo
-from chrono_mail.ui.tagchips import TagColourBook, paint_chips
+from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagging.py 4.2.394"
+__version__ = "tagging.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The Tag menu also offers a tag not shown in Mail that a selected message carries (D-332); the Tags column draws a small coloured tag for each tag on every row, the selected one too: never names (the owner)
 # v4.2.394: a tag's key in the Tag menu only shows there: once the menu had been opened, the key was there twice and Qt did neither
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v0.5.135: Initial version: tag icon, Tag menu, tags in the message list
@@ -77,8 +78,9 @@ def fill_tag_menu(
     takes it away when all had it. Then New tag… and Manage tags…."""
     menu.clear()
     enabled = bool(selected)
+    carried = {name.casefold() for tags_of in selected for name in tags_of}
     for tag in tags:
-        if not offered_for_mail(tag):
+        if not offered_for_mail(tag) and tag.name.casefold() not in carried:  # not shown in Mail, unless a selected message carries it (D-332)
             continue
         name = tag.name
         everyone = enabled and all(any(have.casefold() == name.casefold() for have in tags_of) for tags_of in selected)
@@ -99,11 +101,9 @@ def fill_tag_menu(
 
 
 def paint_tag_marks(painter: QPainter, area: QRect, tags: tuple[str, ...], book: TagColourBook, selected: bool, font: QFont) -> None:
-    """The Tag column: on the selected row the names as coloured pills (as many as fit), on the others a small coloured tag each."""
+    """The Tags column: a small coloured tag for each tag, on every row (the names show on hover)."""
     if not tags:
         return
-    if selected and paint_chips(painter, area.adjusted(2, 2, -2, -2), tags, book, font):
-        return  # the names fit as pills; in a narrow column the small tags are drawn instead
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     height = max(6, min(area.height() - 6, QFontMetrics(font).height() - 4))

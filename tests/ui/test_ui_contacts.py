@@ -14,13 +14,15 @@ from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.contactsview import ContactsPage
 from chrono_mail.ui.sections import CONTACTS
 from tests.test_engine_pim_lists import MANY, cards
+from tests.ui.test_ui_tag_filters import counted_row
 from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 3.2.342"
+__version__ = "test_ui_contacts.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: a contact's tags are given in the Tags box, as in the appointment window (D-332)
 # v3.2.342: what the window does not show of e-mail addresses, phone numbers and postal addresses survives a Save (RV-20)
 # v3.0.339: a birthday without a year is shown and survives a Save that changed something else (RV-16)
 # v2.4.334: the counts in the texts are written one way (F1b)
@@ -190,7 +192,8 @@ def test_a_contact_is_made_in_the_editor_and_changed_again(world: World, qtbot: 
         row.locality.setText("Utrecht")
         editor.has_birthday.setChecked(True)
         editor.note.setPlainText("Likes tea")
-        editor.tags.setText("Friends, Work")
+        editor.tag_box.add("Friends")
+        editor.tag_box.add("Work")
 
     monkeypatch.setattr(ContactEditor, "exec", fake_exec(fill))
     page.act_new.trigger()
@@ -200,12 +203,12 @@ def test_a_contact_is_made_in_the_editor_and_changed_again(world: World, qtbot: 
     assert shown.emails[0].types == ("work",) and shown.phones[0].value == "+31 6 1234" and shown.birthday == "1980-01-01"
 
     def change(editor: ContactEditor) -> None:
-        assert editor.given.text() == "Ann" and editor.emails.rows[0].value.text() == "ann@example.com" and editor.tags.text() == "Friends, Work" and editor.has_birthday.isChecked()
+        assert editor.given.text() == "Ann" and editor.emails.rows[0].value.text() == "ann@example.com" and editor.tag_box.names() == ["Friends", "Work"] and editor.has_birthday.isChecked()
         assert not editor.book.isEnabled() or editor.book.count() >= 1
         editor.title.setText("Chair")
         editor.phones._remove(editor.phones.rows[0])  # noqa: SLF001
         editor.has_birthday.setChecked(False)
-        editor.tags.setText("Friends")
+        editor.tag_box.remove("Work")
 
     monkeypatch.setattr(ContactEditor, "exec", fake_exec(change))
     select_rows(page, 0)
@@ -352,7 +355,7 @@ def test_the_tag_list_follows_in_place_and_keeps_the_chosen_tag(world: World, qt
     page.tag_list.currentItemChanged.connect(lambda *_: changes.append(True))
     world.call("contact.add", collection=book(world), given="Ann", family="Lee", tag=("Business", "Family"))
     page.reload_tags()  # what a save does
-    wait(qtbot, lambda: [page.tag_list.item(i).text() for i in range(page.tag_list.count())] == ["All contacts", "Business  (2)", "Family  (1)", "Important  (1)", "Key Customer  (1)"])
+    wait(qtbot, lambda: [counted_row(page.tag_list.item(i)) for i in range(page.tag_list.count())] == ["All contacts", "Business  (2)", "Family  (1)", "Important  (1)", "Key Customer  (1)"])  # the number drawn apart (D-327)
     assert page.tag_list.item(0) is everyone and page.tag_list.item(1) is business and page.tag_list.item(3) is important  # changed in place, not made again
     assert page.tag_list.currentItem() is business and changes == []  # the chosen tag stays; nothing is loaded again
 

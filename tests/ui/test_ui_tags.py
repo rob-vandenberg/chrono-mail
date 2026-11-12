@@ -1,9 +1,8 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSettings, Qt
+from PySide6.QtCore import QItemSelectionModel, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
@@ -19,9 +18,11 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 4.4.580"
+__version__ = "test_ui_tags.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Settings > Tags is one list edited in place (D-332): the names read from the lines; the tests of the tabs and of the Name and
+#           Shortcut columns' shared width went with them
 # v4.4.580: The list and its buttons inside the tab page, as Settings > Sidebar (the owner, D-331); no longer tabs as wide as the list (v1.1.186)
 # v4.2.479: the reading pane shows the tags as squares under the date: the test asks their names
 # v1.9.274: A coming message is a real Change with a MessageRow (R-19)
@@ -124,8 +125,10 @@ def test_the_tag_colour_can_be_the_text_colour(world: World, qtbot: QtBot) -> No
 
 
 def listed_names(dialog: TagsPanel) -> list[str]:
-    items = [dialog.list.topLevelItem(row) for row in range(dialog.list.topLevelItemCount())]
-    return [item.text(0) for item in items if item is not None]
+    """The names on the lines of the list, in their order (each drawn on a label in its colour)."""
+    lines = [dialog.list.topLevelItem(row) for row in range(dialog.list.topLevelItemCount())]
+    rows = [dialog.row_at(dialog.list.indexFromItem(line)) for line in lines if line is not None]
+    return [row.name for row in rows if row is not None]
 
 
 def test_the_tags_window_turns_its_changes_into_commands(qtbot: QtBot, world: World) -> None:
@@ -138,17 +141,14 @@ def test_the_tags_window_turns_its_changes_into_commands(qtbot: QtBot, world: Wo
     assert listed_names(dialog) == ["Home", "Work"]
     dialog.rows[1].name = "Job"  # as the editor does
     dialog.rows.append(TagRow("New", "#0000ff", "Ctrl+Alt+2", ("mail",)))
-    second = dialog.list.topLevelItem(1)
-    assert second is not None
-    dialog.list.setCurrentItem(second)
-    dialog.move_tag(-1)
+    dialog.move_tag(dialog.rows[1], -1)
     dialog.deleted.append(dialog.rows.pop(dialog.rows.index(next(row for row in dialog.rows if row.name == "Home"))))
     commands = [(step.command.id, step.parameters) for step in dialog.commands()]  # type: ignore[attr-defined]
     assert commands[0] == ("tag.delete", DeleteParameters("Home"))
     assert ("tag.rename", RenameParameters("Work", "Job")) in commands and ("tag.create", CreateParameters("New", "#0000ff")) in commands
     assert [parameters.name for command, parameters in commands if command == "tag.edit"] == ["Job", "New"]
-    dialog.tabs.setCurrentIndex(3)  # Tasks: only the tags used for tasks
-    assert listed_names(dialog) == ["Job"]
+    dialog.refresh()
+    assert listed_names(dialog) == ["Job", "New"]  # one list: every tag on its own line, whatever it is shown in (D-332)
 
 
 def test_saving_the_tags_page_makes_the_tags(qtbot: QtBot, world: World) -> None:
@@ -196,43 +196,6 @@ def test_menu_tags_opens_the_tags_page_of_settings_and_ok_saves(qtbot: QtBot, wo
     assert seen == ["Tags"]
     assert "Fresh" in {str(item.name) for item in world.call("tag.list")}
     wait(qtbot, lambda: any(str(getattr(tag, "name")) == "Fresh" for tag in window.mail_state.tags))  # noqa: SLF001  the window loaded them again
-
-
-def test_the_list_and_its_buttons_are_inside_the_tab_page(qtbot: QtBot, world: World) -> None:
-    panel = TagsPanel(world.backend, ())
-    qtbot.addWidget(panel)
-    panel.resize(700, 400)
-    panel.show()
-    qtbot.waitExposed(panel)
-    frame = panel.tabs.geometry()
-    for part in (panel.list, panel.add_button):  # inside the frame of the tabs, as on Settings > Sidebar (the owner, D-331)
-        assert frame.contains(QRect(part.mapTo(panel, QPoint(0, 0)), part.size()))
-
-
-def test_name_and_shortcut_always_fit_and_the_dragged_width_is_remembered(qtbot: QtBot, world: World, tmp_path: Path) -> None:
-    settings = QSettings(str(tmp_path / "tags.ini"), QSettings.Format.IniFormat)
-    panel = TagsPanel(world.backend, (), settings=settings)
-    qtbot.addWidget(panel)
-    panel.resize(700, 400)
-    panel.show()
-    qtbot.waitExposed(panel)
-    header, width = panel.list.header(), panel.list.viewport().width()
-    assert abs(header.sectionSize(0) - header.sectionSize(1)) <= 1 and header.sectionSize(0) + header.sectionSize(1) == width  # half each
-    assert panel.list.horizontalScrollBar().maximum() == 0
-    header.resizeSection(0, round(width * 0.7))  # as a drag does
-    assert abs(float(str(settings.value("tags_name_share"))) - 0.7) < 0.01
-    header.resizeSection(0, width + 200)  # dragged past the list: Shortcut keeps its smallest width
-    assert header.sectionSize(0) + header.sectionSize(1) == width and panel.list.horizontalScrollBar().maximum() == 0
-    panel.resize(900, 400)  # wider: Name keeps its share, both still fit
-    wait(qtbot, lambda: panel.list.viewport().width() > width)
-    assert header.sectionSize(0) + header.sectionSize(1) == panel.list.viewport().width()
-    again = TagsPanel(world.backend, (), settings=settings)  # the next time: the remembered share
-    qtbot.addWidget(again)
-    again.resize(700, 400)
-    again.show()
-    qtbot.waitExposed(again)
-    assert again.list.header().sectionSize(0) > again.list.header().sectionSize(1)
-
 
 
 def test_the_filters_narrow_a_favorites_view(world: World, qtbot: QtBot) -> None:

@@ -1,9 +1,11 @@
 import html
+
+from collections.abc import Callable
+
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QCompleter,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
@@ -27,11 +29,15 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
+from chrono_mail.ui.tagbox import TagBox, TagEditing
+from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 4.0.378"
+__version__ = "contacteditor.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Contacts,
+#           Remove tag and Delete; no radio buttons, a tag colours no contact (the owner, D-332)
 # v4.0.378: the contact editor, a list of addresses or numbers, one entry of it and one address are built from their Qt Designer forms
 #           (ui/forms/contact_editor.ui, contact_list.ui, contact_entry.ui, contact_address.ui, D-276); Tab goes through the entries and
 #           addresses where they are on screen (they came after Save and Cancel); the sizes follow the size factor
@@ -156,7 +162,8 @@ class ContactEditor(QDialog):
     saved = Signal(str)  # the id of the contact
 
     def __init__(
-        self, backend: Backend, address_books: list[CollectionSummary], known_tags: list[str], contact: ContactInfo | None = None, collection: str = "", parent: QWidget | None = None
+        self, backend: Backend, address_books: list[CollectionSummary], known_tags: list[str], contact: ContactInfo | None = None, collection: str = "", parent: QWidget | None = None,
+        colours: TagColourBook | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -167,7 +174,10 @@ class ContactEditor(QDialog):
             "emails": ("E-mail addresses", EMAIL_TYPES, "name@example.com"), "phones": ("Phone numbers", PHONE_TYPES, "+31 6 12345678"),
             "urls": ("Web addresses", URL_TYPES, "https://example.com"),
         }
-        form = forms.fill(self, "contact_editor", {name: (lambda parent, made=made: LabeledList(*made, parent)) for name, made in lists.items()})  # D-276
+        self.tag_box = TagBox(colour_choice=False)  # a tag colours no contact: no radio buttons (D-332)
+        made_here: dict[str, Callable[[QWidget], QWidget]] = {name: (lambda parent, made=made: LabeledList(*made, parent)) for name, made in lists.items()}
+        made_here["tagBox"] = self._place_tag_box
+        form = forms.fill(self, "contact_editor", made_here)  # D-276
         self.book: QComboBox = part(form, QComboBox, "book")
         for info in address_books:
             self.book.addItem(f"{info.account_name} — {info.name}", info.collection)
@@ -202,10 +212,7 @@ class ContactEditor(QDialog):
         self._lists_before: dict[str, tuple[str, ...]] = {}  # the lists as the contact had them: a list is sent only when it changed (RV-20)
         self.note: QPlainTextEdit = part(form, QPlainTextEdit, "note")
         self.note.setMinimumHeight(wpx(70))
-        self.tags: QLineEdit = part(form, QLineEdit, "tags")
-        completer = QCompleter(known_tags, self.tags)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.tags.setCompleter(completer)
+        self.tags = TagEditing(self.tag_box, part(form, QPushButton, "addTag"), part(form, QPushButton, "removeTag"), known_tags, colours or TagColourBook(), self)  # as in every window with tags (D-332)
         self.result_label: QLabel = part(form, QLabel, "result")
         buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -286,7 +293,11 @@ class ContactEditor(QDialog):
         self._birthday_before = self._birthday_text()
         self._lists_before = self._lists()
         self.note.setPlainText(contact.note)
-        self.tags.setText(", ".join(contact.tags))
+        self.tag_box.set_tags(list(contact.tags))
+
+    def _place_tag_box(self, parent: QWidget) -> QWidget:
+        self.tag_box.setParent(parent)
+        return self.tag_box
 
     # --- the command --------------------------------------------------------------------------
 
@@ -303,7 +314,7 @@ class ContactEditor(QDialog):
         nicknames = tuple(part.strip() for part in self.nickname.text().split(",") if part.strip())
         lists = {name: entries if original is None or entries != self._lists_before.get(name) else None for name, entries in self._lists().items()}
         emails, phones, urls, addresses = (lists[name] or () for name in ("email", "phone", "url", "address"))
-        tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
+        tags = tuple(self.tag_box.tags())
         had = {
             "nickname": original is not None and bool(original.nicknames), "email": original is not None and bool(original.emails),
             "phone": original is not None and bool(original.phones), "url": original is not None and bool(original.urls),
@@ -344,3 +355,4 @@ class ContactEditor(QDialog):
             self._backend.ask(CONTACT_ADD, carried(values, ContactAdd, collection=str(self.book.currentData())), done, failed, owner=self)
         else:
             self._backend.ask(CONTACT_EDIT, values, done, failed, owner=self)
+

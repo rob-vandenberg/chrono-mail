@@ -1,19 +1,22 @@
 from functools import partial
 from typing import override
 
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPalette
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QMenu, QRadioButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.deletekey import DeleteKey
+from chrono_mail.ui.paletteeditor import circle_icon
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagbox.py 4.4.576"
+__version__ = "tagbox.py 4.4.581"
 
 # --- Version history ----------------------------------------------------
+# v4.4.581: The box without radio buttons for contacts and tasks (a tag colours neither); TagEditing: Add tag…, New tag… and Remove tag of a
+#           window, the same in every window that has the box (the owner, D-332)
 # v4.4.576: The coloured part of a tag 2 pixels lower: the pixel above and below the name moved outside the colour (the owner)
 # v4.4.574: A click on a tag's line selects it (highlighted), Delete removes it; the box has the dark field colour of the attendee list (D-329)
 # v4.4.573: Initial Tags box of the appointment window: each tag a rounded label in its colour, a radio button chooses the tag that colours the appointment (D-329)
@@ -76,8 +79,9 @@ class TagBox(QScrollArea):
     changed = Signal()
     selection_changed = Signal()  # another tag's line was selected, or none
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, colour_choice: bool = True) -> None:
         super().__init__(parent)
+        self._colour_choice = colour_choice  # the radio buttons: only where a tag gives the item its colour (appointments, D-329)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._colours = TagColourBook()
@@ -197,6 +201,18 @@ class TagBox(QScrollArea):
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(wpx(6))
+        label = TagPill(name, colour, row)
+        shown = label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, wpx(LONGEST_LABEL))
+        if shown != name:  # a long name ends in … and shows whole on hover; the box never scrolls sideways
+            label.setText(shown)
+            label.setToolTip(name)
+        label.setEnabled(True)  # its colour stays readable while the window is read only
+        if not self._colour_choice:
+            layout.addWidget(label)
+            layout.addStretch(1)
+            row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            row.customContextMenuRequested.connect(partial(self._menu, name, row))
+            return row
         radio = QRadioButton(row)
         radio.setChecked(name == self._colour_tag)
         radio.setEnabled(self._enabled)
@@ -209,12 +225,6 @@ class TagBox(QScrollArea):
         )
         radio.clicked.connect(lambda _checked=False, chosen=name: self.choose(chosen))
         self._group.addButton(radio)
-        label = TagPill(name, colour, row)
-        shown = label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, wpx(LONGEST_LABEL))
-        if shown != name:  # a long name ends in … and shows whole on hover; the box never scrolls sideways
-            label.setText(shown)
-            label.setToolTip(name)
-        label.setEnabled(True)  # its colour stays readable while the window is read only
         layout.addWidget(radio)
         layout.addWidget(label)
         layout.addStretch(1)
@@ -232,3 +242,52 @@ class TagBox(QScrollArea):
         remove.setEnabled(self._enabled)
         menu.exec(row.mapToGlobal(position))
 
+
+
+class TagEditing(QObject):
+    """The tags part of a window, the same in each window that has it (D-332): the box, Add tag… with the tags shown in this section that the
+    item does not have yet (a click adds one and the list closes) and New tag…, Remove tag for the tag selected in the box (greyed until one is)."""
+
+    def __init__(self, box: TagBox, add_button: QPushButton, remove_button: QPushButton, known: list[str], colours: TagColourBook, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.box = box
+        self._add_button = add_button
+        self._remove_button = remove_button
+        self.known = list(known)  # the tags shown in this section (Show in), in the person's order
+        self._colours = colours
+        self._window = parent
+        self._reading = False
+        self.menu = QMenu(add_button)
+        add_button.setMenu(self.menu)
+        self.menu.aboutToShow.connect(self._fill)
+        remove_button.clicked.connect(box.remove_selected)
+        box.selection_changed.connect(self._show_remove)
+        box.set_colours(colours)
+        self._show_remove()
+
+    def set_reading(self, reading: bool) -> None:
+        """Only to read: nothing to add or remove."""
+        self._reading = reading
+        self._add_button.setEnabled(not reading)
+        self.box.set_enabled(not reading)
+        self._show_remove()
+
+    def _fill(self) -> None:
+        self.menu.clear()
+        chosen = {name.casefold() for name in self.box.names()}
+        for name in (name for name in self.known if name.casefold() not in chosen):
+            self.menu.addAction(circle_icon(self._colours.colour(name).name()), name, partial(self.box.add, name))
+        if not self.menu.isEmpty():
+            self.menu.addSeparator()
+        self.menu.addAction("New tag…", self._new_tag)
+
+    def _new_tag(self) -> None:
+        name, ok = QInputDialog.getText(self._window, "New tag", "Name of the new tag:")
+        if ok and " ".join(name.split()):
+            self.box.add(" ".join(name.split()))
+
+    def _show_remove(self) -> None:
+        """Remove tag works on the selected tag: greyed, with why, until one is selected (OR-15)."""
+        usable = bool(self.box.selected()) and not self._reading
+        self._remove_button.setEnabled(usable)
+        self._remove_button.setToolTip("" if usable or self._reading else "Click a tag in the list first")
