@@ -115,3 +115,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-321]] The day headings follow the day
 - [[D-326]] Which calendars the sidebar shows, and where new items go
 - [[D-328]] Everything of one tag in one overview
+- [[D-336]] The Add an account window in tabs

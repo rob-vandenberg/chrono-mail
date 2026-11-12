@@ -8,9 +8,10 @@ from chrono_mail.ui.accountdialog import GMAIL, GOOGLE, AccountDialog
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_gmail_account.py 4.4.594"
+__version__ = "test_ui_gmail_account.py 4.4.595"
 
 # --- Version history ----------------------------------------------------
+# v4.4.595: Gmail needs only the Account tab, Servers and Options greyed; the window never taller than the screen with its title bar (D-336)
 # v4.4.594: Gmail hides Outgoing mail and Options: the window is shorter than with IMAP (D-335)
 # v4.4.593: Google Calendar and Contacts: Sign in with Google, greyed with the reason without the client file (D-335)
 # v4.4.592: Initial tests: Gmail in Add account, its servers filled in and greyed, the address as the user name (D-335)
@@ -134,21 +135,32 @@ def test_edit_accounts_sign_in_can_be_stopped_with_its_button(world: World, qtbo
     assert not commands_google._waiting  # pyright: ignore[reportPrivateUsage]
 
 
-def test_gmail_hides_outgoing_mail_and_options_so_the_window_is_shorter(world: World, qtbot: QtBot) -> None:
+def test_gmail_needs_only_the_account_tab_and_greys_servers_and_options(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.accountdialog import ACCOUNT_TAB, OPTIONS_TAB, SERVERS_TAB
+
     dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
     qtbot.addWidget(dialog)
     dialog.show()
-    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
-    qtbot.wait(50)  # the window lays itself out again after a change of type
-    imap_height = dialog.minimumSize().height()
     dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
-    qtbot.wait(50)
-    assert not dialog.servers.outgoing_group.isVisibleTo(dialog) and not dialog._options.isVisibleTo(dialog)  # pyright: ignore[reportPrivateUsage]
-    assert dialog.servers.incoming_group.isVisibleTo(dialog) and dialog.servers.password.isVisibleTo(dialog)
-    assert dialog.add_button.isVisibleTo(dialog) and dialog.test_button.isVisibleTo(dialog)
-    assert dialog.minimumSize().height() < imap_height - 150  # measured: 546 against 800
+    qtbot.wait(50)  # the window lays itself out again after a change of type
+    tabs = dialog.tabs
+    assert tabs.currentIndex() == ACCOUNT_TAB and tabs.isTabEnabled(ACCOUNT_TAB)
+    assert not tabs.isTabEnabled(SERVERS_TAB) and not tabs.isTabEnabled(OPTIONS_TAB) and "filled in for you" in tabs.tabToolTip(SERVERS_TAB)
+    assert dialog.email.isVisibleTo(dialog) and dialog.servers.password.isVisibleTo(dialog)  # all Gmail needs, on the Account tab
+    assert dialog.add_button.isVisibleTo(dialog) and dialog.minimumSize().height() < 700  # measured 626 with the help line (was over 900)
     dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
-    assert dialog.servers.outgoing_group.isVisibleTo(dialog) and dialog._options.isVisibleTo(dialog)  # pyright: ignore[reportPrivateUsage]
+    assert tabs.isTabEnabled(SERVERS_TAB) and tabs.isTabEnabled(OPTIONS_TAB) and tabs.tabToolTip(SERVERS_TAB) == ""
+
+
+def test_the_window_is_never_taller_than_the_screen_with_its_title_bar(world: World, qtbot: QtBot) -> None:
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    screen = dialog.screen()
+    assert screen is not None
+    title_bar = dialog.frameGeometry().height() - dialog.height()
+    assert dialog._height_needed() <= screen.availableGeometry().height() - title_bar  # pyright: ignore[reportPrivateUsage]
 
 
 def test_gmail_always_encrypts_even_after_the_tick_was_taken_off_under_imap(world: World, qtbot: QtBot) -> None:
@@ -159,3 +171,20 @@ def test_gmail_always_encrypts_even_after_the_tick_was_taken_off_under_imap(worl
     dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
     assert dialog.encrypt.isChecked()
 
+
+
+def test_an_empty_server_brings_the_servers_tab_to_the_front_with_its_name(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.accountdialog import ACCOUNT_TAB, SERVERS_TAB
+
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
+    qtbot.addWidget(dialog)
+    dialog.kind.setCurrentIndex(dialog.kind.findData(AccountKind.IMAP.value))
+    dialog.email.setText("ann")  # no domain: no servers guessed
+    dialog.username.setText("ann")
+    dialog.password.setText("secret")
+    assert dialog.tabs.currentIndex() == ACCOUNT_TAB
+    dialog.test_button.click()
+    assert dialog.tabs.currentIndex() == SERVERS_TAB and "Servers tab" in dialog.result_label.text()
+    dialog.password.clear()
+    dialog.test_button.click()
+    assert dialog.tabs.currentIndex() == ACCOUNT_TAB and "password" in dialog.result_label.text()

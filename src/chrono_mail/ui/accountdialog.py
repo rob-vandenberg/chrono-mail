@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QFormLayout,
     QPushButton,
+    QTabWidget,
     QWidget,
 )
 
@@ -35,9 +37,11 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.594"
+__version__ = "accountdialog.py 4.4.595"
 
 # --- Version history ----------------------------------------------------
+# v4.4.595: the mail part in three tabs, Account (with the user name and password), Servers and Options, the buttons always below them; Gmail
+#           greys Servers and Options; never taller than the screen with the title bar counted (the owner, D-336)
 # v4.4.594: Gmail hides the Outgoing mail and Options boxes (fixed for Gmail): the window is shorter and its buttons stay on the screen (D-335)
 # v4.4.593: Account type offers Google Calendar and Contacts: Sign in with Google adds both as accounts of calendars and contacts; greyed with
 #           the reason when Google sign-in is not set up on this computer (D-335)
@@ -76,6 +80,7 @@ __version__ = "accountdialog.py 4.4.594"
 # v0.0.13: Initial account dialog
 
 KINDS: tuple[tuple[AccountKind, str], ...] = ((AccountKind.POP3, "POP3: the mail is downloaded to this computer"), (AccountKind.IMAP, "IMAP: the mail stays on the server and is kept in step"))
+ACCOUNT_TAB, SERVERS_TAB, OPTIONS_TAB = 0, 1, 2  # the tabs of the mail part (D-336)
 GMAIL: str = "gmail"  # an IMAP account on Gmail's servers, logged in with an app password (D-335)
 GMAIL_LABEL: str = "Gmail: Google mail, with an app password"
 GMAIL_SERVERS: tuple[tuple[str, int], tuple[str, int]] = (("imap.gmail.com", 993), ("smtp.gmail.com", 465))  # both implicit TLS, checked live (D-335)
@@ -140,10 +145,12 @@ class AccountDialog(QDialog):
             self.kind.addItem(label, value)
         self.gmail_help: QLabel = part(form, QLabel, "gmailHelp")
         self._gmail_text: str = self.gmail_help.text()
+        self.tabs: QTabWidget = part(form, QTabWidget, "tabs")
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
         self.name: QLineEdit = part(form, QLineEdit, "yourName")
         self.email: QLineEdit = part(form, QLineEdit, "email")
         servers = self.servers
+        self._login_to_account_tab(servers)
         self.username, self.password, self.same_login = servers.username, servers.password, servers.same_login
         self.incoming_host, self.incoming_port, self.incoming_security = servers.incoming_host, servers.incoming_port, servers.incoming_security
         self.outgoing_host, self.outgoing_port, self.outgoing_security = servers.outgoing_host, servers.outgoing_port, servers.outgoing_security
@@ -174,13 +181,27 @@ class AccountDialog(QDialog):
         forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         layout = self.layout()
         sides = 0 if layout is None else layout.contentsMargins().left() + layout.contentsMargins().right()
-        mail_width = max(widget.minimumSizeHint().width() for widget in (self._who, self.servers.widget, self._options))
+        mail_width = self.tabs.minimumSizeHint().width()  # the tabs with their frame, every page counted (D-336)
         self.setMinimumWidth(max(self.minimumWidth(), mail_width + sides))  # the mail part is the wider: neither part is ever cut off
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.email.textEdited.connect(self._guess_from_address)
         self.test_button.clicked.connect(self._test)
         self.add_button.clicked.connect(self._add)
+
+    def _login_to_account_tab(self, servers: ServerFields) -> None:
+        """The user name and password stand on the Account tab, below the address (D-336): for Gmail that tab is all a person fills in."""
+        incoming = servers.incoming_group.layout()
+        who = self._who.layout()
+        if not isinstance(incoming, QFormLayout) or not isinstance(who, QFormLayout):
+            return
+        for field in (servers.username, servers.password):
+            label = incoming.labelForField(field)
+            incoming.takeRow(field)
+            if label is not None:
+                who.addRow(label, field)
+            else:
+                who.addRow(field)
 
     def _server_fields(self, parent: QWidget) -> QWidget:
         """The incoming and outgoing server boxes (shared with Edit account), made at their place in the form."""
@@ -214,14 +235,16 @@ class AccountDialog(QDialog):
         google = self._is_google()
         self.gmail_help.setText(GOOGLE_HELP if google else self._gmail_text)
         self.gmail_help.setVisible(self._is_gmail() or google)
-        for widget in (self._who, self.servers.widget, self._options, self.test_button):
+        for widget in (self.tabs, self.test_button):
             widget.setVisible(not calendar and not google)
         self.result_label.setVisible(not calendar)
         gmail = self._is_gmail()
-        self.servers.outgoing_group.setVisible(not gmail)  # Gmail: sending uses the incoming login on Gmail's own server, nothing to choose
-        self._options.setVisible(not calendar and not google and not gmail)  # Gmail: an IMAP account of its own, encrypted; the window stays short
+        for index, reason in ((SERVERS_TAB, "Gmail's servers are filled in for you"), (OPTIONS_TAB, "A Gmail account keeps its own folders, encrypted")):
+            self.tabs.setTabEnabled(index, not gmail)  # greyed, never hidden (OR-15): everything Gmail needs is on the Account tab
+            self.tabs.setTabToolTip(index, reason if gmail else "")
         if gmail:
-            self.encrypt.setChecked(True)  # hidden, so never a choice left over from another type: Gmail's mail is encrypted here (OR-6)
+            self.tabs.setCurrentIndex(ACCOUNT_TAB)
+            self.encrypt.setChecked(True)  # never a choice left over from another type: Gmail's mail is encrypted here (OR-6)
         self.add_button.setText("Sign in with Google" if google else "Add account")
         self.add_button.setToolTip("" if not google or google_client_codes() is not None else
                                    f"Google sign-in is not set up on this computer: {GOOGLE_CLIENT_FILE} is missing")
@@ -246,7 +269,7 @@ class AccountDialog(QDialog):
             layout.activate()
         needed = self._height_needed()
         self.setMinimumHeight(needed)  # this kind's; the smallest width keeps the mail part's, the wider one
-        self.resize(self.width(), max(needed, self.sizeHint().height()))  # a width the person chose stays
+        self.resize(self.width(), min(max(needed, self.sizeHint().height()), self._screen_height()))  # a width the person chose stays; never past the screen
 
     def _height_needed(self) -> int:
         """The height the window needs at its width, a result line that wraps over several lines counted too (Qt's own measure leaves
@@ -254,8 +277,14 @@ class AccountDialog(QDialog):
         layout = self.layout()
         wrapped = layout.heightForWidth(self.width()) if layout is not None and layout.hasHeightForWidth() else 0
         needed = max(self.minimumSizeHint().height(), wrapped)
+        return min(needed, self._screen_height())  # never taller than its screen
+
+    def _screen_height(self) -> int:
+        """The most the window may be high: its screen's free height less the window manager's title bar (D-336)."""
         screen = self.screen()
-        return needed if screen is None else min(needed, screen.availableGeometry().height())  # never taller than its screen
+        if screen is None:
+            return 1 << 24
+        return screen.availableGeometry().height() - max(0, self.frameGeometry().height() - self.height())
 
     def _follow(self) -> None:
         """The smallest height is always what the window needs at its width now, up or down; the window grows when it is shorter than
@@ -394,11 +423,18 @@ class AccountDialog(QDialog):
         self._allow_add()  # after a failed add: as the kind shown allows it (the calendar part's only with what Find found)
 
     def _complete(self) -> bool:
-        if not (self.email.text().strip() and self.username.text().strip() and self.password.text() and self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
-            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the e-mail address, user name, password and both servers.</span>")
+        """Everything needed is filled in; else a red line says what, and the tab with the first empty field comes to the front (D-336)."""
+        if not (self.email.text().strip() and self.username.text().strip() and self.password.text()):
+            self.tabs.setCurrentIndex(ACCOUNT_TAB)
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the e-mail address, user name and password.</span>")
+            return False
+        if not (self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
+            self.tabs.setCurrentIndex(SERVERS_TAB)
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in both servers on the Servers tab.</span>")
             return False
         if not self.same_login.isChecked() and not (self.outgoing_username.text().strip() and self.outgoing_password.text()):
-            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the user name and password of the outgoing server, or tick {SAME_LOGIN_TEXT}.</span>")
+            self.tabs.setCurrentIndex(SERVERS_TAB)
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the user name and password of the outgoing server on the Servers tab, or tick {SAME_LOGIN_TEXT}.</span>")
             return False
         return True
 

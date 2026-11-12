@@ -9,9 +9,10 @@ from tests.fakedav import FakeDav
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_add_any_account.py 4.4.593"
+__version__ = "test_ui_add_any_account.py 4.4.595"
 
 # --- Version history ----------------------------------------------------
+# v4.4.595: the mail part is the tabs (the servers are on their own tab, D-336)
 # v4.4.593: the choices include Google Calendar and Contacts, after Gmail (D-335)
 # v4.4.592: the choices include Gmail, after IMAP (D-335)
 # v4.2.441: the Look at the server's certificate… button is gone (UR-05, D-299)
@@ -45,7 +46,7 @@ def test_settings_add_offers_pop3_imap_caldav_and_carddav(world: World, qtbot: Q
 def test_the_part_below_the_choice_follows_it_and_keeps_what_was_typed(world: World, qtbot: QtBot) -> None:
     dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
     qtbot.addWidget(dialog)
-    mail_parts = (dialog.servers.widget, dialog.test_button)
+    mail_parts = (dialog.tabs, dialog.test_button)  # the servers have their own tab since 4.4.595 (D-336)
     assert all(part.isVisibleTo(dialog) for part in mail_parts) and not dialog.calendar.isVisibleTo(dialog)
     dialog.email.setText("ann@example.com")
     dialog.kind.setCurrentIndex(dialog.kind.findData(CALDAV))
@@ -106,7 +107,7 @@ def test_the_window_opens_and_switches_at_the_size_of_the_kind_shown(world: Worl
             dialog.kind.setCurrentIndex(dialog.kind.findData(other))
             wait(qtbot, lambda: dialog.height() <= dialog.sizeHint().height() + 2)
             assert dialog.width() >= dialog.minimumSizeHint().width() and dialog.minimumWidth() >= dialog.minimumSizeHint().width(), (kind, other)
-    assert heights[CALDAV] < heights["pop3"] / 2
+    assert heights[CALDAV] < heights["pop3"] < 600  # the mail part in tabs since 4.4.595: measured 518 (was about 800, D-336)
 
 
 def test_an_answer_after_a_change_of_kind_stays_with_its_own_part(world: World, qtbot: QtBot) -> None:

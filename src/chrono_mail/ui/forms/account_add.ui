@@ -57,100 +57,149 @@
     </layout>
    </item>
    <item>
-    <widget class="QGroupBox" name="yourAccount">
-     <property name="title">
-      <string>Your account</string>
+    <widget class="QTabWidget" name="tabs">
+     <property name="currentIndex">
+      <number>0</number>
      </property>
-     <layout class="QFormLayout" name="yourAccountForm">
-      <item row="0" column="0">
-       <widget class="QLabel" name="accountNameLabel">
-        <property name="text">
-         <string>Account name</string>
-        </property>
-        <property name="buddy">
-         <cstring>accountName</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QLineEdit" name="accountName" />
-      </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="yourNameLabel">
-        <property name="text">
-         <string>Your name</string>
-        </property>
-        <property name="buddy">
-         <cstring>yourName</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QLineEdit" name="yourName" />
-      </item>
-      <item row="2" column="0">
-       <widget class="QLabel" name="emailLabel">
-        <property name="text">
-         <string>E-mail address</string>
-        </property>
-        <property name="buddy">
-         <cstring>email</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1">
-       <widget class="QLineEdit" name="email" />
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="servers" />
-   </item>
-   <item>
-    <widget class="QGroupBox" name="options">
-     <property name="title">
-      <string>Options</string>
-     </property>
-     <layout class="QFormLayout" name="optionsForm">
-      <item row="0" column="0">
-       <widget class="QLabel" name="policyLabel">
-        <property name="text">
-         <string>Server copies</string>
-        </property>
-        <property name="buddy">
-         <cstring>policy</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="policy" />
-      </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="storageLabel">
-        <property name="text">
-         <string>Keep the mail in</string>
-        </property>
-        <property name="buddy">
-         <cstring>storage</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QComboBox" name="storage">
-        <property name="toolTip">
-         <string>Only for POP3. You can change this later in the settings of the account.</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1">
-       <widget class="QCheckBox" name="encrypt">
-        <property name="text">
-         <string>Encrypt the stored mail on this computer (recommended)</string>
-        </property>
-       </widget>
-      </item>
-     </layout>
+     <widget class="QWidget" name="accountPage">
+      <attribute name="title">
+       <string>Account</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="accountPageLayout">
+       <item>
+        <widget class="QGroupBox" name="yourAccount">
+         <property name="title">
+          <string>Your account</string>
+         </property>
+         <layout class="QFormLayout" name="yourAccountForm">
+          <item row="0" column="0">
+           <widget class="QLabel" name="accountNameLabel">
+            <property name="text">
+             <string>Account name</string>
+            </property>
+            <property name="buddy">
+             <cstring>accountName</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="accountName" />
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="yourNameLabel">
+            <property name="text">
+             <string>Your name</string>
+            </property>
+            <property name="buddy">
+             <cstring>yourName</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="yourName" />
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="emailLabel">
+            <property name="text">
+             <string>E-mail address</string>
+            </property>
+            <property name="buddy">
+             <cstring>email</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLineEdit" name="email" />
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="accountPageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="serversPage">
+      <attribute name="title">
+       <string>Servers</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="serversPageLayout">
+       <item>
+        <widget class="QWidget" name="servers" />
+       </item>
+       <item>
+        <spacer name="serversPageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="optionsPage">
+      <attribute name="title">
+       <string>Options</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="optionsPageLayout">
+       <item>
+        <widget class="QGroupBox" name="options">
+         <property name="title">
+          <string>Options</string>
+         </property>
+         <layout class="QFormLayout" name="optionsForm">
+          <item row="0" column="0">
+           <widget class="QLabel" name="policyLabel">
+            <property name="text">
+             <string>Server copies</string>
+            </property>
+            <property name="buddy">
+             <cstring>policy</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="policy" />
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="storageLabel">
+            <property name="text">
+             <string>Keep the mail in</string>
+            </property>
+            <property name="buddy">
+             <cstring>storage</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="storage">
+            <property name="toolTip">
+             <string>Only for POP3. You can change this later in the settings of the account.</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QCheckBox" name="encrypt">
+            <property name="text">
+             <string>Encrypt the stored mail on this computer (recommended)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="optionsPageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
    <item>

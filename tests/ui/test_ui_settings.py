@@ -14,9 +14,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.2.431"
+__version__ = "test_ui_settings.py 4.4.595"
 
 # --- Version history ----------------------------------------------------
+# v4.4.595: the Add window has the incoming user name and password on its Account tab; Edit account keeps them with the server (D-336, D-186)
 # v4.2.431: the start at login's reason is in its (i), not in a hover text
 # v4.2.424: the ticks of the notification area sit in rows of their own with their (i) (D-294)
 # v4.2.405: the row test of the start at login is Pyrefly-clean (a position of the form is typed as object)
@@ -150,7 +151,8 @@ def test_both_account_windows_have_the_same_server_boxes(world: World, qtbot: Qt
     qtbot.addWidget(edit)
     qtbot.addWidget(add)
     for adding, editing in ((add.servers.incoming_group, edit.servers.incoming_group), (add.servers.outgoing_group, edit.servers.outgoing_group)):
-        assert [row.replace("New password", "Password") for row in server_rows(editing)] == server_rows(adding)
+        login_moved = ("User name", "Password") if adding is add.servers.incoming_group else ()  # on the Add window's Account tab (D-336)
+        assert [row.replace("New password", "Password") for row in server_rows(editing) if row.replace("New password", "Password") not in login_moved] == server_rows(adding)
     assert server_rows(edit.servers.outgoing_group) == ["Server", "Security", "Port", "Use the same user name and password as for incoming mail", "User name", "New password"]
     assert edit.password.placeholderText() == "(unchanged)" and add.password.placeholderText() == ""
     edit.outgoing_port.setValue(2525)  # typed: stays
@@ -276,7 +278,10 @@ def test_both_account_windows_have_account_name_your_name_and_address(world: Wor
         rows = name_rows(form)
         start = rows.index("Account name")
         assert rows[start : start + 3] == ["Account name", "Your name", "E-mail address"]
-        assert "User name" not in rows and "Password" not in rows  # the login is with each server
+        if dialog is edited:
+            assert "User name" not in rows and "Password" not in rows  # the login is with each server (D-186)
+        else:
+            assert rows[start + 3 : start + 5] == ["User name", "Password"]  # the Add window: the incoming login on the Account tab (D-336)
         assert "Name" not in rows
         assert isinstance(dialog.account_name, QLineEdit) and dialog.account_name.text() == ""
 
@@ -306,7 +311,7 @@ def test_the_account_name_is_saved_and_shown_in_the_lists_and_the_folder_list(wo
 def test_the_outgoing_login_follows_the_incoming_one_while_ticked(world: World, qtbot: QtBot) -> None:
     for dialog in (AccountDialog(world.backend), AccountEditDialog(world.backend, world.call("account.list")[0])):
         qtbot.addWidget(dialog)
-        incoming = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.incoming_host) >= 0)
+        incoming = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.incoming_host if isinstance(dialog, AccountEditDialog) else dialog.account_name) >= 0)  # Add: on the Account tab (D-336)
         outgoing = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.outgoing_host) >= 0)
         assert incoming.indexOf(dialog.username) >= 0 and incoming.indexOf(dialog.password) >= 0
         assert outgoing.indexOf(dialog.same_login) < outgoing.indexOf(dialog.outgoing_username) < outgoing.indexOf(dialog.outgoing_password)

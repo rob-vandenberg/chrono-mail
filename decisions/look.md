@@ -31,3 +31,4 @@ See also: [[mail-window]]
 - [[D-159]] Smallest main window width
 - [[D-164]] Accent colour per theme
 - [[D-323]] The tray menu starts with the name and version
+- [[D-336]] The Add an account window in tabs
