@@ -33,3 +33,4 @@ See also: [[imap]]
 - [[D-342]] One name per meaning in the account windows
 - [[D-344]] Refresh refreshes everything, in every section
 - [[D-345]] Accounts shown alike are told apart by their sign-in name
+- [[D-346]] An account and a calendar are named by what the person and Google know

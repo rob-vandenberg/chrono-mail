@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.603"
+__version__ = "model.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: AccountSettings.google_name: the person's name on Google, read again at every synchronisation, never the Shown as name (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSettings.google: an account of Google's calendars or contacts, logged in with Google sign-in (D-335)
 # v4.4.536: reminder_emails: who sends the e-mail reminders (D-313)
@@ -110,6 +111,7 @@ class AccountSettings:
     dav_always_answers: bool = False  # its calendar server is one known to send those answers whatever it is told (D-310)
     dav_addresses: tuple[str, ...] = ()  # the addresses its calendar server knows as this user, in lower case; (): it does not say (D-310)
     google: bool = False  # the calendar or contacts server is Google's: Google sign-in, its refresh token kept as the password (D-335)
+    google_name: str = ""  # the signed-in person's name on Google, read again at every synchronisation; never the Shown as name (D-346)
     reminder_emails: str = "chrono"  # who sends the e-mail reminders of its calendars: "chrono", "server", "none"; set per computer, so one of two can send (D-313)
 
     @property

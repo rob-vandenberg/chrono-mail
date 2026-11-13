@@ -16,9 +16,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 4.2.438"
+__version__ = "pimaccess.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.2.438: timed_background_for; every calendar fact carries its account's choice (UR-02, D-297)
 # v1.9.265: The fact of a calendar made or changed carries its palette (tell_look); a change of the account's palette tells it for each calendar (R-44)
 # v1.1.221: The palette of appointment colours belongs to the account (palette_for); what calendars kept themselves is taken over once (D-191)
@@ -64,7 +65,7 @@ def _open(engine: Engine, account_id: str, create: bool) -> PimStore:
         palette = palette_for(settings, info) if settings is not None and info is not None else ()  # a calendar's colours, as the sidebar shows them
         engine.report(Change(
             cast(ChangeKind, kind), account_id, collection, item, to_folder=to_collection, new_message_id=new_item,  # the store names its changes as the facts do
-            role=info.kind.value if info is not None else "", name=info.name if info is not None else "", colour=info.colour if info is not None else "",
+            role=info.kind.value if info is not None else "", name=(shown_collection_name(engine, account_id, info.name) if kind.startswith("collection_") else info.name) if info is not None else "", colour=info.colour if info is not None else "",
             palette=palette, read_only=info.read_only if info is not None else False, timed_background=timed_background_for(settings, info),
         ))
 
@@ -76,12 +77,23 @@ def _open(engine: Engine, account_id: str, create: bool) -> PimStore:
 
 def tell_palettes(engine: Engine, account_id: str, store: PimStore) -> None:
     """The account's palette changed: every calendar of the account shows it, so each is told with its palette now (D-191, D-146)."""
+    from chrono_mail.engine.calendarnames import CollectionNamer
+
     settings = _settings(engine, account_id)
+    namer = CollectionNamer(engine)
     for info in store.collections(CollectionKind.EVENTS):
         engine.report(Change(
-            "collection_edited", account_id, info.collection_id, role=info.kind.value, name=info.name, colour=info.colour, palette=palette_for(settings, info),
+            "collection_edited", account_id, info.collection_id, role=info.kind.value, name=namer(account_id, info.name), colour=info.colour, palette=palette_for(settings, info),
             read_only=info.read_only, timed_background=timed_background_for(settings, info),
         ))
+
+
+def shown_collection_name(engine: Engine, account_id: str, name: str) -> str:
+    """How a collection is named on screen (D-346): see chrono_mail.engine.calendarnames, imported here when used (it opens these stores). Only
+    the facts about a collection itself carry it: a fact about one of its items keeps the name kept, so no item change looks anything up."""
+    from chrono_mail.engine.calendarnames import shown_collection_name as shown
+
+    return shown(engine, account_id, name)
 
 
 def palette_for(settings: AccountSettings, info: CollectionInfo) -> tuple[PaletteColour, ...]:

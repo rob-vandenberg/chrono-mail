@@ -45,7 +45,7 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.keyfield import KeyField
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
 from chrono_mail.ui.scale import wpx
-from chrono_mail.ui.serverfields import account_line
+from chrono_mail.ui.accountrows import SECOND_LINE_ROLE, TwoLineRows
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend, alive
@@ -62,9 +62,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.581"
+__version__ = "settingsdialog.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: Settings > Accounts shows each account on two lines: its name and address, below it smaller and grey what it holds (D-346)
 # v4.4.581: Settings > Keyboard: each key field has a ✕ that clears it; Backspace and Delete clear it too (the owner)
 # v4.4.578: Settings > Sidebar's Contacts tab gets the address books and its Tags tick (D-331)
 # v4.4.575: The Calendar and Tasks tabs of Settings > Sidebar get their Tags tick as it is now (D-327)
@@ -729,6 +730,7 @@ class SettingsDialog(QDialog):
     def _accounts_page(self) -> QWidget:
         page = forms.load("settings_accounts", self)
         self.accounts = part(page, QListWidget, "accounts")
+        self.accounts.setItemDelegate(TwoLineRows(self.accounts))  # name and address, below it what it holds (D-346)
         self.add_button = part(page, QPushButton, "addButton")
         self.edit_button = part(page, QPushButton, "editButton")
         self.remove_button = part(page, QPushButton, "removeButton")
@@ -888,7 +890,8 @@ class SettingsDialog(QDialog):
                 if account.kind == "local":
                     continue  # Local Folders is not an account: it is shown through the accounts that keep their mail there
                 calendars_only = account.kind == "dav"  # no address and no mail: never the default account
-                item = QListWidgetItem(account_line(account))
+                item = QListWidgetItem(account.list_name)
+                item.setData(SECOND_LINE_ROLE, account.holds)
                 item.setData(ROLE_ACCOUNT, account)
                 self.accounts.addItem(item)
                 if not calendars_only:

@@ -25,6 +25,7 @@ from chrono_mail.core.colours import GOOGLE_COLOUR_NAMES, GOOGLE_EVENT_COLOURS, 
 from chrono_mail.core.jsontext import load_json
 from chrono_mail.core.tagnames import calendar_tag, shown_tag, tag_parts
 from chrono_mail.engine.google_access import google_bearer
+from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.session import Engine
 from chrono_mail.pim.ical import Moment, parse_events
 from chrono_mail.pimstore import ItemQuery, PimStore
@@ -32,9 +33,10 @@ from chrono_mail.protocols.google import CalendarUnknown, EventGone, GoogleRefus
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "google_colours.py 4.4.602"
+__version__ = "google_colours.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A Google colour is a tag of its own calendar (name|calendar id), never in the person's tag list; a calendar tag chosen here goes to Google first (D-341)
 # v4.4.601: What is in Google counts: a tag whose name is a Google colour always has that colour, and two colours of one name are one tag of one colour (D-340)
 # v4.4.600: Every colour of a Google calendar is a tag here, on the appointments that carry it and in the tag list; taking it off in the window takes the colour off Google (D-339)
@@ -234,12 +236,15 @@ def calendar_tags(engine: Engine, settings: AccountSettings, store: PimStore) ->
         return []
     kept_all = _load(colours_path(engine, settings.account.account_id))
     found: list[CalendarTag] = []
+    namer = CollectionNamer(engine)  # the contacts read at most once (D-346)
+    shown_names: dict[str, str] = {}
     for info in store.collections(CollectionKind.EVENTS):
         kept = kept_all.calendars.get(info.collection_id)
         if kept is None or not kept.calendar:
             continue
+        shown_names[info.collection_id] = namer(settings.account.account_id, info.name)
         for name, colour in sorted(in_use(kept).values(), key=lambda pair: pair[0].casefold()):
-            found.append(CalendarTag(calendar_tag(name, kept.calendar), name, colour, shown_tag(name, info.name), info.collection_id))
+            found.append(CalendarTag(calendar_tag(name, kept.calendar), name, colour, shown_tag(name, shown_names[info.collection_id]), info.collection_id))
     return found
 
 

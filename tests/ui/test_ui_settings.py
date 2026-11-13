@@ -8,15 +8,17 @@ import dataclasses
 from chrono_mail.config import ServerRole
 from chrono_mail.config.autostart import Autostart
 from chrono_mail.engine import commands_autostart
+from chrono_mail.ui.accountrows import SECOND_LINE_ROLE
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.4.603"
+__version__ = "test_ui_settings.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: an account on two lines: its name and address, below it what it holds (D-346)
 # v4.4.603: the labels Shown as and Sign-in name (D-342)
 # v4.4.595: the Add window has the incoming user name and password on its Account tab; Edit account keeps them with the server (D-336, D-186)
 # v4.2.431: the start at login's reason is in its (i), not in a hover text
@@ -223,7 +225,7 @@ def test_adding_an_account_from_the_settings_runs_the_normal_dialog(world: World
 
 def test_the_account_type_is_shown_and_imap_accounts_have_no_server_copies_tab(world: World, qtbot: QtBot) -> None:
     dialog = open_settings(world, qtbot)
-    assert dialog.accounts.item(0).text().endswith("(POP3)")
+    assert dialog.accounts.item(0).data(SECOND_LINE_ROLE) == "Mail (POP3)"
     pop3 = AccountEditDialog(world.backend, dialog.accounts.item(0).data(256))
     qtbot.addWidget(pop3)
     assert [pop3.tabs.tabText(index) for index in range(pop3.tabs.count())] == ["General", "Servers", "Calendars and contacts", "Server copies"]
@@ -299,7 +301,7 @@ def test_the_account_name_is_saved_and_shown_in_the_lists_and_the_folder_list(wo
     stored = world.call("account.list")[0]
     assert stored.account_name == "Kerio test" and stored.display_name == your_name and stored.shown_name == "Kerio test"
     dialog.reload()
-    wait(qtbot, lambda: dialog.accounts.count() == 1 and dialog.accounts.item(0).text().startswith("Kerio test  <me@example.com>  - "))
+    wait(qtbot, lambda: dialog.accounts.count() == 1 and dialog.accounts.item(0).text() == "Kerio test <me@example.com>")
     world.window.reload_accounts(select_saved=False)
     wait(qtbot, lambda: bool(world.window.tree_model.findItems("Kerio test", Qt.MatchFlag.MatchRecursive)))
     world.window._fill_refresh_menu()  # noqa: SLF001

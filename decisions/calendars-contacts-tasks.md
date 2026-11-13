@@ -65,3 +65,4 @@ See also: [[sync-conflicts]]
 - [[D-342]] One name per meaning in the account windows
 - [[D-343]] Renaming a Google calendar gives it a name only for you
 - [[D-344]] Refresh refreshes everything, in every section
+- [[D-346]] An account and a calendar are named by what the person and Google know

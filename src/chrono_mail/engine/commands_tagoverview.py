@@ -2,6 +2,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from chrono_mail.core import ChronoMailError, CollectionKind
+from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
@@ -11,9 +12,10 @@ from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 from chrono_mail.pimstore.extract import epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tagoverview.py 4.4.572"
+__version__ = "commands_tagoverview.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.572: Initial tag.overview: the contacts, events and tasks of one tag, from the indexes alone (D-328)
 
 EVERY: int = 10**6  # every item of one kind of one account with the tag
@@ -86,12 +88,13 @@ def tag_overview(engine: Engine, parameters: OverviewParameters) -> TagOverview:
     now, now_wall = int(datetime.now(UTC).timestamp()), _now_wall()
     found: dict[CollectionKind, list[tuple[tuple[object, ...], TaggedItem]]] = {kind: [] for kind in (CollectionKind.CONTACTS, CollectionKind.EVENTS, CollectionKind.TASKS)}
     unreadable: list[str] = []
+    namer = CollectionNamer(engine)  # the contacts read at most once for the whole overview (D-346)
     for account in pim_account_ids(engine):
         try:
             with open_pim(engine, account) as store:
                 for kind, rows in found.items():
                     try:
-                        names = {info.collection_id: info.name for info in store.collections(kind)}
+                        names = {info.collection_id: namer(account, info.name) for info in store.collections(kind)}
                         items = store.index.query(ItemQuery(kind, tuple(names), parameters.text, tag, limit=EVERY, groups=False if kind is CollectionKind.CONTACTS else None)) if names else []
                     except ChronoMailError:
                         if account not in unreadable:

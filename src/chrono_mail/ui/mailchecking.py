@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.4.605"
+__version__ = "mailchecking.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendars row is named by the account's own name and what it holds: "Rob (Google Calendar)" (D-346)
 # v4.4.605: Refresh is Send and Receive in every section; each calendar account has a row in the Operations window; a Refresh while one runs is ignored (D-344)
 # v4.4.598: Event colours changed by a synchronisation (Google's, D-337) show at once; their problem in the status line when nothing else went wrong
 # v4.2.460: Refresh in Calendar, Contacts and Tasks with nothing to synchronise reads nothing again: its line is no longer covered at once by
@@ -587,8 +588,9 @@ class MailChecking(QObject):
 
     def _operation_name(self, account_id: str, direction: str) -> str:
         """The name of a row: the address and the protocol, as "rob@example.com (POP3)"."""
-        if direction == "calendars":
-            return f"{self._state.account_name(account_id)} (Calendars and contacts)"
+        if direction == "calendars":  # its own name and what it holds: "Rob (Google Calendar)", "Rob (Google Contacts)" (D-346)
+            found = next((item for item in self._state.all_accounts if item.account_id == account_id), None)
+            return f"{found.own_name} ({found.calendar_kind})" if found is not None else account_id
         account = self._state.account(account_id)
         protocol = "SMTP" if direction == "send" else account.kind.upper() if account is not None else ""
         return f"{self._state.account_name(account_id)} ({protocol})" if protocol else self._state.account_name(account_id)

@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.4.604"
+__version__ = "google.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: the profile permission: the person's name on Google, from the sign-in and read again with profile_name (D-346)
 # v4.4.604: set_own_name: one's own name for a calendar, never the calendar's own name (D-343)
 # v4.4.599: The labels of a Google calendar (the colours a person made and named there): read per calendar, set on an event (D-338)
 # v4.4.598: Google's Calendar API for the colours of events: read a calendar's colours (only the changes after the first time), set one event's colour (D-337)
@@ -27,7 +28,7 @@ __version__ = "google.py 4.4.604"
 
 AUTHORIZE_URL: str = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL: str = "https://oauth2.googleapis.com/token"
-SCOPES: str = "openid email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/carddav"  # never the mail scope (D-335)
+SCOPES: str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/carddav"  # never the mail scope (D-335)
 CALDAV_START: str = "https://apidata.googleusercontent.com/caldav/v2/{address}/user"  # Google's calendars, per Google address
 CARDDAV_START: str = "https://www.googleapis.com/.well-known/carddav"  # Google's contacts
 MAXIMUM_ANSWER_BYTES: int = 64 * 1024
@@ -56,6 +57,7 @@ class SignedIn:
     access_token: str
     expires_in: int
     address: str  # the Google account that signed in, from its ID token
+    name: str = ""  # the person's name on Google, from the same token (the profile permission, D-346)
 
 
 class SignInWaiter:
@@ -127,7 +129,9 @@ class SignInWaiter:
         refresh = str(tokens.get("refresh_token", ""))
         if not refresh:
             raise ProtocolError("Google answered the sign-in without the code that keeps it signed in")
-        return SignedIn(refresh, str(tokens.get("access_token", "")), int(str(tokens.get("expires_in", "0")) or 0), _address_of(str(tokens.get("id_token", ""))))
+        claims = _claims_of(str(tokens.get("id_token", "")))
+        return SignedIn(refresh, str(tokens.get("access_token", "")), int(str(tokens.get("expires_in", "0")) or 0), _text_claim(claims, "email").lower(),
+                        _text_claim(claims, "name"))
 
     def cancel(self) -> None:
         """The person stopped waiting (Cancel), or the program ends: wait ends at once, and check refuses from then on, so nothing is added."""
@@ -188,19 +192,31 @@ def _error_of(raw: bytes) -> str:
     return str(answer.get("error", "")) if isinstance(answer, dict) else ""
 
 
-def _address_of(id_token: str) -> str:
-    """The e-mail address in Google's ID token (it came straight from Google over TLS, so its signature needs no check here)."""
+def _claims_of(id_token: str) -> dict[str, object]:
+    """The claims of Google's ID token (it came straight from Google over TLS, so its signature needs no check here); empty when unreadable."""
     parts = id_token.split(".")
     if len(parts) != 3:
-        return ""
+        return {}
     try:
         claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
     except ValueError:
-        return ""
-    return str(claims.get("email", "")).strip().lower() if isinstance(claims, dict) else ""
+        return {}
+    return {str(key): value for key, value in claims.items()} if isinstance(claims, dict) else {}
 
 
-# --- the colours of events (D-337) ----------------------------------------------------------------------------------------------------
+def _text_claim(claims: dict[str, object], key: str) -> str:
+    value = claims.get(key, "")
+    return value.strip()[:NAME_LIMIT] if isinstance(value, str) else ""
+
+
+NAME_LIMIT: int = 200  # a name from Google is shown in a list row: longer is cut (AGENTS.md 4.2.2)
+USERINFO_URL: str = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def profile_name(access: str) -> str:
+    """The name of the signed-in person on Google (D-346); empty when Google gives none (a sign-in from before the profile permission).
+    Raises ProtocolError or AuthenticationError like every call to Google."""
+    return _text_claim(_api(access, "GET", USERINFO_URL), "name")
 
 
 class SyncTokenGone(ProtocolError):

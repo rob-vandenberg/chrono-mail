@@ -31,8 +31,8 @@ __version__ = "test_google_sign_in.py 4.4.597"
 CLIENT = GoogleClient("id-123.apps.googleusercontent.com", "GOCSPX-test")
 
 
-def id_token(address: str) -> str:
-    claims = base64.urlsafe_b64encode(json.dumps({"email": address}).encode()).decode().rstrip("=")
+def id_token(address: str, name: str = "") -> str:
+    claims = base64.urlsafe_b64encode(json.dumps({"email": address, **({"name": name} if name else {})}).encode()).decode().rstrip("=")
     return f"head.{claims}.signature"
 
 
@@ -77,6 +77,7 @@ def test_the_sign_in_page_asks_for_calendar_and_contacts_with_pkce_never_mail() 
     assert query["redirect_uri"][0].startswith("http://127.0.0.1:") and query["login_hint"] == ["ann@gmail.com"]
     scopes = query["scope"][0].split()
     assert "https://www.googleapis.com/auth/calendar" in scopes and "https://www.googleapis.com/auth/carddav" in scopes
+    assert "profile" in scopes  # the person's name on Google (D-346)
     assert not any("mail.google.com" in scope or "gmail" in scope for scope in scopes)  # the mail scope needs Google's yearly review (D-335)
 
 
@@ -146,7 +147,7 @@ def servers(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[FakeDav, FakeDav]
         server.__exit__(None, None, None)
 
 
-def signs_in(monkeypatch: pytest.MonkeyPatch, address: str, refresh: str) -> None:
+def signs_in(monkeypatch: pytest.MonkeyPatch, address: str, refresh: str, name: str = "") -> None:
     """The person signs in on Google's page as address."""
 
     class Waiter:
@@ -154,7 +155,7 @@ def signs_in(monkeypatch: pytest.MonkeyPatch, address: str, refresh: str) -> Non
             self.url = "https://accounts.google.com/"
 
         def wait(self, seconds: float, stop: object = None) -> SignedIn:
-            return SignedIn(refresh, "access-1", 3600, address)
+            return SignedIn(refresh, "access-1", 3600, address, name)
 
         def check(self) -> None:
             pass
@@ -178,7 +179,8 @@ def test_signing_in_adds_google_calendar_and_google_contacts(tmp_path: Path, mon
     result = call(engine, "google.sign-in")
     accounts = [settings for settings in engine.config().accounts if settings.google]
     assert result.address == "ann@gmail.com" and len(result.account_ids) == 2 == len(accounts)
-    assert sorted(settings.account_name for settings in accounts) == ["Google Calendar (ann@gmail.com)", "Google Contacts (ann@gmail.com)"]
+    assert sorted(settings.dav_url for settings in accounts) == sorted(url for _, url in commands_google.PARTS)
+    assert all(settings.account_name == "" for settings in accounts)  # no Shown as name made up: the person chooses one (D-346)
     assert all(engine.passwords.get(settings.account.account_id, ServerRole.INCOMING) == "refresh-1" for settings in accounts)
     with pytest.raises(UsageError):
         call(engine, "google.sign-in")  # the same Google account twice
@@ -283,8 +285,8 @@ def test_a_removed_google_calendar_comes_back_with_a_new_sign_in(tmp_path: Path,
     calendar, contacts = call(engine, "google.sign-in").account_ids
     call(engine, "account.remove", account=calendar)
     again = call(engine, "google.sign-in")
-    names = sorted(settings.account_name for settings in engine.config().accounts if settings.google)
-    assert len(again.account_ids) == 1 and names == ["Google Calendar (ann@gmail.com)", "Google Contacts (ann@gmail.com)"]
+    urls = sorted(settings.dav_url for settings in engine.config().accounts if settings.google)
+    assert len(again.account_ids) == 1 and urls == sorted(url for _, url in commands_google.PARTS)
     assert contacts not in again.account_ids
 
 
@@ -388,3 +390,24 @@ def test_a_kind_the_account_no_longer_keeps_goes_here_once_and_stays_on_the_serv
         report = sync_dav(DavClient(server.url, "ann", "secret", kinds=frozenset({"events", "tasks"})), store, state, durable=False)
         assert not store.collections(CollectionKind.CONTACTS) and store.collections(CollectionKind.EVENTS)  # gone here (D-335)
         assert report.errors == [] and "c1.vcf" in server.collections["contacts"].items  # no error line, and the server keeps it
+
+
+def test_the_sign_in_gives_the_person_s_name_on_google(monkeypatch: pytest.MonkeyPatch) -> None:
+    waiter = SignInWaiter(CLIENT)
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(waiter.url).query)["state"][0]
+    urllib.request.urlopen(f"{waiter.redirect_uri}/?state={state}&code=the-code", timeout=5).read()
+    google_answers(monkeypatch, {"refresh_token": "refresh-1", "access_token": "access-1", "expires_in": 3599, "id_token": id_token("ann@gmail.com", " Ann Lee ")})
+    assert waiter.wait(5) == SignedIn("refresh-1", "access-1", 3599, "ann@gmail.com", "Ann Lee")
+
+
+def test_signing_in_keeps_google_s_name_apart_from_shown_as_and_signing_in_again_renews_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: tuple[FakeDav, FakeDav],
+) -> None:
+    """D-346: no Shown as name is made up; the person's name on Google is kept apart, and a new sign-in renews it."""
+    engine = make_engine(tmp_path)
+    signs_in(monkeypatch, "ann@gmail.com", "refresh-1", "Ann Lee")
+    added = call(engine, "google.sign-in").account_ids
+    assert {(engine.config().find(each).account_name, engine.config().find(each).google_name) for each in added} == {("", "Ann Lee")}
+    signs_in(monkeypatch, "ann@gmail.com", "refresh-2", "Ann Stone")
+    call(engine, "google.sign-in", account=added[0])
+    assert {engine.config().find(each).google_name for each in added} == {"Ann Stone"}

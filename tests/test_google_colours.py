@@ -19,9 +19,10 @@ from tests.test_engine_commands import call
 from tests.test_google_sign_in import CLIENT, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_colours.py 4.4.602"
+__version__ = "test_google_colours.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: the Google Calendar account is found by its server: a new sign-in gives no Shown as name (D-346)
 # v4.4.602: A Google colour is a tag of its own calendar, "Rood|<calendar id>", never in the person's tag list (D-341): the tests of D-340's rule
 #           (Google's colour put on the person's tag of that name) are replaced by tests that the person's tag is never touched
 # v4.4.601: Google's colour wins on a tag of its name; two colours of one name are one tag of one colour (D-340)
@@ -257,7 +258,7 @@ def google_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tu
             monkeypatch.setattr(google_colours, "calendar_id_of", calendar_of)
             engine = make_engine(tmp_path)
             signs_in(monkeypatch, CALENDAR, "refresh-1")
-            account = next(each for each in call(engine, "google.sign-in").account_ids if engine.config().find(each).account_name.startswith("Google Calendar"))
+            account = next(each for each in call(engine, "google.sign-in").account_ids if engine.config().find(each).dav_url.startswith(f"http://127.0.0.1:{calendars.port}/"))
             yield engine, account, calendars, api
         finally:
             google_access.forget_access("")

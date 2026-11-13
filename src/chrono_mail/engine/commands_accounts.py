@@ -45,6 +45,7 @@ from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine, let_go_kept_indexes
 from chrono_mail.engine.walletlabels import label_account, label_key, label_wallet, move_profile_entries
+from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fingerprint
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
@@ -53,9 +54,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.607"
+__version__ = "commands_accounts.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a Google account without a Shown as name is named by the person's name on Google; Google's two parts told apart as Google Calendar
+#           and Google Contacts; list_name and holds: the two lines of an account in Settings > Accounts, the server only when two are the same (D-346)
 # v4.4.607: two accounts shown alike are told apart by their sign-in name, not their server: "Rob - robvandenberg64@gmail.com (Calendars and contacts)" (D-345)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSummary.google (D-335)
@@ -328,8 +331,56 @@ DAV_KIND_WORDS: str = "Calendars and contacts"
 
 
 def _own_name(item: AccountSettings) -> str:
-    """The account name the person chose, else the e-mail address (an account without mail: its user name)."""
-    return item.account_name or item.account.email_address or item.account.incoming.username
+    """The account name the person chose, else the person's name on Google (D-346), else the e-mail address (an account without mail: its user
+    name)."""
+    return item.account_name or (item.google_name if item.google else "") or item.account.email_address or item.account.incoming.username
+
+
+def _address(item: AccountSettings) -> str:
+    """The address the account stands for: its e-mail address, else (calendars and contacts only) its sign-in name when that is an address."""
+    sign_in = _sign_in(item)
+    return item.account.email_address or (sign_in if "@" in sign_in else "")
+
+
+def list_name(item: AccountSettings) -> str:
+    """Line 1 of an account in Settings > Accounts (D-346): its name with its address, "Rob <rob@example.com>", or the address alone."""
+    if item.account.kind is AccountKind.LOCAL:
+        return item.account.display_name
+    own, address = _own_name(item), _address(item)
+    if not address:
+        return own
+    return address if own.lower() == address.lower() else f"{own} <{address}>"
+
+
+def holds(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> str:
+    """Line 2 of an account in Settings > Accounts (D-346): what it holds, "Mail (IMAP), Calendars and contacts", "Google Calendar"; with its
+    server only when another account has the same two lines."""
+    words = _holds(item)
+    alike = [other for other in accounts if other.account.account_id != item.account.account_id and other.account.kind is not AccountKind.LOCAL
+             and list_name(other).lower() == list_name(item).lower() and _holds(other) == words]
+    if not alike:
+        return words
+    host = urllib.parse.urlsplit(item.dav_url).hostname or item.account.incoming.host if item.account.kind is AccountKind.DAV else item.account.incoming.host
+    return f"{words} - {host}"
+
+
+def _holds(item: AccountSettings) -> str:
+    if item.account.kind is AccountKind.LOCAL:
+        return ""
+    if item.account.kind is AccountKind.DAV:
+        return _kind_words(item)
+    mail = f"Mail ({item.account.kind.value.upper()})"
+    return f"{mail}, {DAV_KIND_WORDS}" if item.dav_url else mail
+
+
+def google_part(item: AccountSettings) -> str:
+    """Which of Google's two parts an account of Google sign-in holds: Google Calendar or Google Contacts (D-335, D-346)."""
+    host = (urllib.parse.urlsplit(item.dav_url).hostname or "").lower()
+    if host == urllib.parse.urlsplit(CARDDAV_START).hostname:
+        return "Google Contacts"
+    if host == urllib.parse.urlsplit(CALDAV_START).hostname:
+        return "Google Calendar"
+    return "Google"
 
 
 def account_label(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> str:
@@ -359,9 +410,12 @@ def shown_name(item: AccountSettings, accounts: tuple[AccountSettings, ...]) -> 
 def _apart(item: AccountSettings, others: list[AccountSettings]) -> str:
     """What tells an account apart from others shown alike: its sign-in name and kind, which a person knows (the owner, D-345); its server and
     kind only when the sign-in name is the shown name itself or another of them has the same sign-in name and kind."""
-    own, sign_in = _own_name(item), _sign_in(item)
-    if sign_in and sign_in.lower() != own.lower() and not any(_sign_in(other).lower() == sign_in.lower() and _kind_words(other) == _kind_words(item) for other in others):
-        return f"{sign_in} ({_kind_words(item)})"
+    own, sign_in, kind = _own_name(item), _sign_in(item), _kind_words(item)
+    google_pair = [other for other in others if other.google and _sign_in(other).lower() == sign_in.lower()]
+    if item.google and google_pair and not any(_kind_words(other) == kind for other in others):  # one Google sign-in: Calendar and Contacts (D-346)
+        return kind
+    if sign_in and sign_in.lower() != own.lower() and not any(_sign_in(other).lower() == sign_in.lower() and _kind_words(other) == kind for other in others):
+        return f"{sign_in} ({kind})"
     return server_label(item)
 
 
@@ -370,6 +424,8 @@ def _sign_in(item: AccountSettings) -> str:
 
 
 def _kind_words(item: AccountSettings) -> str:
+    if item.account.kind is AccountKind.DAV and item.google:
+        return google_part(item)
     return DAV_KIND_WORDS if item.account.kind is AccountKind.DAV else item.account.kind.value.upper()
 
 
@@ -409,6 +465,10 @@ class AccountSummary:
     dav_always_answers: bool = False  # the calendar server is one known to mail them whatever it is told
     reminder_emails: str = "chrono"  # who sends the e-mail reminders: "chrono", "server", "none" (D-313)
     google: bool = False  # Google's calendars or contacts, logged in with Google sign-in (D-335)
+    own_name: str = ""  # the account name, else the person's name on Google, else the address: never told apart from others (D-346)
+    list_name: str = ""  # line 1 in Settings > Accounts: "Rob <rob@example.com>", or the address (D-346)
+    holds: str = ""  # line 2 there: what it holds, "Mail (POP3)", "Google Calendar"; the server only when two accounts are the same (D-346)
+    calendar_kind: str = ""  # its calendars and contacts in a row of the Operations window: Calendars and contacts, Google Calendar (D-346)
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -447,6 +507,10 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.dav_always_answers,
         item.reminder_emails,
         item.google,
+        _own_name(item) if item.account.kind is not AccountKind.LOCAL else item.account.display_name,
+        list_name(item),
+        holds(item, accounts),
+        google_part(item) if item.google else DAV_KIND_WORDS,
     )
 
 

@@ -11,6 +11,7 @@ from chrono_mail.engine.collection_looks import change_look, own_name
 from chrono_mail.engine.commands_tags import mail_tag_counts, rename_in_mail
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.google_colours import CalendarTag, calendar_tags
+from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, palette_for, pim_account_ids, tell_palettes, timed_background_for
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.pimstore import PimStore
@@ -19,9 +20,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.4.604"
+__version__ = "commands_pim.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.604: CollectionSummary.own_name: a Google calendar's name is one's own name for it (D-343)
 # v4.4.602: tag.list also gives the tags of the Google calendars, each with how it is shown ("Rood (Esther)") and its calendar; tag.rename refuses a bar (D-341)
 # v4.4.573: collection.timed-background: Month's coloured timed events, the account's choice, set on its own (D-329, D-297)
@@ -67,11 +69,11 @@ def _palette(engine: Engine, account: str, info: CollectionInfo) -> tuple[Palett
     return palette_for(engine.config().find(account), info)
 
 
-def _summary(engine: Engine, account: str, store: PimStore, info: CollectionInfo) -> CollectionSummary:
+def _summary(engine: Engine, account: str, store: PimStore, info: CollectionInfo, namer: CollectionNamer | None = None) -> CollectionSummary:
     from chrono_mail.pimstore import ItemQuery
 
     return CollectionSummary(
-        account, account_name(engine, account), info.collection_id, info.kind.value, info.name, info.colour, info.read_only,
+        account, account_name(engine, account), info.collection_id, info.kind.value, (namer or CollectionNamer(engine))(account, info.name), info.colour, info.read_only,
         store.index.count(ItemQuery(collections=(info.collection_id,))), _palette(engine, account, info),
         bool(info.server_value("href")), tuple(other.name for other in together(store, info)[1:]),
         timed_background_for(engine.config().find(account), info), own_name(engine.config().find(account).google, info),
@@ -80,10 +82,11 @@ def _summary(engine: Engine, account: str, store: PimStore, info: CollectionInfo
 
 def _summaries(engine: Engine, kind: CollectionKind | None = None) -> tuple[CollectionSummary, ...]:
     found: list[CollectionSummary] = []
+    namer = CollectionNamer(engine)  # the contacts read at most once for the whole list (D-346)
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
             for info in store.collections(kind):
-                found.append(_summary(engine, account, store, info))
+                found.append(_summary(engine, account, store, info, namer))
     return tuple(found)
 
 

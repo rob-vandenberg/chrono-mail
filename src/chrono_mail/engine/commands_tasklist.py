@@ -5,6 +5,7 @@ from typing import Literal
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.engine.commands_calendar import MOST_REMINDERS, ReminderInfo, _reminder, addressed, reminder_info
+from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -15,9 +16,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 4.4.602"
+__version__ = "commands_tasklist.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A tag given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v4.4.547: a task says its reminders whole, as an event does; at most 5 given, by e-mail too, and keep: for one that stays as it is (D-316)
 # v4.4.546: a task says the fixed time of its reminders (reminder_moments); a task that gets a due time counts its reminders in minutes from it again (D-316)
@@ -224,14 +226,16 @@ def _rows(engine: Engine, chosen: list[_Found]) -> list[TaskRow]:
     for _, account, item in chosen:
         per_account.setdefault(account, []).append(item)
     rows: dict[str, TaskRow] = {}
+    namer = CollectionNamer(engine)  # the contacts read at most once for all rows (D-346)
     for account, items in per_account.items():
         with open_pim(engine, account) as store:
             lists = {info.collection_id: info for info in store.collections(CollectionKind.TASKS)}
+            shown_names = {identifier: namer(account, info.name) for identifier, info in lists.items()}
             for item in items:
                 task = _single(store.get(item.collection, item.item_id))
                 info = lists[item.collection]
                 rows[item.item_id] = TaskRow(
-                    item.item_id, account, item.collection, info.name, info.colour, task.summary, format_moment(task.due), format_moment(task.start), task.priority, task.percent,
+                    item.item_id, account, item.collection, shown_names[item.collection], info.colour, task.summary, format_moment(task.due), format_moment(task.start), task.priority, task.percent,
                     task.status, task.done, _overdue(task), bool(task.rrule), task.categories, task.parent,
                 )
     return [rows[item.item_id] for _, _, item in chosen if item.item_id in rows]

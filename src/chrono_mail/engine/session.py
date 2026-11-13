@@ -35,9 +35,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.4.542"
+__version__ = "session.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: contact_names: the names of contacts found for an address, kept until a contact or an address book changes (D-346)
 # v4.4.542: hang_up and sends: the end of the program waits for no server, only for a mail being sent
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.538: working is told also during a quiet big job (a step of a long job)
@@ -345,6 +346,34 @@ def rebuild_abort(path: Path) -> threading.Event:
 REMEMBERED_ARRIVALS: int = 100_000  # per mailbox: the messages that came in, with the number of their fact
 
 
+class ContactNames:
+    """The name of a contact found for an address, in lower case ("" when none has it), kept until a contact or an address book changes, so a
+    calendar named by an address is not looked up again at every view (D-346). A lookup that ran while a change came keeps nothing."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._names: dict[str, str] = {}
+        self._generation = 0
+
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def get(self, address: str) -> str | None:
+        with self._lock:
+            return self._names.get(address)
+
+    def keep(self, address: str, name: str, generation: int) -> None:
+        with self._lock:
+            if generation == self._generation:
+                self._names[address] = name
+
+    def forget(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._names.clear()
+
+
 @dataclass
 class Engine:
     """One session of the application: where its files are, how secrets are kept, and the clock.
@@ -373,6 +402,7 @@ class Engine:
     _told: dict[str, int] = field(default_factory=dict, init=False, repr=False)  # per mailbox: how many facts were told
     _arrived: dict[str, OrderedDict[str, int]] = field(default_factory=dict, init=False, repr=False)  # per mailbox: store id -> the number of the fact it came with
     _horizon: dict[str, int] = field(default_factory=dict, init=False, repr=False)  # per mailbox: below this number, what came in is not known
+    contact_names: "ContactNames" = field(default_factory=lambda: ContactNames(), init=False, repr=False)  # a calendar named by an address (D-346)
     _report_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # re-entrant: a listener in the same thread may cause a fact of its own
     _place_locks_guard: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     sidebar_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)  # every read-change-save of the sidebar file (R-41)
@@ -410,6 +440,8 @@ class Engine:
 
     def report(self, change: Change) -> None:
         """A change of mail happened: tell it, unless a big job of this thread runs quietly (then its mailbox is noted)."""
+        if change.kind.startswith(("item_", "collection_")) and change.role in ("contacts", ""):
+            self.contact_names.forget()  # a contact or an address book changed: the names found for addresses are looked up again (D-346)
         quiet = self._quiet_state()
         if quiet.depth == 0 or change.kind in ("conflicts_changed", "waiting_changed", "rules_changed", "working"):  # a list to be asked again (D-194); what the rules did (D-302); a step of a long job
             self._tell(change)

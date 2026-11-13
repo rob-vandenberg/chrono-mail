@@ -12,6 +12,7 @@ from chrono_mail.engine.google_colours import (calendar_has, calendar_id, google
                                                 google_name, shown_colours)
 from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
+from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -23,9 +24,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.602"
+__version__ = "commands_calendar.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A Google colour is a tag of its own calendar (name|calendar id); a calendar tag given an appointment goes to Google, never into the event (D-341)
 # v4.4.600: The colour Google gives an appointment is its tag, in its window too; taking that tag off takes the colour off Google (D-339)
 # v4.4.599: A Google colour the person named shows as a tag on its events (D-338)
@@ -287,11 +289,13 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
     found: list[tuple[datetime, OccurrenceInfo]] = []
     cut = False
     yours = your_addresses_lower(engine)
+    namer = CollectionNamer(engine)  # the contacts read at most once for the whole list (D-346)
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
             names = {info.collection_id: info for info in store.collections(CollectionKind.EVENTS)}
             settings = engine.config().find(account)
             palettes = {identifier: palette_for(settings, info) for identifier, info in names.items()}
+            shown_names = {identifier: namer(account, info.name) for identifier, info in names.items()}  # a mere address named (D-346)
             google = shown_colours(engine, settings)  # Google's colours of its events, which its CalDAV does not carry (D-337), and their names (D-338)
             if parameters.calendar is not None:
                 chosen = (parameters.calendar,) if parameters.calendar in names else ()
@@ -331,7 +335,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     if google_filter and parameters.tag.casefold() not in {each.casefold() for each in tags}:
                         continue  # the tag asked for is the name of a Google colour: only the events that carry it
                     found.append((key, OccurrenceInfo(
-                        item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
+                        item.item_id, account, item.collection, shown_names[item.collection], colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats or occurrence.changed else "", e.status,
                         e.transparency != "TRANSPARENT", tags, e.colour_id, other, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,

@@ -10,13 +10,14 @@ from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.smtp import check_login
 from chrono_mail.config.google import google_client_codes
 from chrono_mail.protocols.dav import DavClient
-from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, GoogleClient, refresh_access
+from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, GoogleClient, profile_name, refresh_access
 from tests.live.account import SETTINGS_DIRECTORY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_gmail.py 4.4.599"
+__version__ = "test_live_gmail.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: the person's name on Google read with a renewed access code (the profile permission, D-346)
 # v4.4.599: the labels of a Google calendar read with their names, one given to an event and taken off again, CalDAV carrying neither (D-338)
 # v4.4.598: an event made through CalDAV gets a colour through the Calendar API, a changed date of a series too, and CalDAV still carries none (D-337)
 # v4.4.597: the own Google calendar is the account's own; Google Calendar keeps calendars, Google Contacts address books (D-335)
@@ -236,3 +237,12 @@ def test_a_name_of_ones_own_for_a_google_calendar_reaches_caldav_and_leaves_the_
             assert again.name == "Chrono Mail live test"
         finally:
             assert set_own_name(access, user, "") == user  # put back: Google's name, the address
+
+
+def test_the_person_s_name_on_google_is_read_with_a_renewed_access_code() -> None:
+    """D-346: a sign-in with the profile permission gives the name again at every synchronisation, with a renewed access code."""
+    codes = google_client_codes()
+    if codes is None or not GOOGLE_TOKEN_FILE.exists():
+        pytest.skip("the Google client file or the test account's Google sign-in is missing")
+    access, _ = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
+    assert profile_name(access) == "Chrono Mail"  # the test account's name on Google

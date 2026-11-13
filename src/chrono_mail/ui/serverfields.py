@@ -15,9 +15,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.passwordfield import make_password_field
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 4.4.603"
+__version__ = "serverfields.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: account_line: the name and address, and what the account holds, as the two lines of Settings > Accounts (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.2.444: account_line: an account's row text in one place, for Settings > Accounts and the For list of a calendar server
 # v4.2.441: Security has a fourth choice, "TLS, certificate not checked (weak)", with the ports of TLS (OR-6, D-299)
@@ -48,12 +49,9 @@ def incoming_title(kind: AccountKind) -> str:
 
 
 def account_line(account: AccountSummary) -> str:
-    """An account as Settings > Accounts lists it, and the For list of a calendar server too: its name, its address and its server with
-    the kind ("Mattie  <mattie@example.com>  - mail.example.com (IMAP)"); an account of calendars only has no address."""
-    name = account.account_name or account.display_name
-    if account.kind == "dav":
-        return f"{name}  - {account.server_label}"
-    return f"{name}  <{account.email_address}>  - {account.server_label}"
+    """An account in the For list of a calendar server, with what Settings > Accounts shows on its two lines: its name and address, and what it
+    holds ("Rob <rob@example.com>  - Mail (IMAP)", D-346)."""
+    return f"{account.list_name}  - {account.holds}"
 
 
 def kind_of(account: AccountSummary) -> AccountKind:

@@ -1,7 +1,7 @@
 import threading
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from chrono_mail.config import AccountSettings, AppConfig, ServerRole, new_account_id
 from chrono_mail.core import AccountKind, ChronoMailError
@@ -17,9 +17,10 @@ from chrono_mail.protocols.dav import DavClient
 from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, SignInWaiter
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_google.py 4.4.597"
+__version__ = "commands_google.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: an added account gets no Shown as name, but the person's name on Google, kept apart (google_name); signing in again renews it (D-346)
 # v4.4.597: each part checks only its own kind of folder (D-335)
 # v4.4.593: Initial: Google sign-in in the person's browser; it adds Google Calendar and Google Contacts as two accounts of calendars and
 #           contacts, or signs an existing pair in again (D-335)
@@ -80,15 +81,15 @@ def google_sign_in(engine: Engine, parameters: SignInParameters) -> SignInResult
         if not address:
             raise UsageError("Google did not say which account signed in")
         if again is not None:
-            return _sign_in_again(engine, again, address, signed.refresh_token, waiter)
-        return _add(engine, address, signed.refresh_token, signed.access_token, waiter)
+            return _sign_in_again(engine, again, address, signed.refresh_token, signed.name, waiter)
+        return _add(engine, address, signed.refresh_token, signed.access_token, signed.name, waiter)
     finally:
         waiter.close()
         with _WAITING_LOCK:
             _waiting.pop(ticket, None)
 
 
-def _sign_in_again(engine: Engine, again: AccountSettings, address: str, refresh_token: str, waiter: SignInWaiter) -> SignInResult:
+def _sign_in_again(engine: Engine, again: AccountSettings, address: str, refresh_token: str, name: str, waiter: SignInWaiter) -> SignInResult:
     known = again.account.incoming.username.lower()
     if address.lower() != known:
         raise UsageError(f"You signed in as {address}, but this account belongs to {known}: sign in with {known}")
@@ -97,21 +98,29 @@ def _sign_in_again(engine: Engine, again: AccountSettings, address: str, refresh
     for account_id in renewed:
         engine.passwords.set(account_id, ServerRole.INCOMING, refresh_token)
         forget_access(account_id)
+    if name:  # the person's name on Google, which a sign-in from before the profile permission did not give (D-346)
+        def named(fresh: AppConfig) -> AppConfig:
+            for item in fresh.accounts:
+                if item.account.account_id in renewed:  # an account removed meanwhile is left out
+                    fresh = fresh.with_account(replace(item, google_name=name))
+            return fresh
+
+        engine.change_config(named)
     return SignInResult(address, renewed)
 
 
-def _add(engine: Engine, address: str, refresh_token: str, access_token: str, waiter: SignInWaiter) -> SignInResult:
+def _add(engine: Engine, address: str, refresh_token: str, access_token: str, name: str, waiter: SignInWaiter) -> SignInResult:
     here = {item.account.incoming.host.lower() for item in engine.config().accounts if item.google and item.account.incoming.username.lower() == address.lower()}
-    missing = [(name, start.format(address=urllib.parse.quote(address))) for name, start in PARTS]
-    missing = [(name, url) for name, url in missing if (urllib.parse.urlsplit(url).hostname or "").lower() not in here]  # a part removed comes back
+    missing = [(part, start.format(address=urllib.parse.quote(address))) for part, start in PARTS]
+    missing = [(part, url) for part, url in missing if (urllib.parse.urlsplit(url).hostname or "").lower() not in here]  # a part removed comes back
     if not missing:
         raise UsageError(f"The Google calendars and contacts of {address} are here already. To sign in again: Settings > Accounts, the account, "
                          "Sign in with Google")
     wanted: list[tuple[str, str]] = []
-    for name, url in missing:
+    for part, url in missing:
         with DavClient(url, "", "", bearer=access_token, kinds=google_kinds(url)) as server:
             if server.all_collections():
-                wanted.append((name, url))
+                wanted.append((part, url))
     if not wanted:
         raise UsageError(f"Google was reached, but it offers no calendars or contacts for {address}")
     accounts = engine.config().accounts
@@ -120,11 +129,10 @@ def _add(engine: Engine, address: str, refresh_token: str, access_token: str, wa
     waiter.check()  # stopped while Google was asked: nothing is kept
     _, key_created = ensure_local_folders(engine, True)  # the data key the calendars are kept with exists from here on
     added: list[AccountSettings] = []
-    for name, url in wanted:
+    for _, url in wanted:
         host = urllib.parse.urlsplit(url).hostname or ""
         server = ServerSettings(host, 443, ConnectionSecurity.TLS, address)
-        account_name = f"{name} ({address})"
-        added.append(AccountSettings(Account(new_account_id(), account_name, "", AccountKind.DAV, server, server), dav_url=url, account_name=account_name, google=True))
+        added.append(AccountSettings(Account(new_account_id(), name or address, "", AccountKind.DAV, server, server), dav_url=url, google=True, google_name=name))  # no Shown as name: the person chooses one (D-346)
     for settings in added:
         engine.passwords.set(settings.account.account_id, ServerRole.INCOMING, refresh_token)
     try:

@@ -8,6 +8,7 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine import commands_dav
 from chrono_mail.engine.commands_dav import FoundFolder, FoundServer
 from chrono_mail.protocols.tls import fingerprint
+from chrono_mail.ui.accountrows import SECOND_LINE_ROLE
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
 from chrono_mail.ui.settingsdialog import SettingsDialog
@@ -17,9 +18,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.4.605"
+__version__ = "test_ui_dav.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendars-only account in Settings > Accounts: its name, below it what it holds (D-346)
 # v4.4.605: Refresh in the sections is Send and Receive (D-344): no line of its own without a calendar server
 # v4.2.497: Link to: the fields stay greyed after a failed Add, the password always as dots; No mail account brings back what was typed;
 #           a Find answer after Link to was changed is let go (the owner, D-298)
@@ -333,8 +335,8 @@ def test_an_account_of_calendars_only_stays_out_of_everything_about_mail(world: 
         qtbot.addWidget(settings)
         settings.show()
         wait(qtbot, lambda: settings.accounts.count() == 2)
-        texts = [settings.accounts.item(row).text() for row in range(settings.accounts.count())]
-        assert "Family calendar  - 127.0.0.1 (Calendars and contacts)" in texts
+        texts = [(settings.accounts.item(row).text(), settings.accounts.item(row).data(SECOND_LINE_ROLE)) for row in range(settings.accounts.count())]
+        assert ("Family calendar", "Calendars and contacts") in texts
         assert not any("Family calendar" in settings.default_account.itemText(index) for index in range(settings.default_account.count()))
         account = next(item for item in world.call("account.list") if item.account_id == added.account_id)
         edit = AccountEditDialog(world.backend, account)

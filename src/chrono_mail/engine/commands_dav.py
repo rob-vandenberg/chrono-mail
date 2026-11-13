@@ -13,18 +13,20 @@ from chrono_mail.engine.google_access import google_bearer, google_kinds
 from chrono_mail.engine.google_colours import sync_colours
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.newkey import recovery_code_not_stored
-from chrono_mail.engine.pimaccess import open_pim
+from chrono_mail.engine.pimaccess import open_pim, tell_palettes
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command, talks_to_servers
 from chrono_mail.engine.walletlabels import label_account
+from chrono_mail.protocols.google import profile_name
 from chrono_mail.protocols.dav import DavCertificateError, DavClient, DavError, RemoteCollection, canonical_key, folder_key
 from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.4.603"
+__version__ = "commands_dav.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: A Google account reads the person's name on Google at every synchronisation and keeps it when it changed (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.598: A Google Calendar account reads and sends its events' colours after each synchronisation; recoloured and colour_errors (D-337)
 # v4.4.597: Google Calendar keeps only calendars, Google Contacts only address books (D-335)
@@ -210,6 +212,8 @@ def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool 
             )
             keep_looks(engine, account_id, {key: looks.get(key) for key in report.looks}, report.looks)
             _record_auto_schedule(engine, account_id, client)
+            if settings.google and _record_google_name(engine, account_id, client.access):
+                tell_palettes(engine, account_id, store)  # a calendar named by its own address shows the new name at once (D-346)
             colours = sync_colours(engine, settings, store)  # Google's event colours, which its CalDAV does not carry (D-337)
     if report.conflicts:
         engine.report(Change("conflicts_changed", account_id))
@@ -247,6 +251,27 @@ def _record_auto_schedule(engine: Engine, account_id: str, client: DavClient) ->
         engine.change_config(change)
     except ConfigurationError:  # the account was removed meanwhile: nothing to keep
         return
+
+
+def _record_google_name(engine: Engine, account_id: str, access: str) -> bool:
+    """The person's name on Google, read again at every synchronisation and kept with the account when it changed, so a change made at Google
+    shows here (D-346, D-193). A failed question keeps what was kept; an empty answer (a sign-in from before the profile permission) too.
+    True when the name changed."""
+    try:
+        name = profile_name(access)
+    except (ProtocolError, AuthenticationError):
+        return False
+    try:
+        if not name or engine.config().find(account_id).google_name == name:
+            return False
+
+        def change(fresh: AppConfig) -> AppConfig:
+            return fresh.with_account(replace(fresh.find(account_id), google_name=name))
+
+        engine.change_config(change)
+    except ConfigurationError:  # the account was removed meanwhile: nothing to keep
+        return False
+    return True
 
 
 def _sync_or_name(engine: Engine, settings: AccountSettings, receive_only: bool = False) -> DavSyncSummary:

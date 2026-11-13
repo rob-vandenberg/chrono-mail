@@ -16,7 +16,8 @@ from chrono_mail.engine.invitations import InvitationInfo, answering, asks_nothi
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
-from chrono_mail.engine.pimaccess import DEFAULT_COLLECTIONS, account_name, ensure_local_pim, located, open_pim, pim_account_ids
+from chrono_mail.engine.calendarnames import CollectionNamer
+from chrono_mail.engine.pimaccess import DEFAULT_COLLECTIONS, account_name, ensure_local_pim, located, open_pim, pim_account_ids, shown_collection_name
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import IndexedMessage
@@ -32,9 +33,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.558"
+__version__ = "commands_invitations.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.558: From the calendar an answer is refused in a read-only calendar, on a Cancelled event and when given already; an answer on one date of a series declined in Local Folders moves the whole series as one record (D-310)
 # v4.4.557: A Cancelled event takes no answer and no delegate until it is Restored, a newer version of the organizer does (D-310)
 # v4.4.556: An answer from the calendar changes the event right-clicked, says only what the organizer's mail says, and marks that mail (D-310)
@@ -359,7 +361,7 @@ def _series_kept(stored: _Stored | None, home: str) -> None:
 
 
 def _label(engine: Engine, account: str, info: CollectionInfo) -> str:
-    return f"{info.name} ({account_name(engine, account)})"
+    return f"{shown_collection_name(engine, account, info.name)} ({account_name(engine, account)})"
 
 
 def _clashes(engine: Engine, opened: _Opened) -> tuple[tuple[str, ...], tuple[SeriesClash, ...]]:
@@ -403,6 +405,7 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
     stored = _copy_meant(engine, kind, parameters, uid)
     declined = _kept_declined(engine, stored)
     stored = None if declined is not None else stored
+    namer = CollectionNamer(engine)  # the contacts read at most once for the whole choice (D-346)
     for account in pim_account_ids(engine):
         try:
             with open_pim(engine, account) as store:
@@ -411,7 +414,7 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
                     holds = uid != "" and store.index.find_uid(info.collection_id, uid) is not None
                     if holds and declined is not None and declined.info.collection_id == info.collection_id:
                         holds = False  # a declined copy is no appointment: an answer may land here
-                    calendars.append(CalendarChoice(info.collection_id, info.name, account, account_name(engine, account), info.read_only, public, shared, holds))
+                    calendars.append(CalendarChoice(info.collection_id, namer(account, info.name), account, account_name(engine, account), info.read_only, public, shared, holds))
                     if not chosen and account == receiving and is_yours(info) and not public and not holds:
                         chosen = info.collection_id
         except ChronoMailError:

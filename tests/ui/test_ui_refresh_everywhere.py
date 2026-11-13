@@ -7,9 +7,10 @@ from tests.test_sync_dav import event
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_refresh_everywhere.py 4.4.606"
+__version__ = "test_ui_refresh_everywhere.py 4.4.608"
 
 # --- Version history ----------------------------------------------------
+# v4.4.608: a calendars row is named by the account's own name and what it holds; Google's two parts apart (D-346)
 # v4.4.606: a calendars-only account's row is named by its Shown as
 # v4.4.605: Initial tests: each calendar account has its row in the Operations window; a Refresh while one runs is ignored (D-344)
 
@@ -83,6 +84,8 @@ def test_a_calendars_only_account_is_named_by_its_name_in_the_operations_window(
 
     state = world.window.mail_state
     mail = world.call("account.list")[0]
-    calendars = replace(mail, account_id="c" * 32, kind="dav", shown_name="Rob", email_address="")
-    state.set_accounts([mail, calendars])
+    calendars = replace(mail, account_id="c" * 32, kind="dav", shown_name="Rob", own_name="Rob", email_address="", calendar_kind="Calendars and contacts")
+    google = replace(calendars, account_id="d" * 32, shown_name="Rob - Google Contacts", calendar_kind="Google Contacts", google=True)
+    state.set_accounts([mail, calendars, google])
     assert world.window.checking._operation_name(calendars.account_id, "calendars") == "Rob (Calendars and contacts)"  # noqa: SLF001
+    assert world.window.checking._operation_name(google.account_id, "calendars") == "Rob (Google Contacts)"  # noqa: SLF001 - never "Rob - Google Contacts (...)"
