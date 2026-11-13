@@ -3,7 +3,7 @@ from typing import override
 
 from PySide6.QtCore import QObject, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPalette
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.deletekey import DeleteKey
@@ -11,11 +11,13 @@ from chrono_mail.ui.paletteeditor import circle_icon
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagsdialog import LONGEST_NAME
+from chrono_mail.ui.tagname import ask_tag_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagbox.py 4.4.582"
+__version__ = "tagbox.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: A tag is shown as it is everywhere: a Google calendar's tag as "Rood (Esther)" (D-341); New tag… takes no vertical bar
 # v4.4.582: New tag… refuses a name over 100 characters, with why, and asks again with the typed name (the same limit as Settings > Tags)
 # v4.4.581: The box without radio buttons for contacts and tasks (a tag colours neither); TagEditing: Add tag…, New tag… and Remove tag of a
 #           window, the same in every window that has the box (the owner, D-332)
@@ -203,11 +205,12 @@ class TagBox(QScrollArea):
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(wpx(6))
-        label = TagPill(name, colour, row)
-        shown = label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, wpx(LONGEST_LABEL))
-        if shown != name:  # a long name ends in … and shows whole on hover; the box never scrolls sideways
+        text = self._colours.shown(name)  # a Google calendar's tag as "Rood (Esther)", never its identifier (D-341)
+        label = TagPill(text, colour, row)
+        shown = label.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, wpx(LONGEST_LABEL))
+        if shown != text:  # a long name ends in … and shows whole on hover; the box never scrolls sideways
             label.setText(shown)
-            label.setToolTip(name)
+            label.setToolTip(text)
         label.setEnabled(True)  # its colour stays readable while the window is read only
         if not self._colour_choice:
             layout.addWidget(label)
@@ -219,7 +222,7 @@ class TagBox(QScrollArea):
         radio.setChecked(name == self._colour_tag)
         radio.setEnabled(self._enabled)
         radio.setToolTip(COLOUR_TIP if name == self._colour_tag else CHOOSE_TIP)
-        radio.setAccessibleName(f"{name} gives the colour")
+        radio.setAccessibleName(f"{text} gives the colour")
         size, edge = wpx(12), max(1, wpx(2))
         radio.setStyleSheet(
             f"QRadioButton::indicator {{ width: {size}px; height: {size}px; border-radius: {size // 2 + edge}px; border: {edge}px solid {theme().task_grey}; }}"
@@ -286,7 +289,7 @@ class TagEditing(QObject):
     def _new_tag(self) -> None:
         typed = ""
         while True:
-            typed, ok = QInputDialog.getText(self._window, "New tag", "Name of the new tag:", QLineEdit.EchoMode.Normal, typed)
+            typed, ok = ask_tag_name(self._window, "New tag", "Name of the new tag:", typed)
             name = " ".join(typed.split())
             if not ok or not name:
                 return

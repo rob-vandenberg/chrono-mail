@@ -2,7 +2,7 @@ from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import Change, MessageRow
@@ -16,11 +16,13 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
+from chrono_mail.ui.tagname import ask_tag_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 4.4.581"
+__version__ = "mailtags.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: New tag… takes no vertical bar: a typed one is refused with a calm line, a pasted one left out (D-341)
 # v4.4.581: only the answer to the latest tag.list counts (an older one may come after it); the tags are asked again after every fact that changes how many mails carry a tag, once per round of facts: the Tags of the
 #           folder list show their numbers (the owner, D-327)
 # v4.2.394: a held tag shortcut stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
@@ -209,6 +211,6 @@ class MailTags(QObject):
             self._backend.ask(MESSAGE_TAG, parameters, done, failed, owner=self)
 
     def _new_tag(self) -> None:
-        name, ok = QInputDialog.getText(self._parent, "New tag", "Name of the new tag (the selected messages get it):")
+        name, ok = ask_tag_name(self._parent, "New tag", "Name of the new tag (the selected messages get it):")
         if ok and " ".join(name.split()):
             self.toggle_tag(" ".join(name.split()), True)

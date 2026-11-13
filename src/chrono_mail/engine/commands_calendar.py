@@ -1,4 +1,4 @@
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, tzinfo
 from email.utils import parseaddr
@@ -7,7 +7,9 @@ from typing import Literal
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
-from chrono_mail.engine.google_colours import google_colour, google_colour_off, google_name, shown_colours
+from chrono_mail.core.tagnames import is_calendar_tag, tag_parts
+from chrono_mail.engine.google_colours import (calendar_has, calendar_id, google_colour, google_colour_choose, google_colour_off, google_colour_own_tag_leads, google_leads,
+                                                google_name, shown_colours)
 from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
@@ -21,9 +23,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.600"
+__version__ = "commands_calendar.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: A Google colour is a tag of its own calendar (name|calendar id); a calendar tag given an appointment goes to Google, never into the event (D-341)
 # v4.4.600: The colour Google gives an appointment is its tag, in its window too; taking that tag off takes the colour off Google (D-339)
 # v4.4.599: A Google colour the person named shows as a tag on its events (D-338)
 # v4.4.598: An event of a Google calendar without a colour of its own shows Google's colour (D-337)
@@ -321,7 +324,10 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                         continue
                     other = (google_colour(google.colours, item.collection, e.uid, e.recurrence_id) or css_colour(e.css_colour)) if not e.colour_id else ""
                     label = google_name(google, item.collection, e.uid, e.recurrence_id)  # the colour Google gives it, a tag of its own (D-339)
-                    tags = e.categories if e.categories or not label else (label,)  # an appointment with tags of its own says it all (D-329, D-339)
+                    if label and google_leads(google, item.collection, e.uid, e.recurrence_id):
+                        tags = (label, *e.categories)  # its calendar tag was made its colour tag here: it leads (D-341)
+                    else:
+                        tags = e.categories if e.categories or not label else (label,)  # an appointment with tags of its own says it all (D-329, D-339)
                     if google_filter and parameters.tag.casefold() not in {each.casefold() for each in tags}:
                         continue  # the tag asked for is the name of a Google colour: only the events that carry it
                     found.append((key, OccurrenceInfo(
@@ -360,9 +366,12 @@ def event_show(engine: Engine, parameters: ItemParameters) -> EventInfo:
     with located(engine, parameters.item, CollectionKind.EVENTS) as found:
         series = _series(found.store.get(found.item.collection, parameters.item))
         info = replace(_info(parameters.item, found.account, found.item.collection, series), yours=_organizes(engine, series.master))
+        shown = shown_colours(engine, engine.config().find(found.account))
+        google = google_name(shown, found.item.collection, series.master.uid, None)
+        if google and google_leads(shown, found.item.collection, series.master.uid, None):
+            return replace(info, tags=(google, *info.tags), google_tag=google)  # its calendar tag leads its own tags (D-341)
         if info.tags:
             return info
-        google = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, None)
         return replace(info, tags=(google,), google_tag=google) if google else info  # the colour Google gives it is its tag (D-339)
 
 
@@ -608,6 +617,48 @@ def _with_organizer(event: Event, settings: AccountSettings | None) -> Event:
     return replace(event, organizer=organizer_from(settings)) if event.organizer is None and settings is not None else event
 
 
+AfterSave = Callable[[str], None]  # what follows a save the server took: given the item's id
+
+
+def _calendar_tags_apart(engine: Engine, account: str, collection: str, categories: tuple[str, ...], uid: str, recurrence_id: Moment | None,
+                         current: str, dropped: bool, had: tuple[str, ...] = ()) -> tuple[tuple[str, ...], AfterSave | None]:
+    """The tags given to an appointment, its own ones apart from the tags of its Google calendar (D-341): only the own ones are written into the
+    event, and what Google gets follows once the save is taken (a refused save changes nothing there). A calendar tag given first is its colour
+    tag and goes to Google; a calendar tag taken off takes the colour off Google, or the first own tag colours it there again. current: the
+    calendar tag it carries now; dropped: whether the person took that one off; had: the tags written in it before (a tag with a bar that was
+    already there is its own and stays as it is)."""
+    kept = {tag.casefold() for tag in had}
+    given = [tag for tag in categories if is_calendar_tag(tag) and tag.casefold() not in kept]
+    own = tuple(tag for tag in categories if tag not in given)
+    if given:
+        owner = calendar_id(engine, account, collection)
+        if not owner or any(tag_parts(tag)[1] != owner for tag in given):
+            raise UsageError("A tag of a Google calendar is given only to an appointment of that calendar")
+    if categories and categories[0] in given:
+        if not calendar_has(engine, account, collection, categories[0]):
+            raise UsageError("Google Calendar no longer has this colour; press Refresh to see its colours now")
+        chosen, first = categories[0], own[0] if own else ""
+        unchanged = chosen.casefold() == current.casefold()  # the tag it carries already: Google gets nothing (a date keeps following its series)
+        if unchanged and not own:
+            return own, None
+
+        def choose(_item: str) -> None:
+            google_colour_choose(engine, account, collection, uid, recurrence_id, chosen, first, send=not unchanged)  # checked above; gone meanwhile: Google keeps its colour
+
+        return own, choose
+    if current and dropped and not own:
+        return own, lambda _item: google_colour_off(engine, account, collection, uid, recurrence_id)
+    if current and own:
+        return own, lambda _item: google_colour_own_tag_leads(engine, account, collection, uid, recurrence_id)  # an own tag is its colour tag now (nothing when it already was)
+    return own, None
+
+
+def _given_first(categories: tuple[str, ...], added: tuple[str, ...]) -> tuple[str, ...]:
+    """A calendar tag added to an appointment is its colour tag: it goes first (D-341)."""
+    chosen = [tag for tag in categories if is_calendar_tag(tag) and tag.casefold() in {name.casefold() for name in added}]
+    return (*chosen, *(tag for tag in categories if tag not in chosen)) if chosen else categories
+
+
 def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
     if parameters.summary is None or parameters.start is None:
         raise UsageError("An event needs a summary and a start")
@@ -619,13 +670,17 @@ def event_add(engine: Engine, parameters: AddParameters) -> EventInfo:
             if parameters.colour is not None:
                 event = _with_colour(event, palette_for(engine.config().find(account), info), parameters.colour.strip())
             event = _addressed(engine, account, event)
+            then: AfterSave | None = None
+            if any(is_calendar_tag(tag) for tag in event.categories):
+                own, then = _calendar_tags_apart(engine, account, info.collection_id, event.categories, event.uid, None, "", False)
+                event = replace(event, categories=own)
             you = organizing_account(engine, account) if _organizes(engine, event) else None
             series = EventSeries(_with_organizer(event, you))
             text = events_to_text(series)
             mails = who_mails(engine, (account, info), account, you.account.email_address.strip().lower(), answers=False) if you is not None else None
             mails = quiet(mails) if mails is not None and not parameters.tell else mails
             with item_writer(engine, account, store) as writer:
-                item = writer.put(info, copy_for(text, mails) if mails is not None else text)
+                item = writer.put(info, copy_for(text, mails) if mails is not None else text, then=then)
             draft = MeetingDraft()
             if you is not None and mails is not None and mails.chrono:
                 draft = meeting_mail(engine, you, text, event.summary, "REQUEST", "Invitation", f"You are invited to {event.summary or 'a meeting'}.\n")
@@ -708,6 +763,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
             series = _series(original)
             before = series
             moment: Moment | None = None
+            then: AfterSave | None = None  # what Google gets once the save is taken (D-341)
             if parameters.status == "cancelled":
                 raise UsageError("Cancelled is set with event.cancel, which tells the attendees the right thing")
             if parameters.occurrence:
@@ -717,6 +773,11 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if parameters.rrule:
                     raise UsageError("One occurrence cannot have its own rule")
                 changed = _addressed(engine, found.account, _apply(_clear(base, parameters.clear), parameters, creating=False))
+                current = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, moment)
+                if parameters.tag or "tag" in parameters.clear:  # only a change of its tags says anything about its calendar tag
+                    dropped = "tag" in parameters.clear or (bool(parameters.tag) and current.casefold() not in {tag.casefold() for tag in changed.categories})
+                    own, then = _calendar_tags_apart(engine, found.account, found.item.collection, changed.categories, series.master.uid, moment, current, dropped, base.categories)
+                    changed = replace(changed, categories=own)
                 if parameters.colour is not None:
                     changed = _with_colour(changed, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 known = any(o.recurrence_id == moment for o in series.overrides)  # in its own place: the order says which one stands for
@@ -728,22 +789,19 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 _not_cancelled(series, None)
                 master = _addressed(engine, found.account, _apply(_clear(series.master, parameters.clear), parameters, creating=False))
                 if parameters.add_tag or parameters.remove_tag:
-                    master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
-                google = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, None)
-                theirs = google.casefold() in {tag.casefold() for tag in series.master.categories}  # a tag of that name the person gave it themselves stays theirs
-                if google and not theirs:  # the colour Google gives it is a tag of Google's, never written into the event: taking it off takes the colour off there
-                    kept = tuple(tag for tag in master.categories if tag.casefold() != google.casefold())
-                    taken_off = "tag" in parameters.clear or google.casefold() in {name.casefold() for name in parameters.remove_tag}
-                    if kept != master.categories:
-                        master = replace(master, categories=kept)
-                    elif taken_off and not kept:
-                        google_colour_off(engine, found.account, found.item.collection, series.master.uid)
+                    master = replace(master, categories=_given_first(changed_tags(master.categories, parameters.add_tag, parameters.remove_tag), parameters.add_tag))
+                current = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, None)
+                if parameters.tag or parameters.add_tag or parameters.remove_tag or "tag" in parameters.clear:  # Google's colour is a tag of its calendar, never written into the event (D-339, D-341)
+                    given = {tag.casefold() for tag in master.categories}
+                    dropped = "tag" in parameters.clear or current.casefold() in {name.casefold() for name in parameters.remove_tag} or (bool(parameters.tag) and current.casefold() not in given)
+                    own, then = _calendar_tags_apart(engine, found.account, found.item.collection, master.categories, series.master.uid, None, current, dropped, series.master.categories)
+                    master = replace(master, categories=own)
                 if parameters.colour is not None:
                     master = _with_colour(master, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 series = _following_the_start(series, master)
             if not _organizes(engine, series.master) and not _organizes(engine, before.master):  # (the last attendee taken off still hears of it)
                 with item_writer(engine, found.account, found.store) as writer:
-                    writer.put(found.collection, events_to_text(series, original), parameters.item)
+                    writer.put(found.collection, events_to_text(series, original), parameters.item, then=then)
                 return _info(parameters.item, found.account, found.item.collection, series)
             you = organizing_account(engine, found.account)
             series = replace(series, master=_with_organizer(series.master, you))
@@ -756,7 +814,7 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
             mails = who_mails(engine, (found.account, found.collection), found.account, address, answers=False)
             mails = mails if parameters.tell else quiet(mails)
             with item_writer(engine, found.account, found.store) as writer:
-                writer.put(found.collection, copy_for(text, mails), parameters.item)
+                writer.put(found.collection, copy_for(text, mails), parameters.item, then=then)
             draft = MeetingDraft()
             dates = (moment,) if moment is not None else ()
             if you is not None and mails.chrono:

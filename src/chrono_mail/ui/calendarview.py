@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.core.tagnames import is_calendar_tag
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import Change
 from chrono_mail.pim.times import local_zone
@@ -54,9 +55,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.584"
+__version__ = "calendarview.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: Each appointment's tags as they are shown (a Google calendar's as "Rood (Esther)"), drawn again when a calendar is renamed (D-341)
 # v4.4.584: The Tags block without "All events": a click turns a tag filter on and off (D-334)
 # v4.4.577: A separator to drag between the calendars and the Tags list, its place remembered for this section (D-330)
 # v4.4.576: A double click, Enter, Edit… (first in every appointment's menu) and the toolbar's Edit open an appointment ready to change; one of a read-only calendar only to read (the owner, D-318)
@@ -499,10 +501,10 @@ class CalendarPage(PimPage):
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         tags = list(result)
-        before = [(tag.name, tag.colour) for tag in self._tags_known]
+        before = [(tag.name, tag.colour, tag.shown) for tag in self._tags_known]
         self.colours.update(tags)
         self._tags_known = tags
-        if [(tag.name, tag.colour) for tag in tags] != before and self.entries:
+        if [(tag.name, tag.colour, tag.shown) for tag in tags] != before and self.entries:  # a renamed Google calendar renames its tags (D-341)
             self._recolour()  # a tag's colour is the colour of the appointments it leads (D-329)
         self.tag_filter.follow([(tag.name, tag.events) for tag in tags if tag.events > 0])
 
@@ -562,7 +564,7 @@ class CalendarPage(PimPage):
                 colour = self.colours.colour(entry.row.tags[0]).name()  # its colour tag: the first of its tags (D-329); a colour not yet made a tag still shows
             else:
                 colour = colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
-            tags = tuple((name, self.colours.colour(name).name()) for name in entry.row.tags)
+            tags = tuple((self.colours.shown(name), self.colours.colour(name).name()) for name in entry.row.tags)  # each as it is shown (D-341)
             coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background, tag_colours=tags))
         return coloured
 
@@ -657,6 +659,8 @@ class CalendarPage(PimPage):
         occurrence = row.occurrence if scope == "occurrence" else ""
 
         def opened(result: EventInfo) -> None:
+            if scope == "occurrence":  # this date's own tags, its own Google colour among them, as the calendar shows it (D-341)
+                result = dataclasses.replace(result, tags=row.tags, google_tag=next((tag for tag in row.tags if is_calendar_tag(tag)), ""))
             self._editor(result, result.collection, occurrence, *(_moments(entry) if scope == "occurrence" else ("", "")))
 
         self._backend.ask(EVENT_SHOW, EventItem(row.item), opened, self._failed, owner=self)

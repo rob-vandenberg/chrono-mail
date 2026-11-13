@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 from chrono_mail.core import CollectionKind, StorageError
+from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.engine.commands_calendar import MOST_REMINDERS, ReminderInfo, _reminder, addressed, reminder_info
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
@@ -14,9 +15,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 4.4.547"
+__version__ = "commands_tasklist.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: A tag given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v4.4.547: a task says its reminders whole, as an event does; at most 5 given, by e-mail too, and keep: for one that stays as it is (D-316)
 # v4.4.546: a task says the fixed time of its reminders (reminder_moments); a task that gets a due time counts its reminders in minutes from it again (D-316)
 # v4.2.385: task.import builds the text afresh as before and keeps from the text given only the time zones the task uses (VTIMEZONE), its
@@ -356,6 +358,8 @@ def _apply(task: Task, values: TaskFields) -> Task:
     if task.due is None and result.due is not None:  # this edit gave the task a due time: its reminders in minutes count from it again
         result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None) for item in result.reminders))
     if values.tag:
+        if any(BAR in tag for tag in values.tag):
+            raise UsageError(BAR_REFUSED)  # the bar marks a tag of a Google calendar, for appointments only (D-341)
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.parent is not None:
         result = replace(result, parent=values.parent.strip())
@@ -414,6 +418,8 @@ def task_edit(engine: Engine, parameters: EditParameters) -> TaskInfo:
             if parameters.reminder:
                 task = replace(task, reminders=addressed(engine, found.account, task.reminders))
             if parameters.add_tag or parameters.remove_tag:
+                if any(BAR in tag for tag in parameters.add_tag):
+                    raise UsageError(BAR_REFUSED)
                 task = replace(task, categories=changed_tags(task.categories, parameters.add_tag, parameters.remove_tag))
             writer.put(found.collection, tasks_to_text(task, original), parameters.item)
             return _info(parameters.item, found.account, found.item.collection, task)

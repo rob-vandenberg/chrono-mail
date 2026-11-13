@@ -3,12 +3,14 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from chrono_mail.config import TAG_KINDS, AppConfig, load_tags, save_tags
+from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, chosen_own_name, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
 from chrono_mail.engine.collection_create import create_collection
 from chrono_mail.engine.collection_delete import delete_collection, together
 from chrono_mail.engine.collection_looks import change_look
 from chrono_mail.engine.commands_tags import mail_tag_counts, rename_in_mail
 from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.google_colours import CalendarTag, calendar_tags
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, palette_for, pim_account_ids, tell_palettes, timed_background_for
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.pimstore import PimStore
@@ -17,9 +19,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.4.573"
+__version__ = "commands_pim.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: tag.list also gives the tags of the Google calendars, each with how it is shown ("Rood (Esther)") and its calendar; tag.rename refuses a bar (D-341)
 # v4.4.573: collection.timed-background: Month's coloured timed events, the account's choice, set on its own (D-329, D-297)
 # v4.2.438: collection.set-palette keeps timed_background with the account's colours; a calendar's summary has it (UR-02, D-297)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -275,18 +278,23 @@ class TagInfo:
     mails: int = 0
     shortcut: str = ""  # a key that gives or takes the tag (Ctrl+Alt+1 ...)
     kinds: tuple[str, ...] = TAG_KINDS  # what the tag is offered for: mail, events, contacts, tasks
+    shown: str = ""  # how it is shown on screen: its name, or for a tag of a Google calendar "Rood (Esther)" (D-341)
+    collection: str = ""  # for a tag of a Google calendar: that calendar (it is changed in Google Calendar, never in Settings > Tags); else empty
 
 
 def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
-    """Every tag in use in mail, contacts, events and tasks (and every tag with a colour), with its colour and how many carry it."""
+    """Every tag in use in mail, contacts, events and tasks (and every tag with a colour), with its colour and how many carry it; then the tags
+    of the Google calendars (D-341), each known by its name and its calendar, shown with the calendar's name."""
     try:
         colours = load_tags(engine.directories.tags_file)
     except ConfigurationError as error:
         raise UsageError(str(error)) from None
     counts: dict[str, dict[CollectionKind, int]] = {}
     written: dict[str, str] = {}
+    of_calendars: list[CalendarTag] = []
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
+            of_calendars.extend(calendar_tags(engine, engine.config().find(account), store))
             for kind in CollectionKind:
                 for folded, (shown, count) in store.index.tags(kind).items():
                     written.setdefault(folded, shown)
@@ -296,7 +304,7 @@ def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
     for folded, (shown, _) in mail.items():
         written.setdefault(folded, shown)
     made = [entry.key for entry in colours.entries]  # the tags the person made, in the person's order; then the others by name
-    names = made + sorted((set(counts) | set(mail)) - set(made))
+    names = made + sorted(name for name in (set(counts) | set(mail)) - set(made) if BAR not in name)  # a calendar's tag comes with its calendar, below
 
     def info(name: str) -> TagInfo:
         entry = colours.entry(name)
@@ -304,9 +312,14 @@ def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
             entry.shown if entry is not None else written.get(name, name), colours.colour_of(name), counts.get(name, {}).get(CollectionKind.CONTACTS, 0),
             counts.get(name, {}).get(CollectionKind.EVENTS, 0), counts.get(name, {}).get(CollectionKind.TASKS, 0), mail.get(name, ("", 0))[1],
             entry.shortcut if entry is not None else "", entry.kinds if entry is not None else TAG_KINDS,
+            entry.shown if entry is not None else written.get(name, name),
         )
 
-    return tuple(info(name) for name in names)
+    def of_calendar(tag: CalendarTag) -> TagInfo:
+        events = counts.get(tag.tag.casefold(), {}).get(CollectionKind.EVENTS, 0)
+        return TagInfo(tag.tag, tag.colour, 0, events, 0, 0, "", ("events",), tag.shown, tag.collection)
+
+    return (*(info(name) for name in names), *(of_calendar(tag) for tag in of_calendars))
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +352,8 @@ def tag_rename(engine: Engine, parameters: RenameParameters) -> RenameResult:
     old, new = " ".join(parameters.name.split()), " ".join(parameters.new_name.split())
     if not old or not new:
         raise UsageError("A tag needs a name")
+    if BAR in new or BAR in old:  # a tag of a Google calendar is renamed in Google Calendar only (D-341)
+        raise UsageError(BAR_REFUSED if BAR in new else "A tag of a Google calendar is renamed in Google Calendar")
     from chrono_mail.pimstore import ItemQuery
 
     changed = 0

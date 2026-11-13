@@ -2,6 +2,7 @@ import base64
 from dataclasses import dataclass, field, replace
 
 from chrono_mail.core import CollectionKind, StorageError
+from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.engine.groups import groups_of_book, leave_groups, member_uids, uid_key
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
@@ -12,9 +13,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 4.4.587"
+__version__ = "commands_addressbook.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: A tag given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v4.4.587: contact.list takes several address books (collections), the ones ticked in Contacts (D-334)
 # v3.6.349: each earlier phone, address or other entry is matched once: two with the same value and first kind stay two (RV-191)
 # v3.2.342: an entry given again with the same value and first kind keeps its other kinds, preferred mark and details (RV-20)
@@ -365,6 +367,8 @@ def _apply(contact: Contact, values: FieldParameters) -> Contact:
     if values.address:
         result = replace(result, addresses=_addresses_kept(result.addresses, values.address))
     if values.tag:
+        if any(BAR in tag for tag in values.tag):
+            raise UsageError(BAR_REFUSED)  # the bar marks a tag of a Google calendar, for appointments only (D-341)
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.birthday is not None:
         result = replace(result, birthday=_date(values.birthday, "The birthday"))
@@ -435,6 +439,8 @@ def contact_edit(engine: Engine, parameters: EditParameters) -> ContactInfo:
             contact = _clear(contacts[0], parameters.clear)
             contact = _apply(contact, parameters)
             if parameters.add_tag or parameters.remove_tag:
+                if any(BAR in tag for tag in parameters.add_tag):
+                    raise UsageError(BAR_REFUSED)
                 contact = replace(contact, categories=changed_tags(contact.categories, parameters.add_tag, parameters.remove_tag))
             _check_named(contact)
             writer.put(found.collection, contact_to_text(contact), parameters.item)

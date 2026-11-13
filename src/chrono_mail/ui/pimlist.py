@@ -7,7 +7,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QAbstractItemModel, QAbstractListModel, QEvent, QModelIndex, QPersistentModelIndex, QPoint, QRect, QTimer, Signal, SignalInstance
 from PySide6.QtGui import QHelpEvent, QMouseEvent
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QLineEdit, QListView, QMessageBox, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QLineEdit, QListView, QMessageBox, QStyledItemDelegate, QStyleOptionViewItem, QToolTip, QWidget
 from typing import override
 
 from chrono_mail.core import ChronoMailError
@@ -15,11 +15,13 @@ from chrono_mail.ui.backend import AnyStep, Backend
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_TIPS, SyncMarks
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagname import ask_tag_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimlist.py 1.9.273"
+__version__ = "pimlist.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: New tag… takes no vertical bar: a typed one is refused with a calm line, a pasted one left out (D-341)
 # v1.9.273: R-19: delete and move of an item are the section's typed steps (_delete_step, _move_step) instead of command names
 # v1.1.245: Initial: the shared part of the Tasks and Contacts lists, before written twice (R-07)
 
@@ -209,7 +211,7 @@ class PimListPage(PimPage):
         raise NotImplementedError
 
     def _new_tag(self) -> None:
-        name, ok = QInputDialog.getText(self.content, "New tag", "Name of the tag:")
+        name, ok = ask_tag_name(self.content, "New tag", "Name of the tag:")
         if ok and name.strip():
             self._set_tag(name.strip(), True)
 

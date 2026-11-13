@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import override
 
 from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QGridLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QGridLayout, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton, QTimeEdit, QVBoxLayout, QWidget
 
 from chrono_mail.pim.repeat import choice_of, describe, fitted, repeat_choices, same_rule
 from chrono_mail.pim.times import in_local_zone, local_zone
@@ -28,14 +28,16 @@ from chrono_mail.ui.eventrepeat import RepeatDialog
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.paletteeditor import circle_icon
 from chrono_mail.ui.tagbox import TagBox
+from chrono_mail.ui.tagname import ask_tag_name
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.576"
+__version__ = "eventeditor.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: Add tag… offers the tags of the appointment's Google calendar too, each as "Rood (Esther)"; one added is its colour tag (D-341)
 # v4.4.576: Every appointment opens ready to change; only one of a read-only calendar is just read, with the reason and Close; no Edit button (the owner)
 # v4.4.575: Opens 780 pixels wide in Qt's own units, then at the size it was closed at; a wider window widens the left column and the Tags box alike (D-329)
 # v4.4.574: Add tag… lists the tags not on the appointment and closes at a click; Remove tag beside it removes the selected tag; opens 780 pixels wide on the owner's screen (D-329)
@@ -150,8 +152,10 @@ class EventEditor(QDialog):
         self.remove_tag.clicked.connect(self.tag_box.remove_selected)
         self.tag_box.selection_changed.connect(self._show_remove_tag)
         self._known_tags: list[TagInfo] = [tag for tag in known_tags if "events" in tag.kinds]
+        self._tag_calendars: dict[str, str] = {tag.name.casefold(): tag.collection for tag in known_tags if tag.collection}  # a Google calendar's tags (D-341)
         tag_colours = TagColourBook()
         tag_colours.update(known_tags)
+        self._tag_colours = tag_colours
         self.tag_box.set_colours(tag_colours)
         self.description: QPlainTextEdit = part(form, QPlainTextEdit, "description")
         self.description.setMinimumHeight(wpx(DESCRIPTION_LINES * 18))  # three lines; a taller window gives it the rest (D-329)
@@ -188,6 +192,7 @@ class EventEditor(QDialog):
         self.several_days.setChecked(self.end_date.date() != self.start_date.date())
         self._show_when()
         self.tag_menu.aboutToShow.connect(self._fill_tag_menu)
+        self.calendar.currentIndexChanged.connect(self._calendar_changed)
         self._show_tags()
         self._show_reading()
 
@@ -286,10 +291,11 @@ class EventEditor(QDialog):
     def _fill_tag_menu(self) -> None:
         """The tags the appointment does not have yet, each in its colour, then New tag…; a click adds one and the list closes."""
         self.tag_menu.clear()
-        colours = {tag.name: tag.colour for tag in self._known_tags}
+        here = str(self.calendar.currentData())
+        colours = {tag.name: tag.colour for tag in self._known_tags if not tag.collection or tag.collection == here}  # own tags, and this calendar's (D-341)
         chosen = {name.casefold() for name in self.chosen_tags}
         for name in (name for name in colours if name.casefold() not in chosen):
-            self.tag_menu.addAction(circle_icon(colours[name]), name, lambda tag=name: self.choose_tag(tag, True))
+            self.tag_menu.addAction(circle_icon(colours[name]), self._tag_colours.shown(name), lambda tag=name: self.choose_tag(tag, True))
         if not self.tag_menu.isEmpty():
             self.tag_menu.addSeparator()
         self.tag_menu.addAction("New tag…", self._new_tag)
@@ -301,13 +307,27 @@ class EventEditor(QDialog):
         self.remove_tag.setToolTip("" if usable else "Click a tag in the list first" if not self._reading else "")
 
     def choose_tag(self, name: str, on: bool) -> None:
+        """A tag added (on) or taken away. A tag of the Google calendar is a colour of Google's: an appointment has one, and it is its colour tag
+        (D-341)."""
+        if on and name.casefold() in self._tag_calendars:
+            for other in [tag for tag in self.chosen_tags if tag.casefold() in self._tag_calendars and tag.casefold() != name.casefold()]:
+                self.tag_box.remove(other)
+            self.tag_box.add(name)
+            self.tag_box.choose(name)
+            return
         if on:
             self.tag_box.add(name)
         else:
             self.tag_box.remove(name)
 
+    def _calendar_changed(self) -> None:
+        """Another calendar chosen for a new appointment: a tag of the Google calendar left behind goes from the box (D-341)."""
+        here = str(self.calendar.currentData())
+        for name in [tag for tag in self.chosen_tags if self._tag_calendars.get(tag.casefold(), here) != here]:
+            self.tag_box.remove(name)
+
     def _new_tag(self) -> None:
-        name, ok = QInputDialog.getText(self, "New tag", "Name of the new tag:")
+        name, ok = ask_tag_name(self, "New tag", "Name of the new tag:")
         if ok and " ".join(name.split()):
             self.choose_tag(" ".join(name.split()), True)
 

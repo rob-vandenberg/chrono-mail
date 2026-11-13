@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.core.tagnames import is_calendar_tag
 from chrono_mail.config import TAG_KINDS, TAG_SHORTCUTS
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import NoParameters
@@ -45,11 +46,13 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagname import keep_bar_out
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 4.4.589"
+__version__ = "tagsdialog.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: The tags of the Google calendars are not listed (they are changed in Google Calendar); a name takes no vertical bar (D-341)
 # v4.4.589: The colour is a circle as tall as the tag's name, in place of a square (the owner)
 # v4.4.588: renamed: the renames the engine took at OK, for the Tags blocks to follow (D-334)
 # v4.4.581: The colour first, then the name (the owner). One list of tags without tabs, edited in the list (the owner, D-332): the name in its colour (a click on the selected one or F2 renames it
@@ -93,6 +96,8 @@ class TagRow:
 def rows_from(tags: tuple[TagInfo, ...]) -> list[TagRow]:
     rows: list[TagRow] = []
     for tag in tags:
+        if is_calendar_tag(tag.name):
+            continue  # a tag of a Google calendar is changed in Google Calendar, never here (D-341)
         name, colour = tag.name, tag.colour or NEW_TAG
         shortcut, kinds = tag.shortcut, tuple(tag.kinds)
         carried = tag.mails + tag.contacts + tag.events + tag.tasks
@@ -167,6 +172,7 @@ class NameDelegate(QStyledItemDelegate):
         if isinstance(editor, QLineEdit) and row is not None:
             editor.setText(row.name)
             editor.setMaxLength(LONGEST_NAME)
+            keep_bar_out(editor)  # the bar marks a tag of a Google calendar (D-341)
 
     @override
     def setModelData(self, editor: QWidget, model: QAbstractItemModel, index: QModelIndex | QPersistentModelIndex) -> None:

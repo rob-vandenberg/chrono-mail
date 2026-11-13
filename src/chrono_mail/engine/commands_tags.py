@@ -9,6 +9,7 @@ from typing import Literal
 from chrono_mail.config import TAG_KINDS, load_tags, save_tags
 from chrono_mail.core import ChronoMailError, ConfigurationError, StorageError
 from chrono_mail.core.colours import NEW_TAG
+from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
@@ -19,9 +20,10 @@ from chrono_mail.pim.edit import retag_item
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tags.py 2.2.313"
+__version__ = "commands_tags.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: A tag made or given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v2.2.313: message.tag with undo: the tags each message had are noted, so Undo can put them back (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed tag.create, tag.edit, tag.delete
@@ -44,6 +46,14 @@ def _name(text: str) -> str:
         raise UsageError("A tag needs a name")
     if len(name) > 100:
         raise UsageError("A tag has at most 100 characters")
+    return name
+
+
+def new_name(text: str) -> str:
+    """The name of a tag being made or given: as _name, and never with a vertical bar, which marks a tag of a Google calendar (D-341)."""
+    name = _name(text)
+    if BAR in name:
+        raise UsageError(BAR_REFUSED)
     return name
 
 
@@ -108,7 +118,7 @@ def message_tag(engine: Engine, parameters: MailTagParameters) -> tuple[MessageT
     for message in parameters.messages:
         if len(message) != 32 or any(character not in "0123456789abcdef" for character in message):
             raise UsageError("A message id is 32 lower-case hexadecimal characters")
-    added = tuple(_name(tag) for tag in parameters.add)
+    added = tuple(new_name(tag) for tag in parameters.add)
     removed = {_name(tag).casefold() for tag in parameters.remove}
     if not added and not removed and not parameters.replace:
         raise UsageError("Give tags to add or to take away")
@@ -172,7 +182,7 @@ class CreatedTag:
 
 def tag_create(engine: Engine, parameters: CreateParameters) -> CreatedTag:
     """Make a tag (a name with a colour) before anything carries it. A tag of the same name gets this colour."""
-    name = _name(parameters.name)
+    name = new_name(parameters.name)
     try:
         save_tags(engine.directories.tags_file, load_tags(engine.directories.tags_file).with_colour(name, parameters.colour or DEFAULT_COLOUR))
     except ConfigurationError as error:

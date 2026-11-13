@@ -3,14 +3,16 @@ from collections.abc import Iterable
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 
+from chrono_mail.core.tagnames import tag_name
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.ui.colours import contrast, theme
 from chrono_mail.ui.formatting import avatar_colour
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagchips.py 1.9.275"
+__version__ = "tagchips.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: The book knows how each tag is shown: a tag of a Google calendar as "Rood (Esther)", never its identifier (D-341)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.172: The text colours of tag labels from the theme (D-158)
 # v0.0.62: Initial tag colours and the small coloured labels that show tags
@@ -24,10 +26,18 @@ class TagColourBook:
 
     def __init__(self) -> None:
         self._chosen: dict[str, str] = {}
+        self._shown: dict[str, str] = {}
 
     def update(self, tags: Iterable[TagInfo]) -> None:
         """Take the answer of tag.list."""
-        self._chosen = {tag.name.casefold(): tag.colour for tag in tags if tag.colour}
+        listed = list(tags)
+        self._chosen = {tag.name.casefold(): tag.colour for tag in listed if tag.colour}
+        self._shown = {tag.name.casefold(): tag.shown for tag in listed if tag.shown}
+
+    def shown(self, name: str) -> str:
+        """How a tag is shown on screen: its name, or for a tag of a Google calendar its name and the calendar's in brackets (D-341). A tag the
+        list does not know yet shows its name alone: the part after the bar is never shown."""
+        return self._shown.get(name.casefold()) or tag_name(name)
 
     def colour(self, name: str) -> QColor:
         chosen = self._chosen.get(name.casefold())
@@ -45,7 +55,7 @@ class TagColourBook:
         for tag in tags:
             background = self.colour(tag)
             parts.append(
-                f"<span style='background-color:{background.name()}; color:{self.text_colour(background).name()};'>&nbsp;{_escape(tag)}&nbsp;</span>"
+                f"<span style='background-color:{background.name()}; color:{self.text_colour(background).name()};'>&nbsp;{_escape(self.shown(tag))}&nbsp;</span>"
             )
         return "&nbsp;".join(parts)
 
@@ -67,7 +77,8 @@ def paint_chips(painter: QPainter, area: QRect, tags: Iterable[str], book: TagCo
     height = metrics.height() + 4
     top = area.top() + (area.height() - height) // 2
     for tag in reversed(list(tags)):
-        width = metrics.horizontalAdvance(tag) + 2 * CHIP_PADDING
+        text = book.shown(tag)
+        width = metrics.horizontalAdvance(text) + 2 * CHIP_PADDING
         if taken + width > area.width():
             break
         left = right - width + 1
@@ -77,7 +88,7 @@ def paint_chips(painter: QPainter, area: QRect, tags: Iterable[str], book: TagCo
         painter.setBrush(background)
         painter.drawRoundedRect(box, height / 2, height / 2)
         painter.setPen(book.text_colour(background))
-        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, tag)
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
         right = left - CHIP_GAP - 1
         taken += width + CHIP_GAP
     painter.restore()

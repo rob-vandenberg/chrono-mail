@@ -2,7 +2,7 @@
 here when the server took it; offline it is done here and sent at the next synchronisation; a lasting "no" of the server changes nothing and is
 told. A collection of this computer only is the truth itself: written here at once."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 
 from chrono_mail.core import CollectionInfo
@@ -18,9 +18,10 @@ from chrono_mail.sync.davitems import CONFLICT, DONE, WAITING, ItemGateway, Outc
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 4.4.598"
+__version__ = "pim_server.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: put takes what follows a save the server took (a Google calendar tag chosen for the event), so a refused save changes nothing on Google (D-341)
 # v4.4.598: An event the server of a Google calendar took gets its colour tag sent to Google right after it (D-337)
 # v4.4.555: put_organizer_last: a copy saved without its organizer first, so a server that mails whatever it is told stays silent; put: mailed (D-310)
 # v4.4.515: a delete can say what the server's copy needs first; restore: the way back after a refused delete, refused as well: a sync conflict, told calmly (D-310)
@@ -61,13 +62,22 @@ class ItemWriter:
             self.conflicts += 1
         return outcome.item
 
-    def put(self, info: CollectionInfo, text: str, item: str | None = None, mailed: bool = False) -> str:
-        """Save an item (new when item is None); returns its id here. A copy that waits to go silently goes on doing so, unless mailed: the server is to mail this write (D-310)."""
+    def put(self, info: CollectionInfo, text: str, item: str | None = None, mailed: bool = False, then: Callable[[str], None] | None = None) -> str:
+        """Save an item (new when item is None); returns its id here. A copy that waits to go silently goes on doing so, unless mailed: the server is to mail this write (D-310).
+        then: what follows the save once the server took it (or it waits here to go, offline), before its colour goes to Google: a refused save
+        does not reach it (D-341)."""
         gateway = self._server(info)
         if gateway is None:
-            return self.store.put(info.collection_id, text, item)
+            saved = self.store.put(info.collection_id, text, item)
+            if then is not None:
+                then(saved)
+            return saved
         if item is not None and not mailed and gateway.organizer_waits(info, item):
-            return self.put_organizer_last(info, text, item)
+            conflicts = self.conflicts
+            saved = self.put_organizer_last(info, text, item)
+            if then is not None and self.conflicts == conflicts:
+                then(saved)  # its colour goes at the next synchronisation; a sync conflict waits for the person
+            return saved
         try:
             outcome = gateway.save(info, text, item)
         except ServerRefused as error:
@@ -75,6 +85,8 @@ class ItemWriter:
         if mailed:
             gateway.organizer_now(info, outcome.item)
         saved = self._count(outcome)
+        if then is not None and outcome.status in (DONE, WAITING):
+            then(saved)  # a save that became a sync conflict waits for the person: Google gets nothing until it is settled
         self._colour(info, outcome)
         return saved
 

@@ -60,4 +60,5 @@ See also: [[sync-conflicts]]
 - [[D-337]] Google event colours through Google's Calendar API
 - [[D-338]] The colours a person makes in Google Calendar are tags here
 - [[D-339]] Every colour of a Google calendar is a tag here
-- [[D-340]] What is in Google counts: its colour wins on a tag of its name
+- [[D-340]] Two Google colours of one name are one tag of one colour
+- [[D-341]] A Google colour is a tag of its own calendar

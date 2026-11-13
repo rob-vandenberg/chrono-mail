@@ -12,6 +12,7 @@ from PySide6.QtGui import QCloseEvent, QFont, QMoveEvent, QResizeEvent
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QLabel, QLineEdit, QListView, QMainWindow, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.core.tagnames import tag_name
 from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_addressbook import CONTACT_SHOW, ContactInfo
@@ -38,9 +39,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagoverview.py 4.4.578"
+__version__ = "tagoverview.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: The title shows the tag as it is shown everywhere: a Google calendar's tag as "Rood (Esther)" (D-341)
 # v4.4.578: The size and place are kept at every move or resize, so quitting with the window open keeps them (the owner, D-328)
 # v4.4.572: Initial Tag overview: everything with one tag in one list of four foldable groups, a reading pane, a search field; it follows every change (D-328)
 
@@ -249,7 +251,7 @@ class TagOverviewWindow(QMainWindow):
         self.setCentralWidget(host)
         self.splitter = PaneSplitter(Qt.Orientation.Horizontal)
         form = forms.fill(host, "tag_overview", {"panes": lambda parent: self.splitter})  # D-276
-        self.setWindowTitle(f"Everything tagged {tag}")
+        self.setWindowTitle(f"Everything tagged {tag_name(tag)}")  # with its calendar's name once the tags are known (D-341)
         self.search: QLineEdit = forms.part(form, QLineEdit, "search")
         self.note: QLabel = forms.part(form, QLabel, "note")
         self.note.hide()
@@ -411,6 +413,7 @@ class TagOverviewWindow(QMainWindow):
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
         self.colours.update(list(result))
+        self.setWindowTitle(f"Everything tagged {self.colours.shown(self.tag)}")  # a Google calendar's tag as "Rood (Esther)" (D-341)
 
     def _after_follow(self) -> None:
         """The item shown on the right went: the right side says so."""

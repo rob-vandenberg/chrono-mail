@@ -11,9 +11,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagfilter.py 4.4.591"
+__version__ = "tagfilter.py 4.4.602"
 
 # --- Version history ----------------------------------------------------
+# v4.4.602: Each line and the heading show the tag as it is shown everywhere: a Google calendar's tag as "Rood (Esther)" (D-341)
 # v4.4.591: The active line keeps its number, the check mark right of it (the owner)
 # v4.4.588: follow_renames: the filter on a tag renamed in Settings > Tags stays on under the new name (D-334)
 # v4.4.585: show_quietly: a filter set elsewhere (Mail's Filter > Tagged with) shown in the block, its line in view (D-334)
@@ -191,11 +192,11 @@ class TagFilter(QWidget):
                     item = self.list.takeItem(elsewhere)
                     self.list.insertItem(number, item)
                 else:
-                    item = QListWidgetItem(name)
+                    item = QListWidgetItem(self._colours.shown(name))
                     item.setData(TAG_ROLE, name)
                     self.list.insertItem(number, item)
-            if item.text() != name:
-                item.setText(name)
+            if item.text() != self._colours.shown(name) or item.data(TAG_ROLE) != name:  # shown by its name, a calendar's tag with the calendar (D-341)
+                item.setText(self._colours.shown(name))
                 item.setData(TAG_ROLE, name)
             if item.data(COUNT_ROLE) != count:
                 item.setData(COUNT_ROLE, count)
@@ -220,7 +221,7 @@ class TagFilter(QWidget):
             if bool(item.data(ACTIVE_ROLE)) != on:
                 item.setData(ACTIVE_ROLE, on)
             item.setToolTip(ACTIVE_HINT if on else "")
-        self.title.setText(f"Tags: {self._active}" if self._active else "Tags")
+        self.title.setText(f"Tags: {self._colours.shown(self._active)}" if self._active else "Tags")
 
     def _toggle(self, item: QListWidgetItem) -> None:
         name = str(item.data(TAG_ROLE) or "")
