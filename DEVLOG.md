@@ -4386,3 +4386,9 @@ Review: four rounds of fresh Sonnet reviewers. Round 1: an automatic check with 
 Tests: `tests/ui/test_ui_refresh_everywhere.py` (4, new); `tests/ui/test_ui_dav.py` and `tests/ui/test_ui_send_receive_tick.py` take the new rule (the test of the calendar-only "accounts left out" line is replaced); 651 related window tests pass, the 7 that fail fail the same on 4.4.604 (test_ui_parts 2, test_ui_sections 2, test_ui_toolbar 2, test_ui_theme 1); isolation proof passes; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
 Not tried: on screen; on Windows. 4.4.604 was not pushed on its own (the push was refused by the app's permission check): it goes with this one.
 
+## 2026-11-13 4.4.606 A calendars-only account's row is named by its name
+
+What landed: the Operations window named the owner's Google Calendar account by its 32-character id: `MailState.account_name` looked only among the mail accounts. It now also knows the calendars-only accounts, so the row reads "Rob (Calendars and contacts)".
+Review: one Sonnet reviewer, nothing real; no other caller shows anything wrong.
+Tests: `tests/ui/test_ui_refresh_everywhere.py` (1 new, failing on 4.4.605); 121 related window tests pass; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
+

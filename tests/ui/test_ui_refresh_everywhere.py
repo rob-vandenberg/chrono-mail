@@ -7,9 +7,10 @@ from tests.test_sync_dav import event
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_refresh_everywhere.py 4.4.605"
+__version__ = "test_ui_refresh_everywhere.py 4.4.606"
 
 # --- Version history ----------------------------------------------------
+# v4.4.606: a calendars-only account's row is named by its Shown as
 # v4.4.605: Initial tests: each calendar account has its row in the Operations window; a Refresh while one runs is ignored (D-344)
 
 
@@ -75,3 +76,13 @@ def test_an_automatic_check_with_nothing_to_do_opens_no_window(world: World, qtb
     checking = world.window.checking
     checking.check_accounts(set())  # the timer, with no account to check
     assert not checking.operations.isVisible()
+
+
+def test_a_calendars_only_account_is_named_by_its_name_in_the_operations_window(world: World, qtbot: QtBot) -> None:
+    from dataclasses import replace
+
+    state = world.window.mail_state
+    mail = world.call("account.list")[0]
+    calendars = replace(mail, account_id="c" * 32, kind="dav", shown_name="Rob", email_address="")
+    state.set_accounts([mail, calendars])
+    assert world.window.checking._operation_name(calendars.account_id, "calendars") == "Rob (Calendars and contacts)"  # noqa: SLF001

@@ -10,9 +10,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, HERE_ONLY_ROLES, TIMED_ROLES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 4.2.426"
+__version__ = "mailstate.py 4.4.606"
 
 # --- Version history ----------------------------------------------------
+# v4.4.606: account_name knows the calendars-only accounts too: their row in the Operations window shows their name, never their id (D-344)
 # v4.2.426: timed_kind: Favorites > Snoozed, Scheduled and Outbox are timed too (they show and sort by when a message leaves, as the folders)
 # v4.2.414: in a search of several folders a message acts as in its own folder: in_drafts, in_scheduled_view, in_snoozed and the new
 #           in_junk take the message (role_of_message, the owner, D-287)
@@ -75,7 +76,7 @@ class MailState:
 
     def account_name(self, account_id: str) -> str:
         """How the account is named in the status line and the Operations window: its name, else its address, else its id."""
-        account = self.account(account_id)
+        account = self.account(account_id) or next((item for item in self.all_accounts if item.account_id == account_id), None)  # a calendars-only account too (D-344)
         return account.shown_name or account.email_address if account is not None else account_id
 
     def local_id(self) -> str:
