@@ -7,7 +7,7 @@ from typing import Literal
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
-from chrono_mail.engine.google_colours import google_colour, shown_colours
+from chrono_mail.engine.google_colours import google_colour, google_name, shown_colours
 from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
@@ -21,9 +21,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.598"
+__version__ = "commands_calendar.py 4.4.599"
 
 # --- Version history ----------------------------------------------------
+# v4.4.599: A Google colour the person named shows as a tag on its events (D-338)
 # v4.4.598: An event of a Google calendar without a colour of its own shows Google's colour (D-337)
 # v4.4.571: event.list takes a tag: only the events with that tag (D-327)
 # v4.4.558: A row no longer says answerable and whole: the menus go by invited, and an invitation with no organizer you declined counts as invited
@@ -286,14 +287,16 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
             names = {info.collection_id: info for info in store.collections(CollectionKind.EVENTS)}
             settings = engine.config().find(account)
             palettes = {identifier: palette_for(settings, info) for identifier, info in names.items()}
-            google = shown_colours(engine, settings)  # Google's colours of its events, which its CalDAV does not carry (D-337)
+            google = shown_colours(engine, settings)  # Google's colours of its events, which its CalDAV does not carry (D-337), and their names (D-338)
             if parameters.calendar is not None:
                 chosen = (parameters.calendar,) if parameters.calendar in names else ()
             else:
                 chosen = tuple(collection for collection in names if not parameters.calendars or collection in parameters.calendars)
             if not chosen:
                 continue
-            query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, parameters.tag, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
+            google_filter = parameters.tag and any(parameters.tag.casefold() == name.casefold() for calendar in google.names.values() for name in calendar.values())
+            asked = "" if google_filter else parameters.tag  # a tag that is the name of a Google colour is not in the index: those events are kept below (D-338)
+            query = ItemQuery(CollectionKind.EVENTS, chosen, parameters.text, asked, start=int(start.timestamp()), end=int(end.timestamp()), limit=MAXIMUM_EVENTS + 1)
             items = store.index.query(query)
             if len(items) > MAXIMUM_EVENTS:
                 cut, items = True, items[:MAXIMUM_EVENTS]
@@ -314,12 +317,16 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     hidden = _declined(e, yours)
                     if hidden and not parameters.hidden:
                         continue
-                    other = (google_colour(google, item.collection, e.uid, e.recurrence_id) or css_colour(e.css_colour)) if not e.colour_id else ""
+                    other = (google_colour(google.colours, item.collection, e.uid, e.recurrence_id) or css_colour(e.css_colour)) if not e.colour_id else ""
+                    label = google_name(google, item.collection, e.uid, e.recurrence_id)  # the name of Google's colour: a tag of its own
+                    tags = e.categories if not label or label.casefold() in {each.casefold() for each in e.categories} else (*e.categories, label)
+                    if google_filter and parameters.tag.casefold() not in {each.casefold() for each in tags}:
+                        continue  # the tag asked for is the name of a Google colour: only the events that carry it
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats or occurrence.changed else "", e.status,
-                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
+                        e.transparency != "TRANSPARENT", tags, e.colour_id, other, hidden, _invited(e, yours), _your_answer(e, yours), info.read_only,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
     if parameters.limit and len(found) > parameters.limit:

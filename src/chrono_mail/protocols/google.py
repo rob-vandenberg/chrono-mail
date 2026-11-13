@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.4.598"
+__version__ = "google.py 4.4.599"
 
 # --- Version history ----------------------------------------------------
+# v4.4.599: The labels of a Google calendar (the colours a person made and named there): read per calendar, set on an event (D-338)
 # v4.4.598: Google's Calendar API for the colours of events: read a calendar's colours (only the changes after the first time), set one event's colour (D-337)
 # v4.4.593: Initial Google sign-in (each connection to the answer address served on its own, an idle one closed after 10 s) (OAuth with PKCE, the answer on this computer's own address) and its access codes (D-335)
 
@@ -33,6 +34,10 @@ CALENDAR_API: str = "https://www.googleapis.com/calendar/v3"  # Google's Calenda
 MAXIMUM_LIST_BYTES: int = 16 * 1024 * 1024  # one page of a calendar's events (2,500 at most, a few hundred bytes each)
 MAXIMUM_PAGES: int = 400  # a million events at most, read in one go
 PAGE_SIZE: int = 2500
+LABEL_VERSION: str = "1"  # Google answers and takes the labels of a calendar only when a request says this (D-338)
+MAXIMUM_LABELS: int = 500  # a calendar holds 200 of them at Google; more than this is not read
+MAXIMUM_LABEL_ID: int = 200
+MAXIMUM_LABEL_NAME: int = 100  # as a tag's name here (config.tags MAXIMUM_NAME)
 SIGN_IN_AGAIN: str = "Google asks you to sign in again (in Testing mode every 7 days): Settings > Accounts, the Google account, Sign in with Google."
 
 
@@ -216,13 +221,24 @@ class CalendarUnknown(GoogleRefused):
 @dataclass(frozen=True, slots=True)
 class GoogleEvent:
     """What the Calendar API says of one event: its id there, the UID CalDAV knows it by, its colour (Google's number, empty: the calendar's),
-    and, for one changed date of a series, the date it had (UTC, "YYYYMMDDTHHMMSSZ", or "YYYYMMDD" for a whole day)."""
+    and, for one changed date of a series, the date it had (UTC, "YYYYMMDDTHHMMSSZ", or "YYYYMMDD" for a whole day). label_id: the label of the
+    calendar it carries (a colour the person made there, D-338), empty for none."""
 
     event_id: str
     uid: str
     colour_id: str
     cancelled: bool
     original_start: str = ""
+    label_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleLabel:
+    """One label of a Google calendar: a colour the person made there, with a name when they gave it one (D-338)."""
+
+    label_id: str
+    name: str
+    colour: str  # "#rrggbb"
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,8 +269,8 @@ def read_colours(access: str, calendar: str, sync_token: str = "") -> ColourRead
     events: list[GoogleEvent] = []
     page = ""
     for _ in range(MAXIMUM_PAGES):
-        query = {"maxResults": str(PAGE_SIZE), "showDeleted": "true",
-                 "fields": "items(id,iCalUID,colorId,status,recurringEventId,originalStartTime),nextPageToken,nextSyncToken"}
+        query = {"maxResults": str(PAGE_SIZE), "showDeleted": "true", "eventLabelVersion": LABEL_VERSION,  # without it Google answers the old colours only (D-338)
+                 "fields": "items(id,iCalUID,colorId,eventLabelId,status,recurringEventId,originalStartTime),nextPageToken,nextSyncToken"}
         if sync_token:
             query["syncToken"] = sync_token
         if page:
@@ -281,9 +297,44 @@ def read_colours(access: str, calendar: str, sync_token: str = "") -> ColourRead
 
 
 def set_colour(access: str, calendar: str, event_id: str, colour_id: str) -> None:
-    """Give one event Google's colour with this number; empty: the calendar's own colour again. Raises EventGone when it is not on Google,
-    GoogleRefused when Google says no."""
+    """Give one event Google's colour with this number; empty: the calendar's own colour again. Google itself gives the event the label of that
+    colour, or takes its label away with the colour (seen live). Raises EventGone when it is not on Google, GoogleRefused when Google says no."""
     _api(access, "PATCH", f"{_events_url(calendar)}/{urllib.parse.quote(event_id, safe='')}?fields=id", {"colorId": colour_id or None})
+
+
+def set_label(access: str, calendar: str, event_id: str, label_id: str) -> None:
+    """Give one event a label of its calendar (a colour the person made there, D-338); empty: no label and no colour, so the calendar's own colour
+    again. Google reads the label only when the request says so, and then it reads no colour at all (seen live)."""
+    url = f"{_events_url(calendar)}/{urllib.parse.quote(event_id, safe='')}?eventLabelVersion={LABEL_VERSION}&fields=id"
+    _api(access, "PATCH", url, {"colorId": None, "eventLabelId": label_id})
+
+
+def read_labels(access: str, calendar: str) -> tuple[GoogleLabel, ...]:
+    """The labels of a calendar: the colours the person made there, with the names they gave them. Raises CalendarUnknown when the Calendar API
+    does not know the calendar, AuthenticationError when the sign-in ended, ProtocolError when Google cannot be reached."""
+    url = f"{CALENDAR_API}/calendars/{urllib.parse.quote(calendar, safe='')}?eventLabelVersion={LABEL_VERSION}&fields=labelProperties"
+    try:
+        answer = _api(access, "GET", url)
+    except EventGone:
+        raise CalendarUnknown("Google's Calendar API does not know this calendar") from None
+    properties = answer.get("labelProperties")
+    raw = properties.get("eventLabels") if isinstance(properties, dict) else None
+    labels: list[GoogleLabel] = []
+    for each in raw if isinstance(raw, list) else []:
+        if not isinstance(each, dict):
+            continue
+        label_id = str(each.get("id", "") or "")[:MAXIMUM_LABEL_ID]
+        colour = str(each.get("backgroundColor", "") or "").strip().lower()
+        if not label_id or not _is_colour(colour):
+            continue
+        labels.append(GoogleLabel(label_id, " ".join(str(each.get("name", "") or "").split())[:MAXIMUM_LABEL_NAME], colour))
+        if len(labels) >= MAXIMUM_LABELS:
+            break
+    return tuple(labels)
+
+
+def _is_colour(text: str) -> bool:
+    return len(text) == 7 and text[0] == "#" and all(character in "0123456789abcdef" for character in text[1:])
 
 
 def _events_url(calendar: str) -> str:
@@ -304,7 +355,8 @@ def _event_of(raw: dict[str, object]) -> GoogleEvent | None:
         if not original:
             return None  # a changed date whose date cannot be read: left out, never guessed
     colour = str(raw.get("colorId", "") or "")
-    return GoogleEvent(event_id, uid, colour if colour.isdigit() and len(colour) <= 2 else "", False, original)
+    label = str(raw.get("eventLabelId", "") or "")
+    return GoogleEvent(event_id, uid, colour if colour.isdigit() and len(colour) <= 2 else "", False, original, label[:MAXIMUM_LABEL_ID])
 
 
 def utc_key(date_time: str, day: str) -> str:
