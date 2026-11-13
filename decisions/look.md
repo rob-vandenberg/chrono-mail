@@ -33,3 +33,4 @@ See also: [[mail-window]]
 - [[D-323]] The tray menu starts with the name and version
 - [[D-336]] The Add an account window in tabs
 - [[D-342]] One name per meaning in the account windows
+- [[D-345]] Accounts shown alike are told apart by their sign-in name

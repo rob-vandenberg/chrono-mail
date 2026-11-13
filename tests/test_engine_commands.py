@@ -24,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 4.4.504"
+__version__ = "test_engine_commands.py 4.4.607"
 
 # --- Version history ----------------------------------------------------
+# v4.4.607: accounts shown alike are told apart by their sign-in name (D-345)
 # v4.4.504: a part without a name of an unknown type gets no extension, never .bin (D-311)
 # v2.0.281: the index is opened inside its gate (a rebuild replaces it only when no command has it open, D-229)
 # v1.1.243: account.check of an account that exists uses its stored passwords for the ones not typed (R-05)
@@ -745,8 +746,8 @@ def test_the_same_login_on_the_same_server_through_another_protocol_is_another_a
     accounts = call(setup.engine, "account.list")
     assert len(accounts) == 2 and {item.kind for item in accounts} == {"pop3", "imap"} and imap != setup.account_id
     first, second = accounts
-    assert first.label == "me@example.com - 127.0.0.1 (POP3)" and second.label == "me@example.com - 127.0.0.1 (IMAP)"
-    assert first.shown_name == first.label and second.shown_name == second.label  # the same address twice: each is told apart by its server
+    assert first.label == "me@example.com - user (POP3)" and second.label == "me@example.com - user (IMAP)"
+    assert first.shown_name == first.label and second.shown_name == second.label  # the same address twice: each is told apart by its sign-in name and kind (D-345)
     with pytest.raises(ConfigurationError, match="exists already"):
         add_account(setup.engine, setup.pop, setup.smtp, email="x@example.com", incoming_host="127.0.0.1", kind="imap")  # not twice through the same protocol
     other = add_account(setup.engine, setup.pop, setup.smtp, email="other@example.com", incoming_host="127.0.0.1", username="someone")
@@ -762,9 +763,10 @@ def test_the_account_name_is_shown_instead_of_the_address_and_told_apart_by_the_
     assert accounts[setup.account_id].shown_name == "me@example.com"  # the other one now has the address to itself
     call(setup.engine, "account.edit", account=setup.account_id, account_name="kerio TEST")
     accounts = {item.account_id: item for item in call(setup.engine, "account.list")}
-    assert accounts[imap].shown_name == "Kerio test - 127.0.0.1 (IMAP)" and accounts[setup.account_id].label == "kerio TEST - 127.0.0.1 (POP3)"
+    login = setup.engine.config().find(imap).account.incoming.username  # told apart by what each signs in with, never the server (D-345)
+    assert accounts[imap].shown_name == f"Kerio test - {login} (IMAP)" and accounts[setup.account_id].label == f"kerio TEST - {login} (POP3)"
     call(setup.engine, "account.edit", account=setup.account_id, account_name="")
-    assert {item.account_id: item for item in call(setup.engine, "account.list")}[setup.account_id].label == "me@example.com - 127.0.0.1 (POP3)"
+    assert {item.account_id: item for item in call(setup.engine, "account.list")}[setup.account_id].label == "me@example.com - user (POP3)"
     assert setup.engine.config().find(imap).account_name == "Kerio test"  # saved in the settings file
     third = add_account(setup.engine, setup.pop, setup.smtp, email="third@example.com", incoming_host="127.0.0.1", username="third", account_name="Third")
     assert setup.engine.config().find(third).account_name == "Third" and setup.engine.config().find(third).account.display_name != "Third"
@@ -910,3 +912,18 @@ def test_the_key_status_says_why_the_key_could_not_be_had(setup: Setup) -> None:
     setup.engine.keys = InMemoryKeyStore()  # the wallet answers, but it has no key (a reset wallet, a new computer)
     missing = call(setup.engine, "key.status")
     assert not missing.in_credential_store and missing.store_answered and "not found" in missing.problem
+
+
+def test_two_accounts_shown_alike_are_told_apart_by_their_sign_in_name(setup: Setup) -> None:
+    """The owner (D-345): "apidata.googleusercontent.com" means nothing to a person; the address one signs in with does."""
+    other = add_account(setup.engine, setup.pop, setup.smtp, email="rob@example.org", incoming_host="127.0.0.1", username="rob@example.org", account_name="Rob")
+    call(setup.engine, "account.edit", account=setup.account_id, account_name="Rob")
+    accounts = {item.account_id: item for item in call(setup.engine, "account.list")}
+    mine = setup.engine.config().find(setup.account_id).account.incoming.username
+    assert accounts[other].shown_name == "Rob - rob@example.org (POP3)" and accounts[setup.account_id].shown_name == f"Rob - {mine} (POP3)"
+
+
+def test_the_same_address_and_sign_in_name_on_two_servers_are_told_apart_by_the_server(setup: Setup) -> None:
+    second = add_account(setup.engine, setup.pop, setup.smtp, incoming_host="localhost")  # the same address and sign-in name, another server
+    labels = {item.account_id: item.label for item in call(setup.engine, "account.list")}
+    assert labels[setup.account_id] != labels[second] and labels[second] == "me@example.com - localhost (POP3)"

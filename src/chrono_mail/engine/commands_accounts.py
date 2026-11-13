@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.603"
+__version__ = "commands_accounts.py 4.4.607"
 
 # --- Version history ----------------------------------------------------
+# v4.4.607: two accounts shown alike are told apart by their sign-in name, not their server: "Rob - robvandenberg64@gmail.com (Calendars and contacts)" (D-345)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSummary.google (D-335)
 # v4.4.537: account.edit takes none for invitation_answers, as the window sends when its box is unticked (D-310)
@@ -332,25 +333,44 @@ def _own_name(item: AccountSettings) -> str:
 
 
 def account_label(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> str:
-    """How an account is named where it must be told apart from the others: its account name (with server and protocol when another account has the
-    same name), else address - server (protocol)."""
+    """How an account is named where it must be told apart from the others: its Shown as name (told apart when another account has the same
+    name), else its address with its sign-in name and kind, or its server and kind (D-345)."""
     if item.account.kind is AccountKind.LOCAL:
         return item.account.display_name
     if item.account_name:
         return shown_name(item, accounts)
-    return f"{_own_name(item)} - {server_label(item)}"
+    own = _own_name(item)
+    return f"{own} - {_apart(item, [other for other in accounts if other.account.account_id != item.account.account_id and other.account.kind is not AccountKind.LOCAL and _own_name(other).lower() == own.lower()])}"
 
 
 def shown_name(item: AccountSettings, accounts: tuple[AccountSettings, ...]) -> str:
-    """The account name, else the e-mail address; with the server and protocol as well when another account would show the same (D-184)."""
+    """The account name, else the e-mail address; with its sign-in name and kind as well when another account would show the same (D-184, D-345),
+    with the server only when that is the same too."""
     if item.account.kind is AccountKind.LOCAL:
         return item.account.display_name
     own = _own_name(item)
-    shared = any(
-        other.account.account_id != item.account.account_id and other.account.kind is not AccountKind.LOCAL and _own_name(other).lower() == own.lower()
-        for other in accounts
-    )
-    return f"{own} - {server_label(item)}" if shared else own
+    others = [other for other in accounts
+              if other.account.account_id != item.account.account_id and other.account.kind is not AccountKind.LOCAL and _own_name(other).lower() == own.lower()]
+    if not others:
+        return own
+    return f"{own} - {_apart(item, others)}"
+
+
+def _apart(item: AccountSettings, others: list[AccountSettings]) -> str:
+    """What tells an account apart from others shown alike: its sign-in name and kind, which a person knows (the owner, D-345); its server and
+    kind only when the sign-in name is the shown name itself or another of them has the same sign-in name and kind."""
+    own, sign_in = _own_name(item), _sign_in(item)
+    if sign_in and sign_in.lower() != own.lower() and not any(_sign_in(other).lower() == sign_in.lower() and _kind_words(other) == _kind_words(item) for other in others):
+        return f"{sign_in} ({_kind_words(item)})"
+    return server_label(item)
+
+
+def _sign_in(item: AccountSettings) -> str:
+    return item.dav_username or item.account.incoming.username if item.account.kind is AccountKind.DAV else item.account.incoming.username
+
+
+def _kind_words(item: AccountSettings) -> str:
+    return DAV_KIND_WORDS if item.account.kind is AccountKind.DAV else item.account.kind.value.upper()
 
 
 @dataclass(frozen=True, slots=True)

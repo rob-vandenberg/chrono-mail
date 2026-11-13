@@ -32,3 +32,4 @@ See also: [[imap]]
 - [[D-059]] Include in Send and Receive
 - [[D-342]] One name per meaning in the account windows
 - [[D-344]] Refresh refreshes everything, in every section
+- [[D-345]] Accounts shown alike are told apart by their sign-in name

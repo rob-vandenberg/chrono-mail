@@ -4392,3 +4392,9 @@ What landed: the Operations window named the owner's Google Calendar account by 
 Review: one Sonnet reviewer, nothing real; no other caller shows anything wrong.
 Tests: `tests/ui/test_ui_refresh_everywhere.py` (1 new, failing on 4.4.605); 121 related window tests pass; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
 
+## 2026-11-13 4.4.607 Accounts shown alike are told apart by their sign-in name (D-345)
+
+What landed: two accounts shown as "Rob" were told apart by their server ("Rob - apidata.googleusercontent.com (Calendars and contacts)"), which means nothing to a person. Now by their sign-in name and kind ("Rob - robvandenberg64@gmail.com (Calendars and contacts)"); the server only when the sign-in name is the name itself or is shared too (`engine/commands_accounts._apart`, for `shown_name` and `account_label`).
+Review: two Sonnet rounds; round 1 found that an account without a Shown as name had lost its check against an identical label (fixed, with a test); round 2: see the push report.
+Tests: tests/test_engine_commands.py (76; two new, the old server expectations updated); 1209 related tests pass, the 3 that fail fail the same before (test_ui_theme 1, test_ui_parts 2); Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
+
