@@ -59,3 +59,4 @@ See also: [[sync-conflicts]]
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
 - [[D-337]] Google event colours through Google's Calendar API
 - [[D-338]] The colours a person makes in Google Calendar are tags here
+- [[D-339]] Every colour of a Google calendar is a tag here

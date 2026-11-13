@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.4.598"
+__version__ = "colours.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: GOOGLE_COLOUR_NAMES: the name Google gives each of its eleven colours, the name of its tag here (D-339)
 # v4.4.598: GOOGLE_EVENT_COLOURS and google_colour_nearest: Google's event colours by their number, the nearest one to a colour (D-337)
 # v4.4.550: task_grey is also the grey of a cancelled event (D-316)
 # v4.4.534: the four answer buttons of an invitation are gradients, top to bottom: Accept green, Tentative orange, Delegate blue, Decline red (the owner, D-310)
@@ -352,6 +353,9 @@ SUGGESTED_EVENT_COLOURS: tuple[tuple[str, str, str], ...] = (
 
 # Google Calendar's own number of each of its eleven event colours (the Calendar API's colorId), and the colour Google's website shows for it (D-337).
 GOOGLE_EVENT_COLOURS: dict[str, str] = {colour_id[1:]: colour for colour_id, _, colour in SUGGESTED_EVENT_COLOURS}
+
+# The name Google gives each of those eleven colours: the name of its tag here when the person gave the colour no name of their own (D-339).
+GOOGLE_COLOUR_NAMES: dict[str, str] = {colour_id[1:]: name for colour_id, name, _ in SUGGESTED_EVENT_COLOURS}
 
 
 def google_colour_nearest(colour: str) -> str:

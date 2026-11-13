@@ -19,9 +19,10 @@ from tests.test_engine_commands import call
 from tests.test_google_sign_in import CLIENT, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_colours.py 4.4.599"
+__version__ = "test_google_colours.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: Every Google colour is a tag here, named by Google where the person named none; the window shows it and taking it off takes the colour off Google (D-339)
 # v4.4.599: Google's labels: a named one is a tag here with its colour, a tag of that name goes back as that label (D-338)
 # v4.4.598: Initial tests: Google's event colours read at each synchronisation, shown on events without tags, a changed colour tag sent to Google first (D-337)
 
@@ -464,13 +465,13 @@ def test_another_account_never_asks_google(tmp_path: Path, monkeypatch: pytest.M
 def test_a_google_colour_the_person_named_is_a_tag_here_in_that_colour(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
     engine, account, calendars, api = google_world
     api.label("L-red", "#ff0000", "Rood")
-    api.label("L-plain", "#00bb00")  # made in Google, never named: a colour, no name
+    api.label("L-plain", "#00bb00")  # made in Google, never named: its tag takes Google's own name for that colour
     on_both(calendars, api, "u1", "Dentist", label="L-red")
     on_both(calendars, api, "u2", "Lunch", label="L-plain")
     summary = call(engine, "dav.sync", account=account)[0]
     assert summary.recoloured == 2 and summary.colour_errors == ()
     assert shown(engine) == {"Dentist": "#ff0000", "Lunch": "#00bb00"}
-    assert tags_shown(engine) == {"Dentist": ("Rood",), "Lunch": ()}  # only a label with a name is a tag
+    assert tags_shown(engine) == {"Dentist": ("Rood",), "Lunch": ("Basil",)}  # a colour the person never named is a tag under Google's own name
     assert tag_colour(engine, "Rood") == "#ff0000"  # it is in the tag list by itself, in Google's colour
 
 
@@ -542,7 +543,7 @@ def test_a_tag_without_a_label_replaces_the_label_an_event_carries(google_world:
     assert api.patches == [("g-u1", "10")]  # the colour alone
     assert api.events["g-u1"]["eventLabelId"] == "google-10" and api.events["g-u1"]["colorId"] == "10"  # Google's own label of that colour, which has no name
     call(engine, "dav.sync", account=account)
-    assert shown(engine)["Dentist"] == GOOGLE_EVENT_COLOURS["10"] and tags_shown(engine)["Dentist"] == ("Work",)
+    assert shown(engine)["Dentist"] == GOOGLE_EVENT_COLOURS["10"] and tags_shown(engine)["Dentist"] == ("Work",)  # its own tag says it all
 
 
 def test_a_tag_the_person_made_or_coloured_is_never_changed_by_google(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
@@ -646,13 +647,13 @@ def test_a_label_renamed_only_in_capitals_renames_its_tag(google_world: tuple[En
 
 
 def test_the_name_of_a_google_colour_is_never_written_into_the_event(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
-    """The appointment window works on the event's own tags (event.show), so a tag that only comes from Google is never saved into it (D-338)."""
+    """Google's colour is the appointment's tag, but it lives in Google: a save of the appointment never writes it into the event (D-339)."""
     engine, account, calendars, api = google_world
     api.label("L-red", "#ff0000", "Rood")
     on_both(calendars, api, "u1", "Dentist", label="L-red")
     call(engine, "dav.sync", account=account)
     item = item_of(engine, "Dentist")
-    assert tags_shown(engine)["Dentist"] == ("Rood",) and call(engine, "event.show", item=item).tags == ()  # shown, never its own
+    assert tags_shown(engine)["Dentist"] == ("Rood",) and call(engine, "event.show", item=item).google_tag == "Rood"  # Google's tag, not the event's own
     call(engine, "event.edit", item=item, summary="Dentist, later")
     assert "Rood" not in calendars.collections["events"].items["u1.ics"][1]  # a save of the event itself writes no category
     assert api.patches == [] and api.events["g-u1"]["eventLabelId"] == "L-red"  # and Google keeps its label
@@ -667,7 +668,7 @@ def test_an_event_whose_label_google_no_longer_has_falls_back_to_its_colour(goog
     assert shown(engine)["Dentist"] == "#ff0000" and tags_shown(engine)["Dentist"] == ("Rood",)  # the label comes first
     del api.labels["L-red"]
     call(engine, "dav.sync", account=account)
-    assert shown(engine)["Dentist"] == GOOGLE_EVENT_COLOURS["5"] and tags_shown(engine)["Dentist"] == ()
+    assert shown(engine)["Dentist"] == GOOGLE_EVENT_COLOURS["5"] and tags_shown(engine)["Dentist"] == ("Banana",)  # Google's name for that colour
 
 
 def test_a_tag_the_person_deleted_never_comes_back(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
@@ -700,17 +701,6 @@ def test_a_tag_of_the_same_name_as_the_label_is_shown_once(google_world: tuple[E
     assert tags_shown(engine)["Dentist"] == ("rood",)  # the event's own tag, not twice
 
 
-def test_taking_a_google_tag_off_an_event_here_changes_nothing(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
-    """A tag that comes from a Google colour is not the event's own: taking it off here writes nothing and sends nothing (it goes in Google)."""
-    engine, account, calendars, api = google_world
-    api.label("L-red", "#ff0000", "Rood")
-    on_both(calendars, api, "u1", "Dentist", label="L-red")
-    call(engine, "dav.sync", account=account)
-    call(engine, "event.edit", item=item_of(engine, "Dentist"), remove_tag=("Rood",))
-    assert api.patches == [] and api.events["g-u1"]["eventLabelId"] == "L-red"
-    assert tags_shown(engine)["Dentist"] == ("Rood",)  # it is Google's, and Google still has it
-
-
 def test_a_changed_date_with_a_colour_of_its_own_does_not_take_the_series_name(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
     """The name belongs to the series' colour: a date Google colours itself answers for itself, name or none (D-338)."""
     engine, account, calendars, api = google_world
@@ -724,4 +714,48 @@ def test_a_changed_date_with_a_colour_of_its_own_does_not_take_the_series_name(g
     call(engine, "dav.sync", account=account)
     rows = {(row.summary, row.other_colour): row.tags for row in call(engine, "event.list", from_date="2030-11-20", to_date="2030-11-23").events}
     assert rows[("Standup", "#ff0000")] == ("Rood",)
-    assert rows[("Standup, moved", "#00bb00")] == ()  # its own colour, which has no name: never the series' name
+    assert rows[("Standup, moved", "#00bb00")] == ("Basil",)  # its own colour under Google's name, never the series' name
+
+
+def test_the_window_shows_the_colours_tag_and_taking_it_off_takes_the_colour_off_google(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """D-339: the colour Google gives an appointment is its tag, in its window too; taking it off there takes the colour off Google."""
+    engine, account, calendars, api = google_world
+    api.label("L-red", "#ff0000", "Rood")
+    on_both(calendars, api, "u1", "Dentist", label="L-red")
+    call(engine, "dav.sync", account=account)
+    item = item_of(engine, "Dentist")
+    info = call(engine, "event.show", item=item)
+    assert info.tags == ("Rood",) and info.google_tag == "Rood"  # the window shows it, and knows it is Google's
+    call(engine, "event.edit", item=item, clear=("tag",))  # the window sends this when the person empties the tag box
+    assert "Rood" not in calendars.collections["events"].items["u1.ics"][1]  # never written into the appointment
+    call(engine, "dav.sync", account=account)
+    assert api.patches == [("g-u1", "")] and api.events["g-u1"]["eventLabelId"] == ""  # the colour is off on Google
+    assert tags_shown(engine)["Dentist"] == () and shown(engine)["Dentist"] == ""
+
+
+def test_a_tag_the_person_gave_an_event_is_never_stripped_by_its_google_name(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """The person tags an event "Rood" themselves and Google answers with that colour: a later save keeps their tag and Google keeps its colour."""
+    engine, account, calendars, api = google_world
+    api.label("L-red", "#ff0000", "Rood")
+    on_both(calendars, api, "u1", "Dentist")
+    call(engine, "dav.sync", account=account)
+    call(engine, "tag.create", name="Rood", colour="#ff0000")
+    call(engine, "event.edit", item=item_of(engine, "Dentist"), add_tag=("Rood",))
+    assert api.patches == [("g-u1", "L-red")]
+    call(engine, "dav.sync", account=account)
+    call(engine, "event.edit", item=item_of(engine, "Dentist"), summary="Dentist, later")  # any other change
+    assert call(engine, "event.show", item=item_of(engine, "Dentist, later")).tags == ("Rood",)  # their tag stands
+    call(engine, "dav.sync", account=account)
+    assert api.patches == [("g-u1", "L-red")] and api.events["g-u1"]["eventLabelId"] == "L-red"  # and Google keeps its colour
+
+
+def test_a_google_tag_stays_on_an_event_that_is_saved_or_synchronised(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """The tag is kept in the index: a save or a change from the server must not take it away until the next synchronisation (D-339)."""
+    engine, account, calendars, api = google_world
+    api.label("L-red", "#ff0000", "Rood")
+    on_both(calendars, api, "u1", "Dentist", label="L-red")
+    call(engine, "dav.sync", account=account)
+    assert call(engine, "tag.list") and next(tag.events for tag in call(engine, "tag.list") if tag.name == "Rood") == 1
+    call(engine, "event.edit", item=item_of(engine, "Dentist"), summary="Dentist, later")
+    assert next(tag.events for tag in call(engine, "tag.list") if tag.name == "Rood") == 1  # still counted after a save
+    assert tags_shown(engine)["Dentist, later"] == ("Rood",)

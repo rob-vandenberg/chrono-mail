@@ -11,12 +11,13 @@ from chrono_mail.crypto import generate_data_key
 from chrono_mail.pim.contact import Contact, Labeled, contact_to_text
 from chrono_mail.pim.ical import Event, EventSeries, Reminder, Task, complete_task, events_to_text, tasks_to_text
 from chrono_mail.pimstore import ItemQuery, PimIndex, PimStore
-from chrono_mail.pimstore.extract import epoch
+from chrono_mail.pimstore.extract import Extract, epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pimstore.py 0.5.130"
+__version__ = "test_pimstore.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: An index of format 6 is upgraded in place with the two columns for a tag that comes from the server (D-339)
 # v0.5.130: A failed open of the item index closes its connection
 # v0.0.62: The contacts section
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
@@ -340,3 +341,26 @@ def test_a_damaged_item_index_closes_its_connection_before_it_is_reported(tmp_pa
     with pytest.raises(StorageError, match="damaged"):
         PimIndex(path)
     assert recorded == [True]
+
+
+def test_an_index_of_the_format_before_the_server_s_tags_is_upgraded_in_place(tmp_path: Path) -> None:
+    """D-339: format 6 gets the two columns for a tag that comes from the server, empty; nothing else of it changes."""
+    path = tmp_path / "items.sqlite"
+    index = PimIndex(path)
+    index.upsert("one", "cal", CollectionKind.EVENTS, Extract(uid="u1", title="Dentist", tags=("Work",)), 100)
+    index.close()
+    connection = sqlite3.connect(path)
+    for column in ("other_tags", "other_folded"):
+        connection.execute(f"ALTER TABLE items DROP COLUMN {column}")
+    connection.execute("UPDATE meta SET value = '6' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+    index = PimIndex(path)
+    try:
+        item = index.get("one")
+        assert item is not None and item.tags == ("Work",) and item.other_tags == () and item.all_tags == ("Work",)
+        index.keep_other_tags("cal", {"u1": "Rood"})
+        again = index.get("one")
+        assert again is not None and again.other_tags == ()  # it has a tag of its own: that one says it all (D-329)
+    finally:
+        index.close()

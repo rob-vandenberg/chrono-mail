@@ -19,7 +19,7 @@ from pathlib import Path
 
 from chrono_mail.config import AccountSettings, load_tags, save_tags
 from chrono_mail.core import AuthenticationError, ChronoMailError, CollectionInfo, CollectionKind, ProtocolError
-from chrono_mail.core.colours import GOOGLE_EVENT_COLOURS, NEW_TAG, google_colour_nearest
+from chrono_mail.core.colours import GOOGLE_COLOUR_NAMES, GOOGLE_EVENT_COLOURS, NEW_TAG, google_colour_nearest
 from chrono_mail.core.jsontext import load_json
 from chrono_mail.engine.google_access import google_bearer
 from chrono_mail.engine.session import Engine
@@ -29,9 +29,10 @@ from chrono_mail.protocols.google import CalendarUnknown, EventGone, GoogleRefus
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "google_colours.py 4.4.599"
+__version__ = "google_colours.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: Every colour of a Google calendar is a tag here, on the appointments that carry it and in the tag list; taking it off in the window takes the colour off Google (D-339)
 # v4.4.599: Google's labels (the colours a person made and named in Google Calendar): a named one is a tag here with its colour; a tag of that name goes back as that label (D-338)
 # v4.4.598: Initial: Google's event colours read at every synchronisation and shown on events without tags; a changed colour tag sent to Google first (D-337)
 
@@ -128,6 +129,15 @@ def _save(engine: Engine, path: Path, kept: Kept) -> None:
     replace_file_atomically(path, json.dumps(data, indent=0).encode("utf-8"), engine.durable)
 
 
+def colour_tag(name: str, colour: str) -> tuple[str, str]:
+    """The tag one of Google's colours is here: the name the person gave it, or, for a colour they never named, the name Google itself gives the
+    nearest of its eleven (Tomato, Banana, Grape...). Its colour is the colour Google shows (D-339)."""
+    if name:
+        return name, colour
+    standard = google_colour_nearest(colour) if colour else ""
+    return (GOOGLE_COLOUR_NAMES.get(standard, ""), colour) if standard else ("", "")
+
+
 @dataclass(frozen=True, slots=True)
 class GoogleShown:
     """What Google gives the events of an account, per calendar: event key -> its colour ("#rrggbb"), and -> the name of its label (D-338)."""
@@ -137,9 +147,8 @@ class GoogleShown:
 
 
 def shown_colours(engine: Engine, settings: AccountSettings) -> GoogleShown:
-    """What Google gives this account's events; empty for any other account. A label of the calendar (a colour the person made there, D-338) comes
-    first: it is what Google shows. A label the person named is a tag here as well; one without a name gives its colour only. The file is read
-    once: the calendar asks for a whole month at a time."""
+    """What Google gives this account's events; empty for any other account. Every colour of a Google calendar is a tag here (D-339): the name the
+    person gave it, or Google's own name for the nearest of its eleven. A label of the calendar comes first: it is what Google shows."""
     if not settings.google:
         return GoogleShown()
     colours: dict[str, dict[str, str]] = {}
@@ -148,11 +157,12 @@ def shown_colours(engine: Engine, settings: AccountSettings) -> GoogleShown:
         here: dict[str, str] = {}
         named: dict[str, str] = {}
         for key, (_, colour, label) in kept.events.items():
-            name, found = kept.labels.get(label, ("", "")) if label else ("", "")
+            given, found = kept.labels.get(label, ("", "")) if label else ("", "")
             if not found and colour in GOOGLE_EVENT_COLOURS:
                 found = GOOGLE_EVENT_COLOURS[colour]
-            if found:
-                here[key] = found
+            name, shade = colour_tag(given, found)
+            if shade:
+                here[key] = shade
             if name:
                 named[key] = name
         colours[collection] = here
@@ -160,7 +170,24 @@ def shown_colours(engine: Engine, settings: AccountSettings) -> GoogleShown:
     return GoogleShown(colours, names)
 
 
-
+def colours_in_use(kept: Kept) -> dict[str, tuple[str, str]]:
+    """Every colour an account's events carry, and every colour the person named in Google: the tag it is here, by its name without regard to
+    case -> (the name as written, its colour). That is the list the tags of the account follow (D-339)."""
+    found: dict[str, tuple[str, str]] = {}
+    for calendar in kept.calendars.values():
+        for given, colour in calendar.labels.values():
+            if given:
+                name, shade = colour_tag(given, colour)
+                if name:
+                    found[name.casefold()] = (name, shade)
+        for _, colour, label in calendar.events.values():
+            given, shade = calendar.labels.get(label, ("", "")) if label else ("", "")
+            if not shade and colour in GOOGLE_EVENT_COLOURS:
+                shade = GOOGLE_EVENT_COLOURS[colour]
+            name, shade = colour_tag(given, shade)
+            if name:
+                found[name.casefold()] = (name, shade)
+    return found
 
 
 def google_colour(shown: dict[str, dict[str, str]], collection: str, uid: str, recurrence_id: Moment | None) -> str:
@@ -294,6 +321,26 @@ def _label_of(kept: CalendarColours, tag: str) -> str:
     return next((label for label, (name, _) in sorted(kept.labels.items()) if name.casefold() == wanted), "")
 
 
+def _tag_the_items(store: PimStore, kept: Kept, only: tuple[str, ...] = ()) -> None:
+    """Give every event of the account the tag of the colour Google gives it, in the index (D-339). The index is never the truth: it is written
+    from the items and from this, and a rebuild gets it back at the next synchronisation. Nothing is written into the event itself, so Google
+    keeps one place for its colour."""
+    for collection, calendar in kept.calendars.items():
+        if only and collection not in only:
+            continue
+        names: dict[str, str] = {}
+        for key, (_, colour, label) in calendar.events.items():
+            if " " in key:
+                continue  # one changed date of a series: the index holds one row for the whole series, so its colour shows in the calendar only
+            given, shade = calendar.labels.get(label, ("", "")) if label else ("", "")
+            if not shade and colour in GOOGLE_EVENT_COLOURS:
+                shade = GOOGLE_EVENT_COLOURS[colour]
+            name, _ = colour_tag(given, shade)
+            if name:
+                names[key] = name
+        store.index.keep_other_tags(collection, names)
+
+
 def _named_labels(calendars: dict[str, CalendarColours]) -> dict[str, tuple[str, str]]:
     """Every label the person named, over all calendars of the account: the name without regard to case -> (the name as written, its colour).
     Two calendars with a label of the same name give one tag; each appointment still shows its own calendar's colour."""
@@ -338,6 +385,22 @@ def _keep_tag_list(engine: Engine, kept: Kept, after: dict[str, tuple[str, str]]
 
 def _tag_colours(engine: Engine) -> dict[str, str]:
     return {entry.key: entry.colour for entry in load_tags(engine.directories.tags_file).entries}
+
+
+def google_colour_off(engine: Engine, account: str, collection: str, uid: str) -> None:
+    """The person took the colour's tag off an appointment in its window: Google loses that colour (D-339). It is remembered here as "no tag", so
+    the next synchronisation sends it even when Google cannot be reached now."""
+    path = colours_path(engine, account)
+    with _LOCK:
+        kept = _load(path)
+        calendar = kept.calendars.get(collection)
+        if calendar is None or event_key(uid) not in calendar.events:
+            return
+        calendar.tags[event_key(uid)] = "\x00 taken off"  # never a tag's name: the next comparison sees a change and sends the empty colour
+        try:
+            _save(engine, path, kept)
+        except OSError:
+            pass  # the colour stays as it is; nothing here is lost
 
 
 def sync_colours(engine: Engine, settings: AccountSettings, store: PimStore, items: tuple[str, ...] = (), collection: str = "") -> ColourSync:
@@ -394,7 +457,8 @@ def _sync_colours(engine: Engine, settings: AccountSettings, store: PimStore, it
                     result.errors.append("Event colours: Google could not be reached; tried again at the next synchronisation")
             for gone in [key for key in kept_all.calendars if key not in {info.collection_id for info in store.collections()}]:
                 del kept_all.calendars[gone]  # a calendar no longer here: its colours go with it
-            _keep_tag_list(engine, kept_all, _named_labels(kept_all.calendars), result)
+            _keep_tag_list(engine, kept_all, colours_in_use(kept_all), result)
+            _tag_the_items(store, kept_all, tuple(info.collection_id for info, _ in calendars))
         finally:
             try:
                 _save(engine, path, kept_all)

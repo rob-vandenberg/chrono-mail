@@ -7,7 +7,7 @@ from typing import Literal
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
-from chrono_mail.engine.google_colours import google_colour, google_name, shown_colours
+from chrono_mail.engine.google_colours import google_colour, google_colour_off, google_name, shown_colours
 from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
@@ -21,9 +21,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.599"
+__version__ = "commands_calendar.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: The colour Google gives an appointment is its tag, in its window too; taking that tag off takes the colour off Google (D-339)
 # v4.4.599: A Google colour the person named shows as a tag on its events (D-338)
 # v4.4.598: An event of a Google calendar without a colour of its own shows Google's colour (D-337)
 # v4.4.571: event.list takes a tag: only the events with that tag (D-327)
@@ -156,6 +157,7 @@ class EventInfo:
     changed_occurrences: tuple[ChangedOccurrence, ...]
     colour_id: str = ""  # the colour of its calendar's palette (empty: the calendar's own)
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
+    google_tag: str = ""  # of its tags, the one that is the colour Google gives it: changed in Google, never written into the event (D-339)
     yours: bool = False  # event.show: a meeting you organize, so its attendees can be told of a change
     draft: MeetingDraft = MeetingDraft()  # the mail to the attendees, ready to send
     cancel_draft: MeetingDraft = MeetingDraft()  # the cancellation to the attendees taken off, ready to send
@@ -318,8 +320,8 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     if hidden and not parameters.hidden:
                         continue
                     other = (google_colour(google.colours, item.collection, e.uid, e.recurrence_id) or css_colour(e.css_colour)) if not e.colour_id else ""
-                    label = google_name(google, item.collection, e.uid, e.recurrence_id)  # the name of Google's colour: a tag of its own
-                    tags = e.categories if not label or label.casefold() in {each.casefold() for each in e.categories} else (*e.categories, label)
+                    label = google_name(google, item.collection, e.uid, e.recurrence_id)  # the colour Google gives it, a tag of its own (D-339)
+                    tags = e.categories if e.categories or not label else (label,)  # an appointment with tags of its own says it all (D-329, D-339)
                     if google_filter and parameters.tag.casefold() not in {each.casefold() for each in tags}:
                         continue  # the tag asked for is the name of a Google colour: only the events that carry it
                     found.append((key, OccurrenceInfo(
@@ -357,7 +359,11 @@ def _series(text: str) -> EventSeries:
 def event_show(engine: Engine, parameters: ItemParameters) -> EventInfo:
     with located(engine, parameters.item, CollectionKind.EVENTS) as found:
         series = _series(found.store.get(found.item.collection, parameters.item))
-        return replace(_info(parameters.item, found.account, found.item.collection, series), yours=_organizes(engine, series.master))
+        info = replace(_info(parameters.item, found.account, found.item.collection, series), yours=_organizes(engine, series.master))
+        if info.tags:
+            return info
+        google = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, None)
+        return replace(info, tags=(google,), google_tag=google) if google else info  # the colour Google gives it is its tag (D-339)
 
 
 # --- writing ------------------------------------------------------------------------------------------------------------------------------
@@ -723,6 +729,15 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 master = _addressed(engine, found.account, _apply(_clear(series.master, parameters.clear), parameters, creating=False))
                 if parameters.add_tag or parameters.remove_tag:
                     master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
+                google = google_name(shown_colours(engine, engine.config().find(found.account)), found.item.collection, series.master.uid, None)
+                theirs = google.casefold() in {tag.casefold() for tag in series.master.categories}  # a tag of that name the person gave it themselves stays theirs
+                if google and not theirs:  # the colour Google gives it is a tag of Google's, never written into the event: taking it off takes the colour off there
+                    kept = tuple(tag for tag in master.categories if tag.casefold() != google.casefold())
+                    taken_off = "tag" in parameters.clear or google.casefold() in {name.casefold() for name in parameters.remove_tag}
+                    if kept != master.categories:
+                        master = replace(master, categories=kept)
+                    elif taken_off and not kept:
+                        google_colour_off(engine, found.account, found.item.collection, series.master.uid)
                 if parameters.colour is not None:
                     master = _with_colour(master, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 series = _following_the_start(series, master)

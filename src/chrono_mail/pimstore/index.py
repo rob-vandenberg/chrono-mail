@@ -8,12 +8,14 @@ from typing import override
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.index import IndexDatabase
 from chrono_mail.pimstore.extract import Extract, tag_text
-from chrono_mail.pimstore.schema import REMINDER_INDEX, SCHEMA_VERSION, STATEMENTS, VERSION_WITHOUT_REMINDERS, VERSION_WITH_CANCELLED_REMINDERS, VERSION_WITHOUT_TASK_REMINDERS
+from chrono_mail.pimstore.schema import (REMINDER_INDEX, SCHEMA_VERSION, STATEMENTS, VERSION_WITHOUT_OTHER_TAGS, VERSION_WITHOUT_REMINDERS,
+                                          VERSION_WITH_CANCELLED_REMINDERS, VERSION_WITHOUT_TASK_REMINDERS)
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.550"
+__version__ = "index.py 4.4.600"
 
 # --- Version history ----------------------------------------------------
+# v4.4.600: Schema 7: other_tags, a tag an item has from its server and not in itself; the tag filter and the counts take them in (D-339)
 # v4.4.550: format 6: formats 3, 4 and 5 are upgraded in place, every event with a due moment to be worked out at the next look, so a cancelled one has none (D-316)
 # v4.4.545: format 5: tasks have a due moment too; formats 3 and 4 are upgraded in place, every task to be worked out at the next look (D-316)
 # v4.4.544: format 4: each event holds when its next reminder comes due, so the reminder check reads only what is due (D-316);
@@ -53,15 +55,22 @@ class IndexedItem:
     done: bool
     priority: int
     percent: int
-    tags: tuple[str, ...]
+    tags: tuple[str, ...]  # the item's own tags, as they stand in the item itself
     size: int
     is_group: bool = False  # a contact group (R-39)
     members: tuple[str, ...] = ()  # a group's members: "uid:<bare uid>" or "mailto:<address>" (see extract)
+    other_tags: tuple[str, ...] = ()  # tags the item has from its server and not in itself: the colour Google gives an event (D-339)
+
+    @property
+    def all_tags(self) -> tuple[str, ...]:
+        """Every tag the person sees on the item: its own first, so the first of them gives it its colour (D-329)."""
+        own = {tag.casefold() for tag in self.tags}
+        return (*self.tags, *(tag for tag in self.other_tags if tag.casefold() not in own))
 
 
 _COLUMNS = (
     "i.item_id, i.collection, i.kind, i.uid, i.title, i.subtitle, i.sort_key, i.start, i.end, i.due, i.floating, i.repeats, i.until, i.status, i.done, i.priority, "
-    "i.percent, i.tags, i.size, i.is_group, i.members"
+    "i.percent, i.tags, i.size, i.is_group, i.members, i.other_tags"
 )
 
 
@@ -82,10 +91,11 @@ def _not_worked_out() -> int:
 
 def _item(row: tuple[object, ...]) -> IndexedItem:
     tags = tuple(part for part in str(row[17]).split("\x1f") if part)
+    other = tuple(part for part in str(row[21]).split("\x1f") if part) if len(row) > 21 else ()
     return IndexedItem(
         str(row[0]), str(row[1]), CollectionKind(str(row[2])), str(row[3]), str(row[4]), str(row[5]), str(row[6]), _number(row[7]), _number(row[8]), _number(row[9]),
         bool(row[10]), bool(row[11]), _number(row[12]), str(row[13]), bool(row[14]), int(str(row[15])), int(str(row[16])), tags, int(str(row[18])),
-        bool(row[19]), tuple(part for part in str(row[20]).split("\x1f") if part),
+        bool(row[19]), tuple(part for part in str(row[20]).split("\x1f") if part), other,
     )
 
 
@@ -131,15 +141,18 @@ class PimIndex(IndexDatabase):
                 for statement in STATEMENTS:
                     self._connection.execute(statement)
                 self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
-            elif found in (str(VERSION_WITHOUT_REMINDERS), str(VERSION_WITHOUT_TASK_REMINDERS), str(VERSION_WITH_CANCELLED_REMINDERS)):
+            elif found in (str(VERSION_WITHOUT_REMINDERS), str(VERSION_WITHOUT_TASK_REMINDERS), str(VERSION_WITH_CANCELLED_REMINDERS), str(VERSION_WITHOUT_OTHER_TAGS)):
+                self._connection.execute("ALTER TABLE items ADD COLUMN other_tags TEXT NOT NULL DEFAULT ''")  # empty: filled at the next synchronisation
+                self._connection.execute("ALTER TABLE items ADD COLUMN other_folded TEXT NOT NULL DEFAULT ''")
                 if found == str(VERSION_WITHOUT_REMINDERS):
                     self._connection.execute("ALTER TABLE items ADD COLUMN reminder_due INTEGER")
                     self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.EVENTS.value,))
                     self._connection.execute(REMINDER_INDEX)
-                if found != str(VERSION_WITH_CANCELLED_REMINDERS):
+                if found not in (str(VERSION_WITH_CANCELLED_REMINDERS), str(VERSION_WITHOUT_OTHER_TAGS)):
                     self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ?", (CollectionKind.TASKS.value,))
-                # every event with a moment, not only the cancelled ones: a cancelled date of a series is not in the index, only in the text
-                self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ? AND reminder_due IS NOT NULL", (CollectionKind.EVENTS.value,))
+                if found != str(VERSION_WITHOUT_OTHER_TAGS):
+                    # every event with a moment, not only the cancelled ones: a cancelled date of a series is not in the index, only in the text
+                    self._connection.execute("UPDATE items SET reminder_due = -id WHERE kind = ? AND reminder_due IS NOT NULL", (CollectionKind.EVENTS.value,))
                 self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
@@ -149,14 +162,16 @@ class PimIndex(IndexDatabase):
     def upsert(self, item_id: str, collection: str, kind: CollectionKind, extract: Extract, size: int) -> None:
         with self._transaction():
             reminder_due = _not_worked_out() if extract.reminders else None
+            row = self._connection.execute("SELECT other_tags, other_folded FROM items WHERE item_id = ?", (item_id,)).fetchone()
+            other = ("", "") if row is None or extract.tags else (str(row[0]), str(row[1]))  # a tag from the server is kept over a save (D-339)
             self._remove(item_id)
             cursor = self._connection.execute(
                 "INSERT INTO items (item_id, collection, kind, uid, title, subtitle, sort_key, start, end, due, floating, repeats, until, status, done, priority, percent, tags, "
-                "tags_folded, size, is_group, members, reminder_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "tags_folded, size, is_group, members, reminder_due, other_tags, other_folded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id, collection, kind.value, extract.uid, extract.title, extract.subtitle, extract.sort_key, extract.start, extract.end, extract.due, int(extract.floating),
                     int(extract.repeats), extract.until, extract.status, int(extract.done), extract.priority, extract.percent, tag_text(extract.tags), tag_text(extract.tags, True), size,
-                    int(extract.group), "\x1f".join(member.replace("\x1f", "") for member in extract.members), reminder_due,
+                    int(extract.group), "\x1f".join(member.replace("\x1f", "") for member in extract.members), reminder_due, *other,
                 ),
             )
             self._connection.execute("INSERT INTO text (rowid, title, body) VALUES (?, ?, ?)", (cursor.lastrowid, extract.title, extract.text))
@@ -249,9 +264,10 @@ class PimIndex(IndexDatabase):
             conditions.append("i.item_id IN (" + ",".join("?" * len(query.items)) + ")")
             parameters.extend(query.items)
         if query.tag:
-            conditions.append("i.tags_folded LIKE ? ESCAPE '\\'")
+            conditions.append("(i.tags_folded LIKE ? ESCAPE '\\' OR i.other_folded LIKE ? ESCAPE '\\')")
             escaped = query.tag.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             parameters.append(f"%\x1f{escaped}\x1f%")
+            parameters.append(f"%\x1f{escaped}\x1f%")  # the same for a tag that comes from the server (D-339)
         if query.groups is not None:
             conditions.append("i.is_group = ?")
             parameters.append(int(query.groups))
@@ -275,13 +291,29 @@ class PimIndex(IndexDatabase):
             parameters.extend([max(0, query.limit), max(0, query.offset)])
         return statement, parameters
 
+    def keep_other_tags(self, collection: str, by_uid: dict[str, str]) -> None:
+        """The tag the items of a collection have from their server and not in themselves (the colour Google gives an event, D-339), by UID. It
+        is kept beside the item's own tags. An item that has tags of its own keeps only those: its first tag gives it its colour (D-329), and
+        Google's colour is then that tag's. An item not named here loses the tag again. The index is never the truth: it is written from the items and from this, and a rebuild asks the server again."""
+        with self._transaction():
+            rows = self._connection.execute("SELECT item_id, uid, tags, other_tags FROM items WHERE collection = ?", (collection,)).fetchall()
+            for item_id, uid, own, other in rows:
+                wanted = "" if str(own) else by_uid.get(str(uid), "")  # an item with tags of its own says it all: its first tag gives its colour (D-329)
+                if wanted == str(other):
+                    continue
+                tags = (wanted,) if wanted else ()
+                self._connection.execute("UPDATE items SET other_tags = ?, other_folded = ? WHERE item_id = ?", (tag_text(tags), tag_text(tags, True), item_id))
+
     def tags(self, kind: CollectionKind | None = None) -> dict[str, tuple[str, int]]:
         """Every tag in use, by its lower-case name: as it was first written, and how many items carry it."""
         counts: dict[str, tuple[str, int]] = {}
-        rows = self._connection.execute("SELECT tags FROM items WHERE tags != ''" + (" AND kind = ?" if kind is not None else ""), (kind.value,) if kind is not None else ()).fetchall()
-        for (text,) in rows:
-            for tag in str(text).split("\x1f"):
-                if tag:
+        rows = self._connection.execute("SELECT tags, other_tags FROM items WHERE (tags != '' OR other_tags != '')" + (" AND kind = ?" if kind is not None else ""),
+                                        (kind.value,) if kind is not None else ()).fetchall()
+        for text, other in rows:
+            seen: set[str] = set()
+            for tag in [*str(text).split("\x1f"), *str(other).split("\x1f")]:
+                if tag and tag.casefold() not in seen:
+                    seen.add(tag.casefold())
                     shown, number = counts.get(tag.casefold(), (tag, 0))
                     counts[tag.casefold()] = (shown, number + 1)
         return counts
