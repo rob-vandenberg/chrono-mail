@@ -317,6 +317,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 5.4 | Google event colours through Google's Calendar API (CalDAV does not carry them, checked live): an event without tags shows Google's colour, a changed colour tag goes to Google first (D-337). | done (4.4.598) |
 | 5.5 | The colours a person makes and names in Google Calendar (labels): a named one is a tag here in its colour, a tag of that name goes back to Google as that label (D-338). | done (4.4.599) |
 | 5.6 | Every colour of a Google calendar is a tag here, on the appointments that carry it and in the tag list; taking it off takes the colour off Google (D-339). | done (4.4.600) |
+| 5.7 | What is in Google counts: its colour wins on a tag of its name, and two colours of one name are one tag of one colour (D-340). | done (4.4.601) |
 
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
 ## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed

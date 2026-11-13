@@ -29,9 +29,10 @@ from chrono_mail.protocols.google import CalendarUnknown, EventGone, GoogleRefus
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "google_colours.py 4.4.600"
+__version__ = "google_colours.py 4.4.601"
 
 # --- Version history ----------------------------------------------------
+# v4.4.601: What is in Google counts: a tag whose name is a Google colour always has that colour, and two colours of one name are one tag of one colour (D-340)
 # v4.4.600: Every colour of a Google calendar is a tag here, on the appointments that carry it and in the tag list; taking it off in the window takes the colour off Google (D-339)
 # v4.4.599: Google's labels (the colours a person made and named in Google Calendar): a named one is a tag here with its colour; a tag of that name goes back as that label (D-338)
 # v4.4.598: Initial: Google's event colours read at every synchronisation and shown on events without tags; a changed colour tag sent to Google first (D-337)
@@ -147,13 +148,15 @@ class GoogleShown:
 
 
 def shown_colours(engine: Engine, settings: AccountSettings) -> GoogleShown:
-    """What Google gives this account's events; empty for any other account. Every colour of a Google calendar is a tag here (D-339): the name the
-    person gave it, or Google's own name for the nearest of its eleven. A label of the calendar comes first: it is what Google shows."""
+    """What Google gives this account's events; empty for any other account. Every colour of a Google calendar is a tag here (D-339), and that tag
+    has one colour: two colours so close that they get the same name are one tag, and the appointments of both are drawn in its colour (D-340)."""
     if not settings.google:
         return GoogleShown()
+    kept_all = _load(colours_path(engine, settings.account.account_id))
+    of_tag = {key: colour for key, (_, colour) in colours_in_use(kept_all).items()}
     colours: dict[str, dict[str, str]] = {}
     names: dict[str, dict[str, str]] = {}
-    for collection, kept in _load(colours_path(engine, settings.account.account_id)).calendars.items():
+    for collection, kept in kept_all.calendars.items():
         here: dict[str, str] = {}
         named: dict[str, str] = {}
         for key, (_, colour, label) in kept.events.items():
@@ -161,10 +164,11 @@ def shown_colours(engine: Engine, settings: AccountSettings) -> GoogleShown:
             if not found and colour in GOOGLE_EVENT_COLOURS:
                 found = GOOGLE_EVENT_COLOURS[colour]
             name, shade = colour_tag(given, found)
-            if shade:
-                here[key] = shade
             if name:
                 named[key] = name
+                shade = of_tag.get(name.casefold(), shade)  # the tag's own colour: one tag, one colour
+            if shade:
+                here[key] = shade
         colours[collection] = here
         names[collection] = named
     return GoogleShown(colours, names)
@@ -348,32 +352,28 @@ def _named_labels(calendars: dict[str, CalendarColours]) -> dict[str, tuple[str,
 
 
 def _keep_tag_list(engine: Engine, kept: Kept, after: dict[str, tuple[str, str]], result: ColourSync) -> None:
-    """The tag list follows Google's named labels: a label the person named is a tag of its colour here. What the person chose is theirs: a tag
-    they made, coloured, deleted or set to other kinds of item themselves is never changed back, and one with a shortcut key stays (D-338, OR-9).
-    The colour written here is remembered, so next time it can be told from a colour the person gave."""
+    """The tag list follows Google: a tag whose name is a colour of one of the account's Google calendars always has that colour, whoever made the
+    tag, and a colour changed in Google reaches the list at the next synchronisation (the owner, D-340). A colour the person gives such a tag here
+    is replaced by Google's; a name that is a tag for two different colours is theirs to settle in Google. A tag whose colour is gone from Google
+    goes too, unless it has a shortcut key or is used for more than appointments: then it is theirs."""
     written = kept.label_tags
-    if after == written:
-        return  # nothing of Google's changed since the last time: the tag list is not even read
     kinds: tuple[str, ...] = ("events",)  # a tag of Google's is for appointments: never in the mail tag menus
     try:
         tags = load_tags(engine.directories.tags_file)
         changed, now = tags, dict(written)  # what is written is kept only once the tag list really went to disk
         for key, (name, colour) in after.items():
             entry = changed.entry(name)
+            if entry is None and key in written:
+                continue  # the person deleted this tag: it never comes back by itself
+            if entry is None or entry.colour.lower() != colour.lower() or entry.shown != name:
+                changed = changed.with_colour(name, colour)  # Google's colour wins, and the name is written as Google writes it
             if entry is None:
-                if key in written:
-                    continue  # the person deleted this tag: it never comes back by itself
-                changed = changed.with_colour(name, colour).with_details(name, "", kinds)
-                now[key] = (name, colour)
-            elif key in written and entry.colour.lower() == written[key][1].lower():
-                if entry.colour.lower() != colour.lower() or entry.shown != name:
-                    changed = changed.with_colour(name, colour)  # ours and untouched: it follows the label, also when only its capitals changed
-                now[key] = (name, colour)
-            # else: the person made that tag, or gave it a colour of their own. It is theirs; Google's colour still colours the appointments.
+                changed = changed.with_details(name, "", kinds)
+            now[key] = (name, colour)
         for key in [key for key in written if key not in after]:
             entry = changed.entry(key)
             if entry is not None and entry.colour.lower() == written[key][1].lower() and not entry.shortcut and entry.kinds == kinds:
-                changed = changed.with_colour(entry.shown, "")  # ours and untouched: it goes with the label
+                changed = changed.with_colour(entry.shown, "")  # ours and untouched: it goes with the colour
             del now[key]
         if changed != tags:
             save_tags(engine.directories.tags_file, changed)

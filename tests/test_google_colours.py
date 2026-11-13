@@ -19,9 +19,10 @@ from tests.test_engine_commands import call
 from tests.test_google_sign_in import CLIENT, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_colours.py 4.4.600"
+__version__ = "test_google_colours.py 4.4.601"
 
 # --- Version history ----------------------------------------------------
+# v4.4.601: Google's colour wins on a tag of its name; two colours of one name are one tag of one colour (D-340)
 # v4.4.600: Every Google colour is a tag here, named by Google where the person named none; the window shows it and taking it off takes the colour off Google (D-339)
 # v4.4.599: Google's labels: a named one is a tag here with its colour, a tag of that name goes back as that label (D-338)
 # v4.4.598: Initial tests: Google's event colours read at each synchronisation, shown on events without tags, a changed colour tag sent to Google first (D-337)
@@ -546,23 +547,36 @@ def test_a_tag_without_a_label_replaces_the_label_an_event_carries(google_world:
     assert shown(engine)["Dentist"] == GOOGLE_EVENT_COLOURS["10"] and tags_shown(engine)["Dentist"] == ("Work",)  # its own tag says it all
 
 
-def test_a_tag_the_person_made_or_coloured_is_never_changed_by_google(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
-    """OR-9: a colour the person chose is theirs. Google's label of the same name colours the appointments, never the person's tag."""
+def test_googles_colour_wins_on_a_tag_of_its_name(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """The owner, D-340: what is in Google is what counts. A tag whose name is a Google colour always has that colour, so a colour changed in
+    Google always reaches the list; a name that is two colours is the person's to settle in Google."""
     engine, account, calendars, api = google_world
-    call(engine, "tag.create", name="Werk", colour="#112233")  # theirs, made before Google ever named a label so
+    call(engine, "tag.create", name="Werk", colour="#112233")  # the person's own, made before Google ever had a colour of that name
     api.label("L-work", "#00bb00", "Werk")
-    api.label("L-red", "#ff0000", "Rood")
     on_both(calendars, api, "u1", "Dentist", label="L-work")
     call(engine, "dav.sync", account=account)
-    assert tag_colour(engine, "Werk") == "#112233"  # their colour stands
-    assert shown(engine)["Dentist"] == "#00bb00"  # the appointment still shows Google's colour
-    call(engine, "tag.create", name="Rood", colour="#990000")  # a tag of Google's, recoloured by the person afterwards
-    api.label("L-red", "#dd0000", "Rood")
+    assert tag_colour(engine, "Werk") == "#00bb00"  # Google's colour, not theirs
+    assert shown(engine)["Dentist"] == "#00bb00"
+    call(engine, "tag.create", name="Werk", colour="#990000")  # recoloured by the person afterwards
+    api.label("L-work", "#dd0000", "Werk")  # and changed in Google
     call(engine, "dav.sync", account=account)
-    assert tag_colour(engine, "Rood") == "#990000"  # not put back to Google's colour
-    del api.labels["L-red"]
+    assert tag_colour(engine, "Werk") == "#dd0000"  # the change in Google always arrives
+    del api.labels["L-work"]
     call(engine, "dav.sync", account=account)
-    assert tag_colour(engine, "Rood") == "#990000"  # and not taken away with the label
+    assert tag_colour(engine, "Werk") == "#dd0000"  # a tag the person uses for more than appointments stays, with the colour it last had
+
+
+def test_two_google_colours_of_one_name_are_one_tag_of_one_colour(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """D-340: two colours the person never named that are nearest the same Google colour become one tag; both appointments take its colour."""
+    engine, account, calendars, api = google_world
+    api.label("L-blue1", "#039be5")  # both are nearest Peacock
+    api.label("L-blue2", "#0398e0")
+    on_both(calendars, api, "u1", "Dentist", label="L-blue1")
+    on_both(calendars, api, "u2", "Lunch", label="L-blue2")
+    call(engine, "dav.sync", account=account)
+    assert tags_shown(engine) == {"Dentist": ("Peacock",), "Lunch": ("Peacock",)}
+    one = tag_colour(engine, "Peacock")
+    assert one in ("#039be5", "#0398e0") and shown(engine) == {"Dentist": one, "Lunch": one}  # one tag, one colour
 
 
 def test_a_tag_google_made_here_is_for_appointments_only(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
@@ -759,3 +773,15 @@ def test_a_google_tag_stays_on_an_event_that_is_saved_or_synchronised(google_wor
     call(engine, "event.edit", item=item_of(engine, "Dentist"), summary="Dentist, later")
     assert next(tag.events for tag in call(engine, "tag.list") if tag.name == "Rood") == 1  # still counted after a save
     assert tags_shown(engine)["Dentist, later"] == ("Rood",)
+
+
+def test_a_colour_the_person_gives_a_google_tag_by_hand_is_put_back_at_the_next_refresh(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    """D-340: Google wins even when nothing changed in Google since the last synchronisation."""
+    engine, account, calendars, api = google_world
+    api.label("L-red", "#ff0000", "Rood")
+    on_both(calendars, api, "u1", "Dentist", label="L-red")
+    call(engine, "dav.sync", account=account)
+    call(engine, "tag.create", name="Rood", colour="#990000")  # the person recolours it; Google changes nothing
+    assert tag_colour(engine, "Rood") == "#990000"
+    call(engine, "dav.sync", account=account)
+    assert tag_colour(engine, "Rood") == "#ff0000"  # Google's colour again
