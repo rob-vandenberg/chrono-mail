@@ -17,9 +17,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.597"
+__version__ = "dav.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: a refused sign-in says sign-in name (D-342)
 # v4.4.597: kinds: a client that keeps only some kinds of folder; a collection is someone else's only when none of this user's principals owns it: Google names one for calendars and one for
 #           contacts, and the second one no longer replaces the first (D-335)
 # v4.4.593: bearer: Google sign-in's access code instead of a user name and password; a refusal of it asks to sign in again (D-335)
@@ -402,7 +403,7 @@ class DavClient:
                 target = location.path + (f"?{location.query}" if location.query else "")
                 continue
             if result.status == 401:
-                raise AuthenticationError(SIGN_IN_AGAIN if self._bearer else "The server refused the user name or password")
+                raise AuthenticationError(SIGN_IN_AGAIN if self._bearer else "The server refused the sign-in name or password")
             return result
         raise DavError("The server sent us round in circles")
 

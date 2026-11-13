@@ -62,3 +62,4 @@ See also: [[sync-conflicts]]
 - [[D-339]] Every colour of a Google calendar is a tag here
 - [[D-340]] Two Google colours of one name are one tag of one colour
 - [[D-341]] A Google colour is a tag of its own calendar
+- [[D-342]] One name per meaning in the account windows

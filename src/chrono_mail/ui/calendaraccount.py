@@ -21,9 +21,10 @@ from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.497"
+__version__ = "calendaraccount.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.2.497: a linked account's fields stay greyed after a failed Add and its password always shows dots; back to No mail account brings
 #           back what was typed for the separate account; a Find answer that comes after Link to was changed is let go (the owner, D-298)
 # v4.2.482: For is Link to: a mail account fills in its server and login, greyed (the password as dots, never read from the wallet);
@@ -151,7 +152,7 @@ class CalendarFields(QWidget):
         url = self.url.text().strip()
         username, password = self._login()
         if self._new() and (not url or not username or not password):
-            self._show_problem("Type the server address, the user name and the password.")
+            self._show_problem("Type the server address, the sign-in name and the password.")
             return
         self._forget_found()
         self._looking(True)

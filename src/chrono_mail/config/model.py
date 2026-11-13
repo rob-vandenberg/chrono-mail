@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.593"
+__version__ = "model.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSettings.google: an account of Google's calendars or contacts, logged in with Google sign-in (D-335)
 # v4.4.536: reminder_emails: who sends the e-mail reminders (D-313)
 # v4.4.514: answers_by: the person may choose the server, also when it does not announce that it mails (D-310)
@@ -137,7 +138,7 @@ class AccountSettings:
 
     def __post_init__(self) -> None:
         if len(self.account_name) > MAXIMUM_ACCOUNT_NAME_CHARACTERS or self.account_name != self.account_name.strip():
-            raise ConfigurationError(f"An account name has at most {MAXIMUM_ACCOUNT_NAME_CHARACTERS} characters, without spaces at its ends")
+            raise ConfigurationError(f"Shown as has at most {MAXIMUM_ACCOUNT_NAME_CHARACTERS} characters, without spaces at its ends")
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
         if self.invitation_answers not in ("", "server", "chrono", "none"):
@@ -151,7 +152,7 @@ class AccountSettings:
         if self.dav_url and not self.dav_url.startswith(("https://", "http://")):
             raise ConfigurationError("The address of the calendar and contacts server starts with https:// (or http:// for this computer)")
         if len(self.dav_url) > 500 or len(self.dav_username) > 200:
-            raise ConfigurationError("The address or user name of the calendar and contacts server is too long")
+            raise ConfigurationError("The address or sign-in name of the calendar and contacts server is too long")
         if len(self.dav_left_out) > MAXIMUM_LEFT_OUT_FOLDERS or any(not 0 < len(item) <= 1000 for item in self.dav_left_out):
             raise ConfigurationError("Too many folders of the calendar and contacts server are left out (or one is not a folder)")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):

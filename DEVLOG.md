@@ -4365,3 +4365,10 @@ Tests: `tests/test_calendar_tags.py` (11, new), `tests/ui/test_ui_calendar_tags.
 Open: two window tests of `tests/ui/test_ui_sections.py` fail, the same on 4.4.601; cause not looked into. A tag the person made before with a "|" in its name is taken for a calendar tag (not in Settings > Tags, shown cut at the bar); an import of a category with a "|" makes such a tag. Which tag leads an appointment that has both a calendar tag and own tags is kept on this computer only.
 Not tried: on screen; on Windows.
 
+## 2026-11-13 4.4.603 One name per meaning in the account windows (D-342)
+
+What landed: the owner found that a Google account's window showed nowhere which Google account it was, and that "Account name" sounded like the account itself. Now every account window says Shown as (was Account name), Your name, E-mail address and Sign-in name (was User name), each with a hover text saying what it is for (forms account_add, account_edit, calendar_fields, server_fields); the messages of the account windows, the engine's texts and the command help say "sign-in name". Edit account of a calendar account shows on its General tab what it signs in with, read-only ("Google account" for Google); a Google account's Calendars and contacts tab says "Signed in with Google as …" and has no sign-in name and password fields; the hint of the calendar sign-in name names the name it stands for. Nothing stored changes.
+Review: two rounds of fresh Sonnet reviewers. Round 1: a calendar server's refusal still said "user name" (protocols/dav.py), fixed. Round 2: nothing left.
+Tests: `tests/ui/test_ui_account_names.py` (3, new, each failing on 4.4.602); `tests/ui/test_ui_settings.py` and `tests/ui/test_ui_gmail_account.py` take the new words (the Google test now checks the fields are left out, no longer greyed); 478 window tests of the account windows and forms, 227 engine and settings tests and 99 calendar server tests pass; isolation proof passes; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
+Not tried: on screen; on Windows. Open, the owner's: a Shown as for a calendar shared with you (Q11); the Refresh job.
+

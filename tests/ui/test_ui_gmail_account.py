@@ -8,9 +8,10 @@ from chrono_mail.ui.accountdialog import GMAIL, GOOGLE, AccountDialog
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_gmail_account.py 4.4.596"
+__version__ = "test_ui_gmail_account.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: a Google account's sign-in name and password fields are left out, no longer greyed (D-342)
 # v4.4.596: a folder that only holds folders cannot be selected; App password with its hint, its spaces dropped (D-335)
 # v4.4.595: Gmail needs only the Account tab, Servers and Options greyed; the window never taller than the screen with its title bar (D-336)
 # v4.4.594: Gmail hides Outgoing mail and Options: the window is shorter than with IMAP (D-335)
@@ -82,13 +83,17 @@ def test_google_calendar_and_contacts_is_a_sign_in_greyed_with_its_reason_withou
 def test_edit_account_of_google_offers_sign_in_with_google_and_greys_the_login(world: World, qtbot: QtBot) -> None:
     import dataclasses
 
+    from PySide6.QtWidgets import QFormLayout
+
     from chrono_mail.ui.accountedit import AccountEditDialog
 
     account = dataclasses.replace(world.call("account.list")[0], google=True)  # an account of Google's calendars (D-335); it has no server here
     dialog = AccountEditDialog(world.backend, account)
     qtbot.addWidget(dialog)
     assert dialog.dav_check_button.text() == "Sign in with Google" and dialog.dav_check_button.isEnabled()
-    assert not any(field.isEnabled() for field in (dialog.dav_url, dialog.dav_username, dialog.dav_password))
+    assert not dialog.dav_url.isEnabled()
+    form = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.dav_username) >= 0)
+    assert not form.isRowVisible(dialog.dav_username) and not form.isRowVisible(dialog.dav_password)  # Google's sign-in replaces them (D-342)
 
 
 def test_cancel_stays_usable_while_waiting_for_google_and_stops_the_sign_in(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

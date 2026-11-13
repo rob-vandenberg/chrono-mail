@@ -32,3 +32,4 @@ See also: [[mail-window]]
 - [[D-164]] Accent colour per theme
 - [[D-323]] The tray menu starts with the name and version
 - [[D-336]] The Add an account window in tabs
+- [[D-342]] One name per meaning in the account windows

@@ -37,9 +37,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.596"
+__version__ = "accountdialog.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.596: Gmail: the field is called App password, with the hint 16 letters from Google; spaces and line breaks of a pasted app password
 #           are removed (D-335)
 # v4.4.595: the mail part in three tabs, Account (with the user name and password), Servers and Options, the buttons always below them; Gmail
@@ -437,7 +438,7 @@ class AccountDialog(QDialog):
         """Everything needed is filled in; else a red line says what, and the tab with the first empty field comes to the front (D-336)."""
         if not (self.email.text().strip() and self.username.text().strip() and self.password.text()):
             self.tabs.setCurrentIndex(ACCOUNT_TAB)
-            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the e-mail address, user name and password.</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the e-mail address, sign-in name and password.</span>")
             return False
         if not (self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
             self.tabs.setCurrentIndex(SERVERS_TAB)
@@ -445,7 +446,7 @@ class AccountDialog(QDialog):
             return False
         if not self.same_login.isChecked() and not (self.outgoing_username.text().strip() and self.outgoing_password.text()):
             self.tabs.setCurrentIndex(SERVERS_TAB)
-            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the user name and password of the outgoing server on the Servers tab, or tick {SAME_LOGIN_TEXT}.</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the sign-in name and password of the outgoing server on the Servers tab, or tick {SAME_LOGIN_TEXT}.</span>")
             return False
         return True
 

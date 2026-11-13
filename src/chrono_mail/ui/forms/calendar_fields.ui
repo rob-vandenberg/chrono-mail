@@ -33,7 +33,10 @@
      <item row="1" column="0">
       <widget class="QLabel" name="accountNameLabel">
        <property name="text">
-        <string>Account name</string>
+        <string>Shown as</string>
+       </property>
+       <property name="toolTip">
+        <string>The name Chrono Mail shows for this account; only you see it</string>
        </property>
        <property name="buddy">
         <cstring>accountName</cstring>
@@ -63,7 +66,10 @@
      <item row="3" column="0">
       <widget class="QLabel" name="usernameLabel">
        <property name="text">
-        <string>User name</string>
+        <string>Sign-in name</string>
+       </property>
+       <property name="toolTip">
+        <string>What you sign in to the server with</string>
        </property>
        <property name="buddy">
         <cstring>username</cstring>

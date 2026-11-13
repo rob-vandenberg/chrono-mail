@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QWidget,
+    QVBoxLayout,
 )
 
 from chrono_mail.core import AccountKind, CertificateError, CertificateTrouble, ChronoMailError
@@ -46,9 +47,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.593"
+__version__ = "accountedit.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: Shown as, Sign-in name; a calendar account shows its sign-in on the General tab, read-only; a Google account says whom it signed in as, without sign-in name and password fields (D-342)
 # v4.4.593: a Google account: its server, user name and password greyed; Find becomes Sign in with Google, for when Google ends the sign-in (D-335)
 # v4.4.536: Send reminder emails via Chrono Mail or Server, per account on this computer (D-313)
 # v4.4.514: Send confirmation emails via: greyed only when certain beyond doubt; a server that does not announce it can be chosen (D-310)
@@ -125,9 +127,19 @@ class AccountEditDialog(QDialog):
         self.in_send_receive.setChecked(account.in_send_receive)
         self.junk_filter: QCheckBox = part(form, QCheckBox, "junkFilter")
         self.junk_filter.setChecked(account.junk_filter)
+        sign_in = account.dav_username or account.incoming_username  # what this calendar account signs in with
+        self.sign_in_name: QLineEdit | None = None
         if calendars_only:  # the mail fields keep their stored values (nothing about them is sent) and are never shown
             for field in (self.name, self.email, self.signature, self.signature_count, self.junk_filter):
                 general.setRowVisible(field, False)
+            self.sign_in_name = QLineEdit(sign_in)  # the account itself, read-only: changed with its password, or by signing in again (D-342)
+            self.sign_in_name.setReadOnly(True)
+            label = QLabel("Google account" if account.google else "Sign-in name")
+            tip = ("The Google account you signed in with; Sign in with Google on the Calendars and contacts tab signs in again" if account.google
+                   else "What you sign in to the server with; changed on the Calendars and contacts tab, with its password")
+            for widget in (label, self.sign_in_name):
+                widget.setToolTip(tip)
+            general.insertRow(1, label, self.sign_in_name)
         storage = part(form, QComboBox, "storage")
         self.storage: QComboBox | None = None
         if kind is AccountKind.POP3:  # an IMAP account always has the folders of its server
@@ -153,7 +165,13 @@ class AccountEditDialog(QDialog):
         self.dav_url.setText(account.dav_url)
         self.dav_username: QLineEdit = part(form, QLineEdit, "davUsername")
         self.dav_username.setText(account.dav_username)
+        if calendars_only:  # its own sign-in name, the one the General tab shows
+            self.dav_username.setPlaceholderText(f"({account.incoming_username})" if account.incoming_username else "")
+        elif account.incoming_username:  # the incoming mail's sign-in name, named (D-342)
+            self.dav_username.setPlaceholderText(f"(the same as for incoming mail: {account.incoming_username})")
         self.dav_password: QLineEdit = part(form, QLineEdit, "davPassword")
+        if calendars_only:
+            self.dav_password.setPlaceholderText("(unchanged)")
         make_password_field(self.dav_password)
         self.dav_result: QLabel = part(form, QLabel, "davResult")
         self.dav_result.setTextFormat(Qt.TextFormat.RichText)
@@ -180,9 +198,15 @@ class AccountEditDialog(QDialog):
         self.dav_url.textChanged.connect(self._reminders_follow)
         self._reminders_follow()
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
-        if account.google:  # Google sign-in, no user name and password: the one thing to do is to sign in again when Google asks (D-335)
-            for field in (self.dav_url, self.dav_username, self.dav_password):
-                field.setEnabled(False)
+        if account.google:  # Google sign-in, no sign-in name and password: the one thing to do is to sign in again when Google asks (D-335)
+            self.dav_url.setEnabled(False)
+            dav_form = part(form, QFormLayout, "davForm")
+            for field in (self.dav_username, self.dav_password):
+                dav_form.setRowVisible(field, False)  # Google's sign-in replaces them (D-342)
+            self.signed_in: QLabel = QLabel(f"Signed in with Google as {sign_in}")
+            self.signed_in.setTextFormat(Qt.TextFormat.PlainText)
+            calendars_layout = part(form, QVBoxLayout, "calendarsLayout")
+            calendars_layout.insertWidget(calendars_layout.indexOf(self.dav_check_button), self.signed_in)
             self.dav_check_button.setText("Sign in with Google")
             self.dav_check_button.setToolTip("Opens Google's sign-in page in your web browser; needed again when Google ends the sign-in")
             self.dav_check_button.clicked.connect(self._google_sign_in)

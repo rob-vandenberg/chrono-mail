@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.593"
+__version__ = "commands_accounts.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSummary.google (D-335)
 # v4.4.537: account.edit takes none for invitation_answers, as the window sends when its box is unticked (D-310)
 # v4.4.536: Who sends the e-mail reminders in the summary and account.edit (D-313)
@@ -113,7 +114,7 @@ Policy = Literal["keep", "delete_after_download", "delete_after_days", "delete_w
 class AccountAddParameters:
     display_name: str = field(metadata=option("Your name: what the people you write to see, with the address"))
     email_address: str = field(metadata=option("The e-mail address of the account"))
-    username: str = field(metadata=option("The user name for the incoming server (and the outgoing server unless given separately)"))
+    username: str = field(metadata=option("The sign-in name for the incoming server (and the outgoing server unless given separately)"))
     password: str = field(metadata=option("The password; read from standard input or asked for, never taken from the command line", secret=True))
     incoming_host: str = field(metadata=option("The POP3 server"))
     outgoing_host: str = field(metadata=option("The SMTP server"))
@@ -121,7 +122,7 @@ class AccountAddParameters:
     incoming_security: Security = field(default="tls", metadata=option("tls (implicit TLS), starttls (STLS) or none"))
     outgoing_port: int = field(default=587, metadata=option("The SMTP port"))
     outgoing_security: Security = field(default="starttls", metadata=option("tls, starttls or none"))
-    outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name, when it differs from the incoming one"))
+    outgoing_username: str | None = field(default=None, metadata=option("The SMTP sign-in name, when it differs from the incoming one"))
     outgoing_password: str | None = field(default=None, metadata=option("The SMTP password, when it differs from the incoming one", secret=True))
     encrypted: bool = field(default=True, metadata=option("Encrypt the stored messages on disk (the default)"))
     delete_policy: Policy = field(default="keep", metadata=option("What happens to a message on the server after it was downloaded and verified"))
@@ -234,7 +235,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
 
 @dataclass(frozen=True, slots=True)
 class AccountCheckParameters:
-    username: str = field(metadata=option("The user name for the incoming server (and the outgoing server unless given separately)"))
+    username: str = field(metadata=option("The sign-in name for the incoming server (and the outgoing server unless given separately)"))
     incoming_host: str = field(metadata=option("The POP3 server"))
     outgoing_host: str = field(metadata=option("The SMTP server"))
     password: str = field(default="", metadata=option("The password (for an account given with account: empty means the stored one)", secret=True))
@@ -242,7 +243,7 @@ class AccountCheckParameters:
     incoming_security: Security = field(default="tls", metadata=option("tls, starttls or none"))
     outgoing_port: int = field(default=587, metadata=option("The SMTP port"))
     outgoing_security: Security = field(default="starttls", metadata=option("tls, starttls or none"))
-    outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name, when it differs from the incoming one"))
+    outgoing_username: str | None = field(default=None, metadata=option("The SMTP sign-in name, when it differs from the incoming one"))
     outgoing_password: str | None = field(default=None, metadata=option("The SMTP password, when it differs from the incoming one", secret=True))
     kind: Kind = field(default="pop3", metadata=option("pop3 or imap"))
     trusted_certificate: tuple[str, ...] = field(default=(), metadata=option("The SHA-256 fingerprint of a server certificate to accept (repeat for more)"))
@@ -310,7 +311,7 @@ def _refuse_same_account(accounts: tuple[AccountSettings, ...], kind: AccountKin
             item.account.account_id != own_id and item.account.kind is kind and incoming.username.strip().lower() == username.strip().lower()
             and incoming.host.strip().lower() == host.strip().lower()
         ):
-            raise ConfigurationError("An account with this user name on this incoming mail server and with this protocol exists already")
+            raise ConfigurationError("An account with this sign-in name on this incoming mail server and with this protocol exists already")
 
 
 def server_label(item: AccountSettings) -> str:
@@ -495,12 +496,12 @@ class AccountEditParameters:
     account_name: str | None = field(default=None, metadata=option("How Chrono Mail names the account in its own lists, never in mail (empty: the e-mail address)"))
     email_address: str | None = field(default=None, metadata=option("The e-mail address of the account"))
     signature: str | None = field(default=None, metadata=option("The signature added to new messages (empty removes it)"))
-    username: str | None = field(default=None, metadata=option("The user name for the incoming server"))
+    username: str | None = field(default=None, metadata=option("The sign-in name for the incoming server"))
     password: str | None = field(default=None, metadata=option("A new password for the incoming server", secret=True))
     incoming_host: str | None = field(default=None, metadata=option("The POP3 server"))
     incoming_port: int | None = field(default=None, metadata=option("The POP3 port"))
     incoming_security: Security | None = field(default=None, metadata=option("tls, starttls or none"))
-    outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name"))
+    outgoing_username: str | None = field(default=None, metadata=option("The SMTP sign-in name"))
     outgoing_password: str | None = field(default=None, metadata=option("A new password for the outgoing server", secret=True))
     outgoing_host: str | None = field(default=None, metadata=option("The SMTP server"))
     outgoing_port: int | None = field(default=None, metadata=option("The SMTP port"))
@@ -508,7 +509,7 @@ class AccountEditParameters:
     delete_policy: Policy | None = field(default=None, metadata=option("What happens to a message on the server after it was downloaded and verified"))
     delete_days: int | None = field(default=None, metadata=option("Days before deleting, for delete_after_days"))
     in_send_receive: bool | None = field(default=None, metadata=option("Include this account in Send and Receive (off: only its own refresh reaches it)"))
-    outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
+    outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the sign-in name and password of the incoming one"))
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
     invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, none, or empty (as the server announces)"))
     reminder_emails: str | None = field(default=None, metadata=option("Who sends the e-mail reminders: chrono, server or none"))
@@ -542,7 +543,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
         incoming.username if same_login else account.outgoing.username if parameters.outgoing_username is None else parameters.outgoing_username.strip(),
     )
     if not incoming.username or not outgoing.username:
-        raise UsageError("A user name must not be empty")
+        raise UsageError("A sign-in name must not be empty")
     _refuse_same_account(config.accounts, account.kind, incoming.username, incoming.host, account.account_id)
     pop3 = Pop3Options(
         settings.pop3.policy if parameters.delete_policy is None else Pop3DeletePolicy(parameters.delete_policy),

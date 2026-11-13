@@ -15,9 +15,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.passwordfield import make_password_field
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 4.2.444"
+__version__ = "serverfields.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.2.444: account_line: an account's row text in one place, for Settings > Accounts and the For list of a calendar server
 # v4.2.441: Security has a fourth choice, "TLS, certificate not checked (weak)", with the ports of TLS (OR-6, D-299)
 # v4.2.437: the two password fields have the eye (UR-03, D-296)
@@ -35,7 +36,7 @@ SECURITY_CHOICES: tuple[tuple[str, str], ...] = (  # from strong to none: the pe
 POP3_PORTS: dict[str, int] = {"tls": 995, "starttls": 110, "tls-unchecked": 995, "none": 110}
 IMAP_PORTS: dict[str, int] = {"tls": 993, "starttls": 143, "tls-unchecked": 993, "none": 143}
 OUTGOING_PORTS: dict[str, int] = {"tls": 465, "starttls": 587, "tls-unchecked": 465, "none": 25}
-SAME_LOGIN_TEXT: str = "Use the same user name and password as for incoming mail"
+SAME_LOGIN_TEXT: str = "Use the same sign-in name and password as for incoming mail"
 
 
 def incoming_ports(kind: AccountKind) -> dict[str, int]:

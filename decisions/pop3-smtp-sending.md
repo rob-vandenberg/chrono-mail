@@ -30,3 +30,4 @@ See also: [[imap]]
 - [[D-204]] A stored password is never asked again
 - [[D-126]] Own pool for mail checks
 - [[D-059]] Include in Send and Receive
+- [[D-342]] One name per meaning in the account windows

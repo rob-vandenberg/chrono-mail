@@ -22,9 +22,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.4.598"
+__version__ = "commands_dav.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.598: A Google Calendar account reads and sends its events' colours after each synchronisation; recoloured and colour_errors (D-337)
 # v4.4.597: Google Calendar keeps only calendars, Google Contacts only address books (D-335)
 # v4.4.593: a Google account reaches its server with the access code of its sign-in (D-335)
@@ -98,7 +99,7 @@ def _accepted_for(engine: Engine, settings: AccountSettings, address: str) -> fr
 class SetDavParameters:
     account: str = field(metadata=option("The account"))
     url: str = field(default="", metadata=option("The address of the CalDAV and CardDAV server (empty: stop using one)"))
-    username: str = field(default="", metadata=option("The user name (empty: the same as for incoming mail)"))
+    username: str = field(default="", metadata=option("The sign-in name (empty: the same as for incoming mail)"))
     password: str | None = field(default=None, metadata=option("The password (omit: the one for incoming mail, or the one stored earlier)", secret=True))
 
 
@@ -132,7 +133,7 @@ def dav_set(engine: Engine, parameters: SetDavParameters) -> AccountSummary:
 class DiscoverParameters:
     account: str = field(metadata=option("The account"))
     url: str = field(default="", metadata=option("Try this address instead of the stored one"))
-    username: str | None = field(default=None, metadata=option("Try this user name instead of the stored one"))
+    username: str | None = field(default=None, metadata=option("Try this sign-in name instead of the stored one"))
     password: str | None = field(default=None, metadata=option("Try this password instead of the stored one", secret=True))
 
 
@@ -284,7 +285,7 @@ PUBLIC_WORD: str = "public"
 class FindParameters:
     account: str = field(metadata=option("The account"))
     url: str = field(default="", metadata=option("Check this address (empty: look on the incoming mail server and on the domain of the address)"))
-    username: str | None = field(default=None, metadata=option("Try this user name instead of the stored one"))
+    username: str | None = field(default=None, metadata=option("Try this sign-in name instead of the stored one"))
     password: str | None = field(default=None, metadata=option("Try this password instead of the stored one", secret=True))
     fresh: bool = field(default=False, metadata=option("Check the certificates with the usual checks only (a Find the person starts): none accepted before counts"))
 
@@ -405,7 +406,7 @@ class LinkParameters:
     url: str = field(metadata=option("The address of the calendar and contacts server (as dav.find gave it)"))
     left_out: tuple[str, ...] = field(default=(), metadata=option("The folders not to keep in step (their key, as dav.find gave it)"))
     pin: str = field(default="", metadata=option("The certificate to accept with it, as dav.find gave it (only one already accepted for this account)"))
-    username: str = field(default="", metadata=option("The user name (empty: the same as for incoming mail)"))
+    username: str = field(default="", metadata=option("The sign-in name (empty: the same as for incoming mail)"))
     password: str | None = field(default=None, metadata=option("The password (omit: the one for incoming mail, or the one stored earlier)", secret=True))
 
 
@@ -464,7 +465,7 @@ def web_address(text: str) -> str:
 @dataclass(frozen=True, slots=True)
 class FindNewParameters:
     url: str = field(metadata=option("The address of the calendar and contacts server (a host name is enough)"))
-    username: str = field(metadata=option("The user name"))
+    username: str = field(metadata=option("The sign-in name"))
     password: str = field(metadata=option("The password", secret=True))
     fingerprint: str = field(default="", metadata=option("The SHA-256 fingerprint of a certificate the person accepted for this server"))
     fresh: bool = field(default=False, metadata=option("Check the certificate with the usual checks only (a Find the person starts): none accepted before counts"))
@@ -492,9 +493,9 @@ def dav_find_new(engine: Engine, parameters: FindNewParameters) -> FoundServer:
 @dataclass(frozen=True, slots=True)
 class AddDavParameters:
     url: str = field(metadata=option("The address of the calendar and contacts server (a host name is enough)"))
-    username: str = field(metadata=option("The user name"))
+    username: str = field(metadata=option("The sign-in name"))
     password: str = field(metadata=option("The password; read from standard input or asked for, never taken from the command line", secret=True))
-    account_name: str = field(default="", metadata=option("How Chrono Mail names the account (empty: the user name)"))
+    account_name: str = field(default="", metadata=option("How Chrono Mail names the account (empty: the sign-in name)"))
     left_out: tuple[str, ...] = field(default=(), metadata=option("The folders not to keep in step (their key, as dav.find-new gave it)"))
     fingerprint: str = field(default="", metadata=option("The SHA-256 fingerprint of a certificate the person accepted for this server"))
     unchecked: bool = field(default=False, metadata=option("Add it without asking the server first (an account in use in another program, imported)"))
@@ -506,7 +507,7 @@ def account_add_dav(engine: Engine, parameters: AddDavParameters) -> AccountAddR
     url = web_address(parameters.url)
     username = parameters.username.strip()
     if not username:
-        raise UsageError("Type the user name")
+        raise UsageError("Type the sign-in name")
     fingerprint = parameters.fingerprint.strip()
     if not parameters.unchecked:
         with _new_client(engine, url, username, parameters.password, fingerprint) as client:

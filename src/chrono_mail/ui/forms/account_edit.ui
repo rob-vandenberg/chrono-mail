@@ -13,7 +13,10 @@
        <item row="0" column="0">
         <widget class="QLabel" name="accountNameLabel">
          <property name="text">
-          <string>Account name</string>
+          <string>Shown as</string>
+         </property>
+         <property name="toolTip">
+          <string>The name Chrono Mail shows for this account; only you see it</string>
          </property>
          <property name="buddy">
           <cstring>accountName</cstring>
@@ -27,6 +30,9 @@
         <widget class="QLabel" name="yourNameLabel">
          <property name="text">
           <string>Your name</string>
+         </property>
+         <property name="toolTip">
+          <string>Goes out with your mail, before your e-mail address</string>
          </property>
          <property name="buddy">
           <cstring>yourName</cstring>
@@ -192,7 +198,10 @@
          <item row="1" column="0">
           <widget class="QLabel" name="davUsernameLabel">
            <property name="text">
-            <string>User name</string>
+            <string>Sign-in name</string>
+           </property>
+           <property name="toolTip">
+            <string>What you sign in to the server with</string>
            </property>
            <property name="buddy">
             <cstring>davUsername</cstring>

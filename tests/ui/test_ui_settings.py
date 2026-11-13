@@ -14,9 +14,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.4.595"
+__version__ = "test_ui_settings.py 4.4.603"
 
 # --- Version history ----------------------------------------------------
+# v4.4.603: the labels Shown as and Sign-in name (D-342)
 # v4.4.595: the Add window has the incoming user name and password on its Account tab; Edit account keeps them with the server (D-336, D-186)
 # v4.2.431: the start at login's reason is in its (i), not in a hover text
 # v4.2.424: the ticks of the notification area sit in rows of their own with their (i) (D-294)
@@ -151,9 +152,9 @@ def test_both_account_windows_have_the_same_server_boxes(world: World, qtbot: Qt
     qtbot.addWidget(edit)
     qtbot.addWidget(add)
     for adding, editing in ((add.servers.incoming_group, edit.servers.incoming_group), (add.servers.outgoing_group, edit.servers.outgoing_group)):
-        login_moved = ("User name", "Password") if adding is add.servers.incoming_group else ()  # on the Add window's Account tab (D-336)
+        login_moved = ("Sign-in name", "Password") if adding is add.servers.incoming_group else ()  # on the Add window's Account tab (D-336)
         assert [row.replace("New password", "Password") for row in server_rows(editing) if row.replace("New password", "Password") not in login_moved] == server_rows(adding)
-    assert server_rows(edit.servers.outgoing_group) == ["Server", "Security", "Port", "Use the same user name and password as for incoming mail", "User name", "New password"]
+    assert server_rows(edit.servers.outgoing_group) == ["Server", "Security", "Port", "Use the same sign-in name and password as for incoming mail", "Sign-in name", "New password"]
     assert edit.password.placeholderText() == "(unchanged)" and add.password.placeholderText() == ""
     edit.outgoing_port.setValue(2525)  # typed: stays
     edit.outgoing_security.setCurrentIndex(edit.outgoing_security.findData("tls"))
@@ -276,12 +277,12 @@ def test_both_account_windows_have_account_name_your_name_and_address(world: Wor
     for dialog in (added, edited):
         form = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.account_name) >= 0)
         rows = name_rows(form)
-        start = rows.index("Account name")
-        assert rows[start : start + 3] == ["Account name", "Your name", "E-mail address"]
+        start = rows.index("Shown as")
+        assert rows[start : start + 3] == ["Shown as", "Your name", "E-mail address"]  # one name per meaning (D-342)
         if dialog is edited:
-            assert "User name" not in rows and "Password" not in rows  # the login is with each server (D-186)
+            assert "Sign-in name" not in rows and "Password" not in rows  # the login is with each server (D-186)
         else:
-            assert rows[start + 3 : start + 5] == ["User name", "Password"]  # the Add window: the incoming login on the Account tab (D-336)
+            assert rows[start + 3 : start + 5] == ["Sign-in name", "Password"]  # the Add window: the incoming login on the Account tab (D-336)
         assert "Name" not in rows
         assert isinstance(dialog.account_name, QLineEdit) and dialog.account_name.text() == ""
 
@@ -315,7 +316,7 @@ def test_the_outgoing_login_follows_the_incoming_one_while_ticked(world: World, 
         outgoing = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.outgoing_host) >= 0)
         assert incoming.indexOf(dialog.username) >= 0 and incoming.indexOf(dialog.password) >= 0
         assert outgoing.indexOf(dialog.same_login) < outgoing.indexOf(dialog.outgoing_username) < outgoing.indexOf(dialog.outgoing_password)
-        assert dialog.same_login.text() == "Use the same user name and password as for incoming mail" and dialog.same_login.isChecked()
+        assert dialog.same_login.text() == "Use the same sign-in name and password as for incoming mail" and dialog.same_login.isChecked()
         assert not dialog.outgoing_username.isEnabled() and not dialog.outgoing_password.isEnabled()  # greyed, not hidden
         dialog.username.setText("someone")
         assert dialog.outgoing_username.text() == "someone"

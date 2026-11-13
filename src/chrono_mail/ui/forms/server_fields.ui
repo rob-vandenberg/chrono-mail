@@ -63,7 +63,10 @@
       <item row="3" column="0">
        <widget class="QLabel" name="usernameLabel">
         <property name="text">
-         <string>User name</string>
+         <string>Sign-in name</string>
+        </property>
+        <property name="toolTip">
+         <string>What you sign in to the server with</string>
         </property>
         <property name="buddy">
          <cstring>username</cstring>
@@ -137,14 +140,17 @@
       <item row="3" column="1">
        <widget class="QCheckBox" name="sameLogin">
         <property name="text">
-         <string>Use the same user name and password as for incoming mail</string>
+         <string>Use the same sign-in name and password as for incoming mail</string>
         </property>
        </widget>
       </item>
       <item row="4" column="0">
        <widget class="QLabel" name="outgoingUsernameLabel">
         <property name="text">
-         <string>User name</string>
+         <string>Sign-in name</string>
+        </property>
+        <property name="toolTip">
+         <string>What you sign in to the server with</string>
         </property>
         <property name="buddy">
          <cstring>outgoingUsername</cstring>
