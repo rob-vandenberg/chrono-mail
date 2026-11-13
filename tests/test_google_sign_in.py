@@ -22,9 +22,10 @@ from tests.fakedav import FakeDav
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_sign_in.py 4.4.593"
+__version__ = "test_google_sign_in.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: a calendar owned by either of Google's two names for you is your own; each Google account keeps its own kind (D-335)
 # v4.4.593: Initial tests: Google sign-in, its access codes, the two Google accounts, signing in again, Bearer for DAV (D-335)
 
 CLIENT = GoogleClient("id-123.apps.googleusercontent.com", "GOCSPX-test")
@@ -335,3 +336,55 @@ def test_the_program_ending_stops_a_sign_in_that_waits(monkeypatch: pytest.Monke
     with pytest.raises(AuthenticationError, match="stopped"):
         waiter.wait(30, stop)
 
+
+
+def test_a_calendar_owned_by_either_of_googles_two_names_for_you_is_your_own() -> None:
+    from xml.etree import ElementTree
+
+    from chrono_mail.engine.google_access import google_kinds
+    from chrono_mail.protocols.dav import DavEntry, _collections_of, _place  # pyright: ignore[reportPrivateUsage]
+
+    def calendar(owner: str) -> DavEntry:
+        kinds = ElementTree.fromstring('<d:resourcetype xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:collection/><c:calendar/></d:resourcetype>')
+        holder = ElementTree.fromstring(f'<d:owner xmlns:d="DAV:"><d:href>{owner}</d:href></d:owner>')
+        return DavEntry("/caldav/v2/ann/events/", 200, {"{DAV:}resourcetype": kinds, "{DAV:}owner": holder})
+
+    mine = frozenset(_place(name) for name in ("/caldav/v2/ann%40gmail.com/user", "/carddav/v1/principals/ann@gmail.com"))  # as homes() keeps them
+    assert not _collections_of(calendar("/caldav/v2/ann%40gmail.com/user"), principals=mine)[0].shared
+    assert _collections_of(calendar("/caldav/v2/esther%40gmail.com/user"), principals=mine)[0].shared  # someone else's stays someone else's
+    assert google_kinds("https://apidata.googleusercontent.com/caldav/v2/ann/user") == {"events", "tasks"}
+    assert google_kinds("https://www.googleapis.com/.well-known/carddav") == {"contacts"} and google_kinds("https://dav.example.com/") == frozenset()
+
+
+def test_a_place_that_names_your_homes_but_no_principal_is_taken_as_you(monkeypatch: pytest.MonkeyPatch) -> None:
+    from collections.abc import Iterable
+    from xml.etree import ElementTree
+
+    from chrono_mail.protocols.dav import DavEntry
+
+    home = ElementTree.fromstring('<c:calendar-home-set xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:href>/caldav/v2/ann/</d:href></c:calendar-home-set>')
+
+    def propfind(self: DavClient, path: str, properties: Iterable[tuple[str, str]], depth: int = 0) -> list[DavEntry]:
+        return [DavEntry("/caldav/v2/ann%40gmail.com/user", 207, {"{urn:ietf:params:xml:ns:caldav}calendar-home-set": home})]  # as Google answers
+
+    monkeypatch.setattr(DavClient, "propfind", propfind)
+    with DavClient("https://apidata.googleusercontent.com/caldav/v2/ann%40gmail.com/user", "", "", bearer="x") as client:
+        assert client.homes()[0] == "/caldav/v2/ann/"
+        assert client._principals  # pyright: ignore[reportPrivateUsage]  # Google's calendar address is the user: the own calendar is never someone else's (D-335)
+
+
+def test_a_kind_the_account_no_longer_keeps_goes_here_once_and_stays_on_the_server(tmp_path: Path) -> None:
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.pimstore import PimStore
+    from chrono_mail.sync.davsync import sync_dav
+    from tests.test_sync_dav import fill
+
+    with FakeDav() as server:
+        fill(server)
+        store = PimStore.create(tmp_path / "pim", None, durable=False)
+        state = tmp_path / "pim" / "dav-state.json"
+        sync_dav(DavClient(server.url, "ann", "secret"), store, state, durable=False)  # as 4.4.596 did: the address book came too
+        assert store.collections(CollectionKind.CONTACTS)
+        report = sync_dav(DavClient(server.url, "ann", "secret", kinds=frozenset({"events", "tasks"})), store, state, durable=False)
+        assert not store.collections(CollectionKind.CONTACTS) and store.collections(CollectionKind.EVENTS)  # gone here (D-335)
+        assert report.errors == [] and "c1.vcf" in server.collections["contacts"].items  # no error line, and the server keeps it

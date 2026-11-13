@@ -17,9 +17,11 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.593"
+__version__ = "dav.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: kinds: a client that keeps only some kinds of folder; a collection is someone else's only when none of this user's principals owns it: Google names one for calendars and one for
+#           contacts, and the second one no longer replaces the first (D-335)
 # v4.4.593: bearer: Google sign-in's access code instead of a user name and password; a refusal of it asks to sign in again (D-335)
 # v4.4.542: the connection can be hung up at the end of the program
 # v4.4.512: RemoteCollection.shared: a collection whose DAV:owner is not this user is someone else's (D-310)
@@ -255,6 +257,7 @@ class DavClient:
 
     def __init__(
         self, base_url: str, username: str, password: str, trusted: frozenset[str] = frozenset(), timeout: float = 30.0, bearer: str = "",
+        kinds: frozenset[str] = frozenset(),
     ) -> None:
         parsed = urllib.parse.urlsplit(base_url)
         if parsed.scheme not in ("https", "http") or not parsed.hostname:
@@ -265,6 +268,7 @@ class DavClient:
         self.host: str = parsed.hostname
         self.port: int = parsed.port or (443 if parsed.scheme == "https" else 80)
         self.base_path: str = parsed.path or "/"
+        self._kinds: frozenset[str] = kinds  # only these kinds of folder (events, tasks, contacts); none: every kind (D-335: Google's calendars and contacts are two accounts)
         self._bearer: bool = bool(bearer)  # Google sign-in: an access code instead of a user name and password (D-335)
         self._authorization: str = f"Bearer {bearer}" if bearer else "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii") if username or password else ""
         self._context: ssl.SSLContext | None = context_for(trusted, ConnectionSecurity.TLS, "https") if parsed.scheme == "https" else None
@@ -274,7 +278,12 @@ class DavClient:
         self._last_used: float = 0.0  # time.monotonic() of its last answer
         self._lock: threading.Lock = threading.Lock()  # one request at a time on the connection
         self._addresses: list[tuple[str, int]] = []  # where the server's name led, looked up once per client (empty: not yet, or forgotten)
-        self._principal: str = ""  # this user on the server, as homes() found it ("": not known, then no collection counts as someone else's)
+        self._principals: set[str] = set()  # this user on the server, every way homes() found it (Google: one for calendars, one for contacts); none known: no collection counts as someone else's
+
+    @property
+    def kinds(self) -> frozenset[str]:
+        """The kinds of folder this client keeps (events, tasks, contacts); empty: every kind."""
+        return self._kinds
 
     def close(self) -> None:
         """Close the connection kept open (the next request opens a new one)."""
@@ -452,10 +461,14 @@ class DavClient:
             except DavError:
                 continue
             for entry in entries[:1]:
+                own_homes = entry.hrefs(f"{{{CALDAV}}}calendar-home-set") + entry.hrefs(f"{{{CARDDAV}}}addressbook-home-set")
+                if own_homes:  # a place that names this user's homes is this user (Google's calendar address names no principal, D-335)
+                    self._principals.add(_place(entry.href))
                 calendar_home = calendar_home or next(iter(entry.hrefs(f"{{{CALDAV}}}calendar-home-set")), "")
                 address_home = address_home or next(iter(entry.hrefs(f"{{{CARDDAV}}}addressbook-home-set")), "")
                 principal = next(iter(entry.hrefs(f"{{{DAV}}}current-user-principal")), "")
-                self._principal = principal or self._principal
+                if principal:
+                    self._principals.add(_place(principal))  # every answer: a second one (Google's contacts) never replaces the first (D-335)
                 if principal and (not calendar_home or not address_home) and principal not in tried:
                     tried.add(principal)
                     try:
@@ -483,7 +496,7 @@ class DavClient:
             for entry in self.propfind(home, properties, depth=1):
                 if entry.href.rstrip("/") == home.rstrip("/"):
                     continue
-                found.extend(_collections_of(entry, principal=self._principal))
+                found.extend(_collections_of(entry, principals=frozenset(self._principals)))
         return found
 
     def public_collections(self, calendar_home: str, address_home: str) -> list[RemoteCollection]:
@@ -506,7 +519,7 @@ class DavClient:
             for entry in entries:
                 if entry.href.rstrip("/") == place.rstrip("/"):
                     continue
-                found.extend(_collections_of(entry, public=True, principal=self._principal))
+                found.extend(_collections_of(entry, public=True, principals=frozenset(self._principals)))
         return found
 
     def all_collections(self) -> list[RemoteCollection]:
@@ -515,7 +528,7 @@ class DavClient:
         found: list[RemoteCollection] = []
         seen: set[str] = set()
         for collection in self.collections(calendar_home, address_home) + self.public_collections(calendar_home, address_home):
-            if folder_key(collection) not in seen:
+            if folder_key(collection) not in seen and (not self._kinds or collection.kind in self._kinds):
                 seen.add(folder_key(collection))
                 found.append(collection)
         return found
@@ -746,7 +759,7 @@ def _place(href: str) -> str:
     return canonical_href(urllib.parse.urlsplit(href).path).rstrip("/")
 
 
-def _collections_of(entry: DavEntry, public: bool = False, principal: str = "") -> list[RemoteCollection]:
+def _collections_of(entry: DavEntry, public: bool = False, principals: frozenset[str] = frozenset()) -> list[RemoteCollection]:
     types = entry.properties.get(f"{{{DAV}}}resourcetype")
     kinds = {child.tag for child in types} if types is not None else set()
     if f"{{{DAV}}}collection" not in kinds:
@@ -759,7 +772,7 @@ def _collections_of(entry: DavEntry, public: bool = False, principal: str = "") 
     writable = privileges is None or any(item.tag in (f"{{{DAV}}}write", f"{{{DAV}}}all", f"{{{DAV}}}write-content", f"{{{DAV}}}bind") for item in privileges.iter())
     read_only = not writable
     owner = next(iter(entry.hrefs(f"{{{DAV}}}owner")), "")
-    shared = bool(owner and principal) and _place(owner) != _place(principal)  # a server that does not say: the user's own
+    shared = bool(owner and principals) and _place(owner) not in principals  # owned by none of this user's principals; a server that does not say: the user's own
     if f"{{{CARDDAV}}}addressbook" in kinds:
         return [RemoteCollection(entry.href, name, "contacts", "VCARD", "", read_only, ctag, token, public, shared)]
     if f"{{{CALDAV}}}calendar" not in kinds:

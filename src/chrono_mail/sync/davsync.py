@@ -53,9 +53,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.555"
+__version__ = "davsync.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: a folder of a kind the account no longer keeps (Google Calendar's address book) is dropped here once, never on the server (D-335)
 # v4.4.555: organizer_later: a waiting copy goes without its organizer first, so the server mails nothing; a conflict or a delete drops that (D-310)
 # v4.4.515: an item link remembers what a waiting delete needs first (before_delete): the corrected copy goes to the server, the delete only after it confirmed that (D-310)
 # v4.4.512: a collection remembers whether it is someone else's ("shared", D-310)
@@ -363,6 +364,13 @@ def sync_dav(
             state.save()
     for info in store.collections() if push else ():  # a first fill takes nothing away here
         href = canonical_href(info.server_value("href"))
+        if href and client.kinds and info.kind.value not in client.kinds:
+            # a kind this account no longer keeps (Google Calendar's copy of the address book, D-335): dropped here as an unticked folder,
+            # never on the server; with changes not sent yet it stays until they are
+            if not unsent_changes(store, info, state_path):
+                store.delete_collection(info.collection_id)
+                state.collections.pop(info.collection_id, None)
+            continue
         if href and (href, info.server_value("component")) not in wanted_keys:
             _gone_from_list(client, store, info, state, looks or {}, report)
     state.save()

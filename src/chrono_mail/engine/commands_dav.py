@@ -9,7 +9,7 @@ from chrono_mail.core import AccountKind, AuthenticationError, CertificateError,
 from chrono_mail.core.account import Account, ConnectionSecurity, ServerSettings
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountAddResult, AccountSummary, _refuse_same_account, _summary
-from chrono_mail.engine.google_access import google_bearer
+from chrono_mail.engine.google_access import google_bearer, google_kinds
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.newkey import recovery_code_not_stored
 from chrono_mail.engine.pimaccess import open_pim
@@ -21,9 +21,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.4.593"
+__version__ = "commands_dav.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: Google Calendar keeps only calendars, Google Contacts only address books (D-335)
 # v4.4.593: a Google account reaches its server with the access code of its sign-in (D-335)
 # v4.4.510: the synchronisation also keeps whether the server always mails the answers and the addresses it knows as this user (D-310)
 # v4.4.505: each synchronisation records whether the server announces that it mails the answers to invitations itself
@@ -77,7 +78,7 @@ def _client(
     if trusted is None:
         trusted = _accepted_for(engine, settings, address)
     if settings.google:  # Google's calendars or contacts: the access code of its sign-in, no user name and password (D-335)
-        return DavClient(address, "", "", trusted, bearer=google_bearer(engine, settings))
+        return DavClient(address, "", "", trusted, bearer=google_bearer(engine, settings), kinds=google_kinds(address))
     return DavClient(address, user, secret, trusted)
 
 

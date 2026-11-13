@@ -14,9 +14,10 @@ from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, GoogleClie
 from tests.live.account import SETTINGS_DIRECTORY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_gmail.py 4.4.593"
+__version__ = "test_live_gmail.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: the own Google calendar is the account's own; Google Calendar keeps calendars, Google Contacts address books (D-335)
 # v4.4.593: Google sign-in's access code renewed and Google Calendar and Google Contacts reached with it (D-335)
 # v4.4.592: Initial live tests on the Gmail test account: login with an app password, Gmail's folders and roles, a refused password's advice (D-335)
 
@@ -63,4 +64,21 @@ def test_google_calendar_and_contacts_are_reached_with_the_renewed_access_code()
         assert any(collection.kind == "events" for collection in calendars.all_collections())
     with DavClient(CARDDAV_START, "", "", bearer=access) as contacts:
         assert any(collection.kind == "contacts" for collection in contacts.all_collections())
+
+
+def test_googles_own_calendar_is_yours_and_each_google_account_keeps_its_own_kind() -> None:
+    from chrono_mail.engine.google_access import google_kinds
+
+    user, _ = gmail_login()
+    codes = google_client_codes()
+    if codes is None or not GOOGLE_TOKEN_FILE.exists():
+        pytest.skip("the Google client file or the test account's Google sign-in is missing")
+    access, _ = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
+    calendars_url = CALDAV_START.format(address=urllib.parse.quote(user))
+    with DavClient(calendars_url, "", "", bearer=access, kinds=google_kinds(calendars_url)) as calendars:
+        found = calendars.all_collections()
+    assert found and {collection.kind for collection in found} <= {"events", "tasks"}  # no address book in Google Calendar (D-335)
+    assert not any(collection.shared for collection in found if collection.name == user)  # the account's own calendar is its own
+    with DavClient(CARDDAV_START, "", "", bearer=access, kinds=google_kinds(CARDDAV_START)) as contacts:
+        assert {collection.kind for collection in contacts.all_collections()} == {"contacts"}
 

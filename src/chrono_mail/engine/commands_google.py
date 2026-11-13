@@ -7,7 +7,7 @@ from chrono_mail.config import AccountSettings, AppConfig, ServerRole, new_accou
 from chrono_mail.core import AccountKind, ChronoMailError
 from chrono_mail.core.account import Account, ConnectionSecurity, ServerSettings
 from chrono_mail.engine.commands_accounts import _refuse_same_account
-from chrono_mail.engine.google_access import forget_access, google_client
+from chrono_mail.engine.google_access import forget_access, google_client, google_kinds
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.newkey import recovery_code_not_stored
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -17,9 +17,10 @@ from chrono_mail.protocols.dav import DavClient
 from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, SignInWaiter
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_google.py 4.4.593"
+__version__ = "commands_google.py 4.4.597"
 
 # --- Version history ----------------------------------------------------
+# v4.4.597: each part checks only its own kind of folder (D-335)
 # v4.4.593: Initial: Google sign-in in the person's browser; it adds Google Calendar and Google Contacts as two accounts of calendars and
 #           contacts, or signs an existing pair in again (D-335)
 
@@ -108,7 +109,7 @@ def _add(engine: Engine, address: str, refresh_token: str, access_token: str, wa
                          "Sign in with Google")
     wanted: list[tuple[str, str]] = []
     for name, url in missing:
-        with DavClient(url, "", "", bearer=access_token) as server:
+        with DavClient(url, "", "", bearer=access_token, kinds=google_kinds(url)) as server:
             if server.all_collections():
                 wanted.append((name, url))
     if not wanted:
