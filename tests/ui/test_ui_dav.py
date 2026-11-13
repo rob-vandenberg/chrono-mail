@@ -17,9 +17,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.2.497"
+__version__ = "test_ui_dav.py 4.4.605"
 
 # --- Version history ----------------------------------------------------
+# v4.4.605: Refresh in the sections is Send and Receive (D-344): no line of its own without a calendar server
 # v4.2.497: Link to: the fields stay greyed after a failed Add, the password always as dots; No mail account brings back what was typed;
 #           a Find answer after Link to was changed is let go (the owner, D-298)
 # v4.2.482: Link to a mail account fills its server and login in, greyed; the first entry is No mail account (the owner, D-298)
@@ -370,10 +371,7 @@ def test_refresh_in_the_sections_brings_the_server_in_and_says_so(world: World, 
     window = world.window
     window.reload_accounts(select_saved=False)
     wait(qtbot, lambda: bool(window.mail_state.all_accounts))  # noqa: SLF001
-    page = window.pages[CALENDAR]
-    page.act_refresh.trigger()
-    assert "No account has a calendar and contacts server" in window.status_label.text()
-    with FakeDav() as server:
+    with FakeDav() as server:  # Refresh is Send and Receive in every section (D-344): no line of its own without a calendar server
         mail = world.call("account.list")[0].account_id
         world.call("account.set-dav", account=mail, url=server.url, username="ann", password="secret")
         window.reload_accounts(select_saved=False)
@@ -382,13 +380,13 @@ def test_refresh_in_the_sections_brings_the_server_in_and_says_so(world: World, 
             server.add("events", f"r{number}.ics", event(f"r{number}", f"From the server {number}"))
             window.switch_section(section)
             window.pages[section].act_refresh.trigger()
-            assert not window.pages[section].act_refresh.isEnabled() and "synchronising" in window.status_label.text()
-            wait(qtbot, lambda: not window.checking.dav_syncing)  # noqa: SLF001
+            wait(qtbot, lambda: events_of(world, mail) == number + 1)  # Send and Receive: the Outbox first, then mail and calendars (D-344)
+            wait(qtbot, lambda: not window.checking.dav_syncing and not window.checking.checking and not window.checking.sending)  # noqa: SLF001
             assert all(item.act_refresh.isEnabled() for item in window.pages.values())
             assert events_of(world, mail) == number + 1
             wait(qtbot, lambda: "Calendars, contacts and tasks: 1 added or changed here. " in window.status_label.text())  # with the section's count
         window.pages[CONTACTS].act_refresh.trigger()
-        wait(qtbot, lambda: "are up to date" in window.status_label.text())
+        wait(qtbot, lambda: "are up to date" in window.status_label.text())  # (D-344: also through Send and Receive)
         qtbot.wait(500)  # the hidden sections re-read nothing that could cover it
         assert "are up to date" in window.status_label.text()
 

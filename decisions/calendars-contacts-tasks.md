@@ -63,3 +63,5 @@ See also: [[sync-conflicts]]
 - [[D-340]] Two Google colours of one name are one tag of one colour
 - [[D-341]] A Google colour is a tag of its own calendar
 - [[D-342]] One name per meaning in the account windows
+- [[D-343]] Renaming a Google calendar gives it a name only for you
+- [[D-344]] Refresh refreshes everything, in every section

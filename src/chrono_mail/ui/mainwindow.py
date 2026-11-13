@@ -72,9 +72,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.593"
+__version__ = "mainwindow.py 4.4.605"
 
 # --- Version history ----------------------------------------------------
+# v4.4.605: Refresh in Calendar, Contacts and Tasks is Send and Receive, as in Mail (D-344)
 # v4.4.593: every account the Add window added gets its first fill (Google: its calendars and its contacts, D-335)
 # v4.4.588: A tag renamed in Settings > Tags keeps its filter on in the four Tags blocks, Mail's view following (D-334)
 # v4.4.587: A sender's contact in an unticked address book opens in its own window (D-334)
@@ -515,7 +516,7 @@ class MainWindow(QMainWindow):
             self.content_stack.addWidget(page.content)
             page.status = lambda text, shown=page: self.checking.page_status(shown, text)
             page.panel.add_account_requested.connect(lambda kind=CARDDAV if page is self.contacts_page else CALDAV: self.add_calendar_account(kind))
-            page.servers = lambda: self.checking.refresh_calendars()
+            page.servers = lambda: self.checking.send_and_receive()  # Refresh does everything, whatever section is shown (the owner, D-344)
         self.content_splitter.addWidget(self.messages.pane)
         self.content_splitter.addWidget(self.reading_pane)
         self.splitter.setStretchFactor(0, 0)
@@ -1702,7 +1703,7 @@ class MainWindow(QMainWindow):
         """File > New, Refresh, Delete and Search do what the section that is shown needs."""
         page = self.pages.get(self._section)
         if page is not None:
-            {"new": page.new_item, "refresh": page.refresh_from_servers, "delete": page.delete_selected, "search": page.focus_search}[what]()
+            {"new": page.new_item, "refresh": self.checking.send_and_receive, "delete": page.delete_selected, "search": page.focus_search}[what]()
             return
         {"new": self.composing.new_message, "refresh": self.checking.send_and_receive, "delete": self.mail_actions.delete_selected, "search": self.search.focus}[what]()
 

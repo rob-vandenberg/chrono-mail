@@ -4,9 +4,10 @@ from enum import Enum
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR, SUGGESTED_EVENT_COLOURS
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim.py 4.2.438"
+__version__ = "pim.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: GOOGLE_NAME_BACK: a waiting empty name of a Google calendar (D-343)
 # v4.2.438: a calendar's own colour is named "Default calendar colour" (the owner)
 # v1.1.221: The palette belongs to the account (palette_of takes the account's colours, palette_problem); CollectionLook: a server collection's name and
 #           colour as Chrono Mail holds them, kept with the account (D-191, D-192)
@@ -94,6 +95,7 @@ def palette_problem(palette: tuple[PaletteColour, ...], own_name: str = "") -> s
 
 # How Chrono Mail holds the name or the colour of a collection of a server, compared with the server (D-192):
 LOOK_FOLLOWS: str = ""  # as the server has it (nothing kept)
+GOOGLE_NAME_BACK: str = "\x00Google's name"  # a kept name that waits to give a Google calendar Google's own name back (D-343); never a real name
 LOOK_WAITING: str = "waiting"  # changed here, not on the server yet: sent at the next synchronisation
 LOOK_KEPT: str = "kept"  # Chrono Mail's own, kept here: the server refused it or keeps none (a colour of an address book), or the two differed
 

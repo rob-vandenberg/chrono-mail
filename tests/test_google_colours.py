@@ -58,6 +58,10 @@ class FakeCalendarApi:
         self.patches: list[tuple[str, str]] = []  # (Google's id, the colorId sent; "" for none)
         self.lists: list[str] = []  # the sync token of each list ("" for a whole read)
         self.asked: int = 0  # every list request, also one Google refuses
+        self.own_names: dict[str, str] = {}  # calendar -> one's own name for it (calendarList summaryOverride, D-343)
+        self.refuses_own_names: bool = False  # a PATCH of one's calendar list is answered 403
+        self.unknown_own_names: bool = False  # a PATCH of one's calendar list is answered 404 (Google does not know the calendar there)
+        self.own_name_asks: int = 0
         self._server: ThreadingHTTPServer | None = None
 
     def add(self, event_id: str, uid: str, colour: str = "", series: str = "", original: str = "", label: str = "") -> None:
@@ -102,7 +106,10 @@ class FakeCalendarApi:
                     api.answer_calendar(self)
 
             def do_PATCH(self) -> None:  # noqa: N802
-                api.answer_patch(self)
+                if "/users/me/calendarList/" in self.path:
+                    api.answer_own_name(self)
+                else:
+                    api.answer_patch(self)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
@@ -169,6 +176,24 @@ class FakeCalendarApi:
             return
         labels = [{"id": label, "backgroundColor": colour, **({"name": name} if name else {})} for label, (name, colour) in sorted(self.labels.items())]
         self.send(handler, 200, {"labelProperties": {"eventLabels": labels}})
+
+    def answer_own_name(self, handler: BaseHTTPRequestHandler) -> None:
+        """One's own name for a calendar (D-343): kept apart from the calendar's own name, which stays "Calendar"."""
+        calendar = urllib.parse.unquote(urllib.parse.urlsplit(handler.path).path.rsplit("/", 1)[1])
+        body = json.loads(handler.rfile.read(int(handler.headers.get("Content-Length", "0"))))
+        self.own_name_asks += 1
+        if self.busy:
+            self.send(handler, 503, {"error": {"message": "Backend Error"}})
+            return
+        if self.refuses_own_names or self.unknown_own_names:
+            self.send(handler, 404 if self.unknown_own_names else 403, {"error": {"message": "Not Found" if self.unknown_own_names else "Forbidden"}})
+            return
+        name = body.get("summaryOverride")
+        if name:
+            self.own_names[calendar] = str(name)
+        else:
+            self.own_names.pop(calendar, None)
+        self.send(handler, 200, {"summary": "Calendar", **({"summaryOverride": self.own_names[calendar]} if calendar in self.own_names else {})})
 
     def answer_patch(self, handler: BaseHTTPRequestHandler) -> None:
         if self.limited:

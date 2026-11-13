@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CertificateError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
+from chrono_mail.core import GOOGLE_NAME_BACK, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CertificateError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
 from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import ready_to_delete, with_organizer
 from chrono_mail.pim.merge import Clash, merge
@@ -23,6 +23,7 @@ from chrono_mail.protocols.dav import (
     folder_key,
     passing_failure,
 )
+from chrono_mail.protocols.google import EventGone, GoogleRefused, calendar_id_of, set_own_name
 from chrono_mail.sync.davcreates import forget as forget_create
 from chrono_mail.sync.davcreates import load_waiting as load_creates
 from chrono_mail.sync.davcreates import make_on_server, tie_for
@@ -53,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.597"
+__version__ = "davsync.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: a Google calendar's name is sent as one's own name for it, never the calendar's own name (D-343)
 # v4.4.597: a folder of a kind the account no longer keeps (Google Calendar's address book) is dropped here once, never on the server (D-335)
 # v4.4.555: organizer_later: a waiting copy goes without its organizer first, so the server mails nothing; a conflict or a delete drops that (D-310)
 # v4.4.515: an item link remembers what a waiting delete needs first (before_delete): the corrected copy goes to the server, the delete only after it confirmed that (D-310)
@@ -211,12 +213,30 @@ LATER: str = "later"  # a passing failure: tried again at the next synchronisati
 PART_STATUS_DEPENDENT: int = 424  # "not done because another part of the same request failed"
 
 
-def send_look(client: DavClient, href: str, name: str | None, colour: str | None) -> tuple[dict[str, str], str]:
-    """Give a collection on the server this name and/or colour: per part ("name", "colour") DONE, REFUSED or LATER, and the reason of a failure.
-    A part the server left undone only because the other part failed is asked again on its own."""
+def send_look(client: DavClient, href: str, name: str | None, colour: str | None) -> tuple[dict[str, str], str, str]:
+    """Give a collection on the server this name and/or colour: per part ("name", "colour") DONE, REFUSED or LATER, the reason of a failure,
+    and the name the server shows now when it chose it ("": the one sent). A part the server left undone only because the other part failed is
+    asked again on its own. A Google calendar's name is one's own name for it, never the calendar's own name for everyone (D-343)."""
+    google = calendar_id_of(href) if client.access and name is not None else ""
+    if google:
+        assert name is not None
+        try:
+            shown = set_own_name(client.access, google, "" if name == GOOGLE_NAME_BACK else name)
+        except AuthenticationError:
+            raise
+        except (GoogleRefused, EventGone) as error:  # Google does not know the calendar in one's list (404) or says no: asking again changes nothing
+            own: tuple[dict[str, str], str, str] = ({"name": REFUSED}, str(error), "")
+        except ProtocolError as error:
+            own = ({"name": LATER}, str(error), "")
+        else:
+            own = ({"name": DONE}, "", shown)
+        if colour is None:
+            return own
+        outcomes, reason, _ = send_look(client, href, None, colour)
+        return {**own[0], **outcomes}, own[1] or reason, own[2]
     wanted = {part: value for part, value in (("name", name), ("colour", colour)) if value is not None}
     if not wanted:
-        return {}, ""
+        return {}, "", ""
     try:
         statuses = client.set_collection(href, name, colour)
         if len(wanted) == 2 and PART_STATUS_DEPENDENT in statuses.values():
@@ -224,10 +244,10 @@ def send_look(client: DavClient, href: str, name: str | None, colour: str | None
                 if status == PART_STATUS_DEPENDENT:
                     statuses.update(client.set_collection(href, wanted[part] if part == "name" else None, wanted[part] if part == "colour" else None))
     except ProtocolError as error:
-        return {part: LATER if passing_failure(error) else REFUSED for part in wanted}, str(error)
+        return {part: LATER if passing_failure(error) else REFUSED for part in wanted}, str(error), ""
     outcomes = {part: DONE if 200 <= statuses.get(part, 0) < 300 else REFUSED for part in wanted}
     refused = [f"{part} {statuses.get(part, 0)}" for part, outcome in outcomes.items() if outcome == REFUSED]
-    return outcomes, ("the server answered " + ", ".join(refused)) if refused else ""
+    return outcomes, ("the server answered " + ", ".join(refused)) if refused else "", ""
 
 
 def _settle(value: str, state: str, base: str, server: str) -> tuple[str, str, str, str]:
@@ -271,14 +291,22 @@ def _follow(
     colour, colour_state, base_colour, colour_step = _settle(look.colour, look.colour_state, look.base_colour, remote.colour)
     if colour_step == "send" and remote.kind == "contacts":
         colour_state, colour_step = LOOK_KEPT, ""  # an address book has no colour on the server: it is kept here
-    clashes = ((Clash("name", "Name", name, remote.name),) if name_step == "clash" else ()) + (
+    shown = remote.name if name == GOOGLE_NAME_BACK else name  # Google's own name, waiting to come back: the server's name shows until it answers
+    if name == GOOGLE_NAME_BACK and name_step == "clash":
+        name_step, base_name = "send", remote.name  # the calendar's name changed meanwhile: Google's name back still holds, nothing to choose
+    clashes = ((Clash("name", "Name", shown, remote.name),) if name_step == "clash" else ()) + (
         (Clash("colour", "Colour", colour, remote.colour),) if colour_step == "clash" else ()
     )
     refused = ""
     if push and (name_step == "send" or colour_step == "send"):  # without push a waiting name or colour stays waiting
-        outcomes, reason = send_look(client, remote.href, name if name_step == "send" else None, colour if colour_step == "send" else None)
+        outcomes, reason, google_shows = send_look(client, remote.href, name if name_step == "send" else None, colour if colour_step == "send" else None)
         if outcomes.get("name") == DONE:
             name_state, base_name = LOOK_FOLLOWS, ""
+            shown = google_shows or shown  # the name Google shows now (its own name back after an empty one)
+            name = shown
+        elif outcomes.get("name") == REFUSED and name == GOOGLE_NAME_BACK:
+            name_state, base_name = LOOK_FOLLOWS, ""  # Google keeps the name you gave it: said once, nothing kept
+            report.errors.append(f"{local.name}: Google kept this name ({reason})")
         elif outcomes.get("name") == REFUSED:
             name_state = LOOK_KEPT
             refused = reason or "the server did not take the name"
@@ -287,12 +315,12 @@ def _follow(
         elif outcomes.get("colour") == REFUSED:
             colour_state = LOOK_KEPT
             report.errors.append(f"{local.name}: the server did not take its colour ({reason}); Chrono Mail keeps it on this computer")
-    _look_conflict(store, local, remote, clashes, refused, name_state == LOOK_KEPT and name != remote.name, name, report)
+    _look_conflict(store, local, remote, clashes, refused, name_state == LOOK_KEPT and shown != remote.name, shown, report)
     settled = CollectionLook(key, name if name_state != LOOK_FOLLOWS else "", name_state, base_name, colour if colour_state != LOOK_FOLLOWS else "", colour_state, base_colour)
     now: CollectionLook | None = None if settled.empty else settled
     if now != kept:
         report.looks[key] = now
-    shown_name = name + (PUBLIC_SUFFIX if remote.public else "")
+    shown_name = shown + (PUBLIC_SUFFIX if remote.public else "")
     server = {**dict(local.server), "followed": "1", "public": "1" if remote.public else "", "shared": "1" if remote.shared else ""}
     if shown_name != local.name or colour != local.colour or server != dict(local.server):
         local = store.update_collection(local.collection_id, name=shown_name, colour=colour, server=server)

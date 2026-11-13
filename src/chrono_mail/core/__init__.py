@@ -20,6 +20,7 @@ from chrono_mail.core.folder import Folder, FolderRole
 from chrono_mail.core.message import MessageRef
 from chrono_mail.core.names import displayed_address, shown_name, written_address
 from chrono_mail.core.pim import (
+    GOOGLE_NAME_BACK,
     LOOK_FOLLOWS,
     LOOK_KEPT,
     LOOK_WAITING,
@@ -58,6 +59,7 @@ __version__ = "__init__.py 4.4.517"
 __all__ = [
     "CollectionInfo",
     "CollectionLook",
+    "GOOGLE_NAME_BACK",
     "LOOK_FOLLOWS",
     "LOOK_KEPT",
     "LOOK_WAITING",

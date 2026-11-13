@@ -3,19 +3,21 @@
 
 from dataclasses import replace
 
-from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, ChronoMailError, CollectionInfo, CollectionKind, CollectionLook, is_colour
+from chrono_mail.core import GOOGLE_NAME_BACK, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, ChronoMailError, CollectionInfo, CollectionKind, CollectionLook, is_colour
 from chrono_mail.engine.commands_dav import _client, _lock_for, keep_looks
 from chrono_mail.engine.pimaccess import account_name
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import canonical_href
+from chrono_mail.protocols.google import calendar_id_of
 from chrono_mail.sync.davsync import DONE, LATER, PUBLIC_SUFFIX, REFUSED, send_look, server_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "collection_looks.py 1.1.223"
+__version__ = "collection_looks.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: a Google calendar's rename is one's own name for it, on Google first; an empty name gives Google's name back (D-343)
 # v1.1.223: The client is closed when the change is sent (R-36)
 # v1.1.221: Initial: a server collection's name and colour on the server first; offline kept and sent later; a refusal kept and told (D-192)
 
@@ -49,7 +51,8 @@ def change_look(engine: Engine, account_id: str, store: PimStore, info: Collecti
         raise UsageError(f"This {KIND_WORDS[info.kind]} is read only on its server: its name and colour are the server's")
     new_name = " ".join(name.split()) if name is not None else None
     new_colour = colour.strip().lower() if colour is not None else None
-    if new_name is not None and (not new_name or len(new_name) > 200):
+    own = own_name(settings.google, info)  # a Google calendar: its name is one's own name for it; empty gives Google's name back (D-343)
+    if new_name is not None and ((not new_name and not own) or len(new_name) > 200):
         raise UsageError("A name of up to 200 characters is needed")
     if new_colour is not None and new_colour and not is_colour(new_colour):
         raise UsageError("A colour is written #rrggbb")
@@ -62,34 +65,45 @@ def change_look(engine: Engine, account_id: str, store: PimStore, info: Collecti
         if new_name is not None and public and new_name.endswith(PUBLIC_SUFFIX):
             new_name = new_name[: -len(PUBLIC_SUFFIX)]
         shown_name = server_name(current)
-        send_name = new_name if new_name is not None and new_name != shown_name else None
+        send_name = new_name if new_name is not None and (new_name != shown_name or look.name == GOOGLE_NAME_BACK) else None  # (the name shown, typed again: Google's name back is called off)
         send_colour = new_colour if new_colour is not None and new_colour != current.colour else None
         if send_colour == "":
             send_colour = None  # a colour is never taken away on the server
         outcomes: dict[str, str] = {}
-        reason = ""
+        reason, google_shows = "", ""
         to_server_colour = send_colour if current.kind is not CollectionKind.CONTACTS else None
         if send_name is not None or to_server_colour is not None:
             try:
                 with _client(engine, settings) as client:
-                    outcomes, reason = send_look(client, current.server_value("href"), send_name, to_server_colour)
+                    outcomes, reason, google_shows = send_look(client, current.server_value("href"), send_name, to_server_colour)
             except ChronoMailError as error:  # no password stored, for one: tried again at the next synchronisation
                 outcomes, reason = {part: LATER for part, value in (("name", send_name), ("colour", to_server_colour)) if value is not None}, str(error)
         if send_name is not None:
-            value, state, base = _part(send_name, look.name, look.name_state, look.base_name, shown_name, outcomes["name"])
+            waiting = send_name or GOOGLE_NAME_BACK  # an empty name of a Google calendar: Google's own name back, kept as such while it waits
+            value, state, base = _part(waiting, look.name, look.name_state, look.base_name, shown_name, outcomes["name"])
+            if waiting == GOOGLE_NAME_BACK and outcomes["name"] == REFUSED:
+                value, state, base = "", LOOK_FOLLOWS, ""  # Google keeps the name you gave it: nothing to keep here, said once
+                del outcomes["name"]
+                engine.notice(f"{current.name}: Google kept the name it had ({reason})")
             look = replace(look, name=value, name_state=state, base_name=base)
         if send_colour is not None:
             outcome = outcomes.get("colour", REFUSED)  # an address book's: kept here, without a word (the server has no place for it)
             value, state, base = _part(send_colour, look.colour, look.colour_state, look.base_colour, current.colour, outcome)
             look = replace(look, colour=value, colour_state=state, base_colour=base)
+        here = google_shows or send_name  # the name Google shows now (its own again after an empty one); an empty one not sent yet keeps the old
         changed = store.update_collection(
-            current.collection_id, (send_name + (PUBLIC_SUFFIX if public else "")) if send_name is not None else None, send_colour,
+            current.collection_id, (here + (PUBLIC_SUFFIX if public else "")) if here else None, send_colour,
         )
         now: CollectionLook | None = None if look.empty else look
         if now != kept:
             keep_looks(engine, account_id, {key: kept}, {key: now})
     _tell(engine, account_id, changed, outcomes, reason)
     return changed
+
+
+def own_name(google: bool, info: CollectionInfo) -> bool:
+    """Whether a collection's name is one's own name for it (a calendar of a Google account, D-343), not its name for everyone."""
+    return google and info.kind is not CollectionKind.CONTACTS and bool(calendar_id_of(info.server_value("href")))
 
 
 def _tell(engine: Engine, account_id: str, info: CollectionInfo, outcomes: dict[str, str], reason: str) -> None:

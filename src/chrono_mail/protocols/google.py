@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.4.599"
+__version__ = "google.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: set_own_name: one's own name for a calendar, never the calendar's own name (D-343)
 # v4.4.599: The labels of a Google calendar (the colours a person made and named there): read per calendar, set on an event (D-338)
 # v4.4.598: Google's Calendar API for the colours of events: read a calendar's colours (only the changes after the first time), set one event's colour (D-337)
 # v4.4.593: Initial Google sign-in (each connection to the answer address served on its own, an idle one closed after 10 s) (OAuth with PKCE, the answer on this computer's own address) and its access codes (D-335)
@@ -307,6 +308,16 @@ def set_label(access: str, calendar: str, event_id: str, label_id: str) -> None:
     again. Google reads the label only when the request says so, and then it reads no colour at all (seen live)."""
     url = f"{_events_url(calendar)}/{urllib.parse.quote(event_id, safe='')}?eventLabelVersion={LABEL_VERSION}&fields=id"
     _api(access, "PATCH", url, {"colorId": None, "eventLabelId": label_id})
+
+
+def set_own_name(access: str, calendar: str, name: str) -> str:
+    """One's own name for a calendar on Google (its entry in one's calendar list, summaryOverride): it changes the name only for this person, never
+    the calendar's own name, which a CalDAV rename changes for everyone (seen live, D-343). An empty name takes it away. Returns the name Google
+    shows for the calendar now: one's own, else the calendar's."""
+    url = f"{CALENDAR_API}/users/me/calendarList/{urllib.parse.quote(calendar, safe='')}?fields=summary,summaryOverride"
+    answer = _api(access, "PATCH", url, {"summaryOverride": name or None})
+    own, shown = answer.get("summaryOverride"), answer.get("summary")
+    return own if isinstance(own, str) and own else shown if isinstance(shown, str) else name
 
 
 def read_labels(access: str, calendar: str) -> tuple[GoogleLabel, ...]:

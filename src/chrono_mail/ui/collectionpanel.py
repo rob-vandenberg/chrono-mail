@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.587"
+__version__ = "collectionpanel.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: Rename of a Google calendar is a name only for you; empty gives Google's name back (D-343)
 # v4.4.587: Contacts has a tick box per address book and the blue plus for new contacts; the last ticked address book stays; a click on a group shows its members (D-334)
 # v4.4.578: Address books left out in Settings > Sidebar are not in the Contacts list; the one shown when it is left out gives way to the first (D-331)
 # v4.4.575: The Month tick is Fill colour for timed events, in the menu only while Month is shown (the owner, D-297)
@@ -484,8 +485,10 @@ class CollectionPanel(QWidget):
 
     def rename_collection(self, collection_id: str) -> None:
         info = self.info(collection_id)
-        name, ok = QInputDialog.getText(self, "Rename", "New name:", text=info.name if info is not None else "")
-        if ok and name.strip():
+        own = info is not None and info.own_name  # a Google calendar: a name only for you, empty gives Google's name back (D-343)
+        label = "New name (only you see it; empty: Google's name):" if own else "New name:"
+        name, ok = QInputDialog.getText(self, "Rename", label, text=info.name if info is not None else "")
+        if ok and (name.strip() or own):
             self._backend.ask(COLLECTION_EDIT, CollectionEdit(collection_id, name=name.strip()), lambda result: None, self._failed, owner=self)  # the fact renames the entry
 
     def choose_colour(self, collection_id: str) -> None:

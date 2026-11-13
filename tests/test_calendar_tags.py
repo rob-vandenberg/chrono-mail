@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.core.colours import GOOGLE_EVENT_COLOURS
-from chrono_mail.engine import Engine, google_colours
+from chrono_mail.engine import Engine, collection_looks, google_colours
+from chrono_mail.sync import davsync
 from chrono_mail.engine.registry import UsageError
 from tests.enginefactory import make_engine
 from tests.fakedav import Collection, FakeDav
@@ -195,3 +196,123 @@ def test_a_second_save_while_the_chosen_colour_waits_for_google_keeps_it(google_
     api.busy = False
     call(engine, "dav.sync", account=account)
     assert api.patches == [("g-u1", "L-red")]
+
+
+def google_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake server's calendar counts as a Google calendar wherever the rename asks (as the fixture does for the colours)."""
+    def calendar_of(href: str) -> str:
+        return CALENDAR if href.rstrip("/").endswith("/events") else ""
+
+    for module in (davsync, collection_looks):
+        monkeypatch.setattr(module, "calendar_id_of", calendar_of)
+
+
+def test_renaming_a_google_calendar_gives_it_a_name_only_for_you(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-343: Google keeps one's own name for a calendar apart from its own name; a CalDAV rename would change it for everyone (seen live)."""
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    api.label("L-red", "#ff0000", "Rood")
+    on_both(calendars, api, "u1", "Dentist", label="L-red")
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    assert next(item.own_name for item in call(engine, "collection.list") if item.collection == collection)
+    assert call(engine, "collection.edit", collection=collection, name="Mine").name == "Mine"
+    assert api.own_names == {CALENDAR: "Mine"} and calendars.collections["events"].name == "Calendar"  # never the calendar's name for everyone
+    assert next(tag.shown for tag in call(engine, "tag.list") if tag.name == ours("Rood")) == "Rood (Mine)"
+    assert call(engine, "collection.edit", collection=collection, name="").name == "Calendar"  # empty: Google's name again
+    assert api.own_names == {}
+
+
+def test_a_refused_own_name_keeps_the_calendars_name(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    api.refuses_own_names = True
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    assert api.own_names == {} and calendars.collections["events"].name == "Calendar"
+
+
+def test_google_s_name_back_while_google_cannot_be_reached_waits_and_comes_later(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    api.busy = True
+    assert call(engine, "collection.edit", collection=collection, name="").name == "Mine"  # it waits: the name shown stays until Google answers
+    api.busy = False
+    calendars.collections["events"].name = "Mine"  # as Google's CalDAV gives one's own name
+    call(engine, "dav.sync", account=account)
+    assert api.own_names == {}
+    calendars.collections["events"].name = "Calendar"
+    call(engine, "dav.sync", account=account)
+    assert next(item.name for item in call(engine, "collection.list") if item.collection == collection) == "Calendar"
+
+
+def test_a_calendar_google_does_not_know_in_your_list_is_not_asked_again(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    api.unknown_own_names = True
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    asked = api.own_name_asks
+    call(engine, "dav.sync", account=account)
+    assert api.own_name_asks == asked and calendars.collections["events"].name == "Calendar"
+
+
+def test_google_s_name_back_waiting_is_called_off_by_typing_the_name_again(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    calendars.collections["events"].name = "Mine"  # as Google's CalDAV gives one's own name
+    api.busy = True
+    call(engine, "collection.edit", collection=collection, name="")
+    call(engine, "collection.edit", collection=collection, name="Mine")  # changed one's mind before Google was reached
+    api.busy = False
+    call(engine, "dav.sync", account=account)
+    assert api.own_names == {CALENDAR: "Mine"} and next(item.name for item in call(engine, "collection.list") if item.collection == collection) == "Mine"
+
+
+def test_google_s_name_back_waiting_survives_a_rename_on_the_server_and_a_refusal_keeps_nothing(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    calendars.collections["events"].name = "Mine"
+    api.busy = True
+    call(engine, "collection.edit", collection=collection, name="")
+    api.busy = False
+    calendars.collections["events"].name = "Mine, renamed on the web"  # changed meanwhile
+    call(engine, "dav.sync", account=account)
+    assert api.own_names == {} and call(engine, "conflict.list").conflicts == ()  # sent, no conflict to settle
+    api.refuses_own_names = True
+    call(engine, "collection.edit", collection=collection, name="Again")
+    api.refuses_own_names, api.busy = False, True
+    call(engine, "collection.edit", collection=collection, name="")
+    api.busy, api.refuses_own_names = False, True
+    call(engine, "dav.sync", account=account)
+    api.refuses_own_names = False
+    asked = api.own_name_asks
+    call(engine, "dav.sync", account=account)
+    assert api.own_name_asks == asked  # refused once: nothing kept, never asked again
+
+
+def test_google_s_name_back_refused_at_once_keeps_nothing(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi], monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, account, calendars, api = google_world
+    google_addresses(monkeypatch)
+    call(engine, "dav.sync", account=account)
+    collection = next(item.collection for item in call(engine, "collection.list") if item.account == account and item.kind == "events")
+    call(engine, "collection.edit", collection=collection, name="Mine")
+    calendars.collections["events"].name = "Mine"
+    api.refuses_own_names = True
+    assert call(engine, "collection.edit", collection=collection, name="").name == "Mine"
+    api.refuses_own_names = False
+    calendars.collections["events"].name = "Mine, renamed on the web"
+    asked = api.own_name_asks
+    call(engine, "dav.sync", account=account)
+    assert api.own_name_asks == asked  # nothing was kept, so nothing is sent again

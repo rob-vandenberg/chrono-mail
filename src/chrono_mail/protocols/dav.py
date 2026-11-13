@@ -17,9 +17,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.603"
+__version__ = "dav.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: access: Google's access code, for one's own name of a calendar (D-343)
 # v4.4.603: a refused sign-in says sign-in name (D-342)
 # v4.4.597: kinds: a client that keeps only some kinds of folder; a collection is someone else's only when none of this user's principals owns it: Google names one for calendars and one for
 #           contacts, and the second one no longer replaces the first (D-335)
@@ -271,6 +272,7 @@ class DavClient:
         self.base_path: str = parsed.path or "/"
         self._kinds: frozenset[str] = kinds  # only these kinds of folder (events, tasks, contacts); none: every kind (D-335: Google's calendars and contacts are two accounts)
         self._bearer: bool = bool(bearer)  # Google sign-in: an access code instead of a user name and password (D-335)
+        self.access: str = bearer  # Google's access code, for what only its Calendar API does (one's own name for a calendar, D-343); else empty
         self._authorization: str = f"Bearer {bearer}" if bearer else "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii") if username or password else ""
         self._context: ssl.SSLContext | None = context_for(trusted, ConnectionSecurity.TLS, "https") if parsed.scheme == "https" else None
         self.timeout: float = timeout

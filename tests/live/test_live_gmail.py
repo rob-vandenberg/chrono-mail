@@ -215,3 +215,24 @@ def test_a_label_of_the_calendar_comes_with_its_name_and_goes_onto_an_event() ->
             set_labels(tuple((label.label_id, label.colour, label.name) for label in before))
     after = read_labels(access, user)
     assert len(after) == len(before) and all(label.name != "Chrono Mail test" for label in after)  # the calendar's labels are as they were
+
+
+def test_a_name_of_ones_own_for_a_google_calendar_reaches_caldav_and_leaves_the_calendars_name() -> None:
+    """D-343, seen live: Google keeps one's own name for a calendar (calendarList summaryOverride) and its CalDAV gives it as the name."""
+    from chrono_mail.protocols.google import set_own_name
+    from chrono_mail.sync.davsync import send_look
+
+    user, _ = gmail_login()
+    codes = google_client_codes()
+    if codes is None or not GOOGLE_TOKEN_FILE.exists():
+        pytest.skip("the Google client file or the test account's Google sign-in is missing")
+    access, _ = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
+    with DavClient(CALDAV_START.format(address=urllib.parse.quote(user)), "", "", bearer=access) as calendars:
+        own = next(collection for collection in calendars.all_collections() if collection.kind == "events" and urllib.parse.unquote(collection.href).rstrip("/").endswith(f"{user}/events"))
+        try:
+            outcomes, reason, shown = send_look(calendars, own.href, "Chrono Mail live test", None)
+            assert outcomes == {"name": "done"} and shown == "Chrono Mail live test", reason
+            again = next(collection for collection in calendars.all_collections() if collection.href == own.href)
+            assert again.name == "Chrono Mail live test"
+        finally:
+            assert set_own_name(access, user, "") == user  # put back: Google's name, the address

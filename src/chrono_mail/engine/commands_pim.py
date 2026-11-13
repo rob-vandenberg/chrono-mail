@@ -7,7 +7,7 @@ from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, chosen_own_name, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
 from chrono_mail.engine.collection_create import create_collection
 from chrono_mail.engine.collection_delete import delete_collection, together
-from chrono_mail.engine.collection_looks import change_look
+from chrono_mail.engine.collection_looks import change_look, own_name
 from chrono_mail.engine.commands_tags import mail_tag_counts, rename_in_mail
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.google_colours import CalendarTag, calendar_tags
@@ -19,9 +19,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.4.602"
+__version__ = "commands_pim.py 4.4.604"
 
 # --- Version history ----------------------------------------------------
+# v4.4.604: CollectionSummary.own_name: a Google calendar's name is one's own name for it (D-343)
 # v4.4.602: tag.list also gives the tags of the Google calendars, each with how it is shown ("Rood (Esther)") and its calendar; tag.rename refuses a bar (D-341)
 # v4.4.573: collection.timed-background: Month's coloured timed events, the account's choice, set on its own (D-329, D-297)
 # v4.2.438: collection.set-palette keeps timed_background with the account's colours; a calendar's summary has it (UR-02, D-297)
@@ -59,6 +60,7 @@ class CollectionSummary:
     server: bool = False  # kept in step with a server: Delete deletes it there too (D-197)
     together: tuple[str, ...] = ()  # the names of the other collections here at its place on the server, which a Delete takes too
     timed_background: bool = False  # a calendar: Month shows its timed events in their colour, its account's choice (D-297)
+    own_name: bool = False  # a Google calendar: its name is one's own name for it, only for you; empty gives Google's name back (D-343)
 
 
 def _palette(engine: Engine, account: str, info: CollectionInfo) -> tuple[PaletteColour, ...]:
@@ -72,7 +74,7 @@ def _summary(engine: Engine, account: str, store: PimStore, info: CollectionInfo
         account, account_name(engine, account), info.collection_id, info.kind.value, info.name, info.colour, info.read_only,
         store.index.count(ItemQuery(collections=(info.collection_id,))), _palette(engine, account, info),
         bool(info.server_value("href")), tuple(other.name for other in together(store, info)[1:]),
-        timed_background_for(engine.config().find(account), info),
+        timed_background_for(engine.config().find(account), info), own_name(engine.config().find(account).google, info),
     )
 
 

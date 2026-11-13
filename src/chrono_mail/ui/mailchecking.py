@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.4.598"
+__version__ = "mailchecking.py 4.4.605"
 
 # --- Version history ----------------------------------------------------
+# v4.4.605: Refresh is Send and Receive in every section; each calendar account has a row in the Operations window; a Refresh while one runs is ignored (D-344)
 # v4.4.598: Event colours changed by a synchronisation (Google's, D-337) show at once; their problem in the status line when nothing else went wrong
 # v4.2.460: Refresh in Calendar, Contacts and Tasks with nothing to synchronise reads nothing again: its line is no longer covered at once by
 #           the section's count (the owner's report)
@@ -319,7 +320,10 @@ class MailChecking(QObject):
         the Operations window forward."""
         how = how or self._prefs.read().scheduled_refresh
         if how == "send":
-            self.sync_calendars(None if only is None else only | (also_calendars or set()))
+            calendars = None if only is None else only | (also_calendars or set())
+            if not (self.importing or self.checking or self.sending or self.dav_syncing) and self._state.calendar_accounts(self._included() if calendars is None else calendars):
+                self._begin_operations(False)  # the calendars' rows belong to this round as well (D-344)
+            self.sync_calendars(calendars)
             if not (self.importing or self.sending):
                 self.send_outbox(account=next(iter(only)) if only is not None and len(only) == 1 else None)
             return
@@ -337,11 +341,15 @@ class MailChecking(QObject):
         self.send_outbox(then=receive, account=next(iter(only)) if only is not None and len(only) == 1 else None)
 
     def send_and_receive(self) -> None:
-        """Refresh: first send what waits in the Outbox, then check every account. Refresh stays greyed out meanwhile."""
+        """Refresh, in every section: first send what waits in the Outbox, then check every account and synchronise its calendars, task lists
+        and address books (D-344). Refresh stays greyed out meanwhile; pressed while a send and receive runs, it does nothing."""
+        if self.checking or self.sending or self.dav_syncing:
+            return  # one runs already: the busy bar shows it
         self._refresh.setEnabled(False)
 
         if self.importing:
             return
+        self._begin_operations(True)  # the window opens for calendars too, also with no mail account
 
         def receive() -> None:
             if not self.checking:
@@ -430,7 +438,9 @@ class MailChecking(QObject):
         mail_ids = set(self._state.mail_account_ids())
         wanted = only & mail_ids
         if not first_fill:
-            self.sync_calendars(only | (also_calendars or set()))
+            if new_round and not self.checking and (wanted or self._state.calendar_accounts(only | (also_calendars or set()))):
+                self._begin_operations(manual)  # the calendars' rows belong to this round (D-344); nothing to do: no window
+            self.sync_calendars(only | (also_calendars or set()), manual=manual)  # a Refresh says what came of the calendars too
         if self.checking and first_fill:
             self._mail_fills |= wanted  # it runs when the check under way is done
             return
@@ -577,6 +587,8 @@ class MailChecking(QObject):
 
     def _operation_name(self, account_id: str, direction: str) -> str:
         """The name of a row: the address and the protocol, as "rob@example.com (POP3)"."""
+        if direction == "calendars":
+            return f"{self._state.account_name(account_id)} (Calendars and contacts)"
         account = self._state.account(account_id)
         protocol = "SMTP" if direction == "send" else account.kind.upper() if account is not None else ""
         return f"{self._state.account_name(account_id)} ({protocol})" if protocol else self._state.account_name(account_id)
@@ -612,7 +624,7 @@ class MailChecking(QObject):
 
     def _settle_operations(self) -> None:
         """Everything is done: the window closes itself when that is wanted, but stays after an error when errors show it."""
-        if self.checking or self.sending or self.operations.running() or not self.operations.isVisible():
+        if self.checking or self.sending or self.dav_syncing or self.operations.running() or not self.operations.isVisible():
             return
         if self.operations.round_errors and self._prefs.read().operations_show_on_error:
             return
@@ -660,6 +672,8 @@ class MailChecking(QObject):
         if self.dav_syncing or not accounts:
             return
         self.dav_syncing = True
+        for account in accounts:
+            self.operations.add(account, "calendars")  # each account its own row (D-344)
         if not receive_only:  # a full synchronisation of these accounts starts: one of calendars only is fresh no more (D-300)
             self.fresh -= {account.account_id for account in self._state.all_accounts if account.kind == "dav" and account.account_id in accounts}
         self._calendar_buttons(False)  # greyed while it runs, never hidden
@@ -686,8 +700,14 @@ class MailChecking(QObject):
                 (sent, f"{sent} sent to the server"), (recoloured, f"{counted(recoloured, 'colour')} changed"),
             ) if count]
             summary = f"{CALENDARS_WORDS}: " + ", ".join(parts) if parts else f"{CALENDARS_WORDS} are up to date"
+            for row in rows:  # each account's row: done, or its error in the Errors tab (D-344)
+                trouble = list(row.errors) or list(row.colour_errors)
+                self._finish_operation(row.account, "calendars", "; ".join(trouble) if trouble else None)
+            for account in accounts:
+                if not any(row.account == account for row in rows):
+                    self._finish_operation(account, "calendars", None)
             if problems:
-                self._status.show(f"{CALENDARS_WORDS}: " + "; ".join(problems), error=True)
+                pass  # in the Operations window, never a red status line (D-344)
             elif manual and changed_here and self._section() in self._pages:
                 self._sync_summary = summary  # said with the count of the shown section once it has read its list again
             elif manual:
@@ -700,12 +720,14 @@ class MailChecking(QObject):
         def failed(error: ChronoMailError) -> None:
             self.dav_syncing = False
             self._calendar_buttons(True)
-            self._status.show(f"{CALENDARS_WORDS}: {error}", error=True)
+            for account in accounts:
+                self._finish_operation(account, "calendars", str(error))  # in the Operations window (D-344)
             if isinstance(error, CertificateError):
                 self._ask_about(error.trouble, lambda: self.sync_calendars(only, manual, receive_only))
             ended()
 
         def ended() -> None:
+            self._settle_operations()  # the window closes when everything is done, calendars included
             if receive_only:
                 self._restart_clocks()
             waiting, self._calendar_fills = self._calendar_fills, set()

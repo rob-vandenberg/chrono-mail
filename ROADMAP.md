@@ -320,6 +320,8 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 5.7 | What is in Google counts: its colour wins on a tag of its name, and two colours of one name are one tag of one colour (D-340). | done (4.4.601) |
 | 5.8 | A Google colour is a tag of its own calendar, known by name and calendar and shown as "Rood (Esther)"; never in Settings > Tags, never changing a tag the person made; Add tag… in the appointment window offers the calendar's tags, sent to Google first (D-341). | done (4.4.602) |
 | 5.9 | One name per meaning in the account windows (Shown as, Your name, E-mail address, Sign-in name); a calendar account shows what it signs in with, a Google account whom it signed in as (D-342). | done (4.4.603) |
+| 5.10 | Rename of a Google calendar is a name only for you, kept on Google (calendar list), never the calendar's name for everyone; empty gives Google's name back (D-343). | done (4.4.604) |
+| 5.11 | Refresh is Send and Receive in every section; each calendar account has its row in the Operations window; a Refresh while one runs is ignored (D-344). | done (4.4.605) |
 
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
 ## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed

@@ -12,9 +12,10 @@ from chrono_mail.ui.backend import Failure, Success
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_send_receive_tick.py 4.2.460"
+__version__ = "test_ui_send_receive_tick.py 4.4.605"
 
 # --- Version history ----------------------------------------------------
+# v4.4.605: Refresh in Calendar is Send and Receive (D-344); the test of the calendar-only line about accounts left out is replaced
 # v4.2.460: the calendar Refresh's line about accounts left out stays: nothing is read again to cover it
 # v4.2.451: an account not included in Send and Receive takes part in nothing but its own Refresh menu entry; that entry sends and
 #           receives, sends or receives one account; a calendars-only account's entry synchronises it; the calendar refresh names the
@@ -141,19 +142,17 @@ def test_an_account_left_out_gets_no_first_fill(world: World, qtbot: QtBot, monk
 
 
 
-def test_the_calendar_refresh_line_about_accounts_left_out_stays_on_screen(world: World, qtbot: QtBot) -> None:
-    """The owner's report: the line was covered by the section's count within a tenth of a second, too fast to read."""
+def test_refresh_in_the_calendar_is_send_and_receive(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner (D-344): Refresh refreshes everything, whatever part of the program is shown."""
     from chrono_mail.ui.sections import CALENDAR
 
-    ready(world, qtbot, included=False)
-    state = world.window.mail_state
-    state.set_accounts([replace(account, dav_url="http://127.0.0.1:1/dav/") for account in state.all_accounts])
-    world.window.switch_section(CALENDAR)  # only the section on screen writes its count in the status line
-    idle(world, qtbot)
-    qtbot.wait(300)
+    ready(world, qtbot)
+    world.window.switch_section(CALENDAR)
+    started: list[str] = []
+
+    def send_outbox(*args: object, **kwargs: object) -> None:
+        started.append("send and receive")
+
+    monkeypatch.setattr(world.window.checking, "send_outbox", send_outbox)
     world.window.pages[CALENDAR].act_refresh.trigger()
-    line = world.window.status_label.text()
-    assert line.startswith("Every account with calendars is left out of Send and Receive")
-    idle(world, qtbot)
-    qtbot.wait(300)  # what was read again answered within this before
-    assert world.window.status_label.text() == line
+    assert started == ["send and receive"]
