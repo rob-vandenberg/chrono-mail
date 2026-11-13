@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.460"
+__version__ = "mailchecking.py 4.4.598"
 
 # --- Version history ----------------------------------------------------
+# v4.4.598: Event colours changed by a synchronisation (Google's, D-337) show at once; their problem in the status line when nothing else went wrong
 # v4.2.460: Refresh in Calendar, Contacts and Tasks with nothing to synchronise reads nothing again: its line is no longer covered at once by
 #           the section's count (the owner's report)
 # v4.2.459: move_profile_wallet: a profile's passwords and key move to its own wallet name before anything reads them (D-274)
@@ -673,15 +674,16 @@ class MailChecking(QObject):
             for row in rows:
                 if row.certificate is not None:  # Connect synchronises that account again (D-299)
                     self._ask_about(row.certificate, lambda account=row.account: self.sync_calendars({account}, manual, receive_only))
-            problems = [text for row in rows for text in row.errors]
+            problems = [text for row in rows for text in row.errors] or [text for row in rows for text in row.colour_errors]  # the colours' only when nothing else went wrong (D-337)
             pulled = sum(row.pulled for row in rows)
             removed = sum(row.deleted_here for row in rows)
             sent = sum(row.pushed + row.deleted_on_server + row.made_on_server for row in rows)
             gone = sum(row.removed for row in rows)  # whole collections the server confirmed deleted (R-25)
-            changed_here = pulled + removed + gone + sum(row.created for row in rows)
+            recoloured = sum(row.recoloured for row in rows)  # Google's event colours (D-337)
+            changed_here = pulled + removed + gone + sum(row.created for row in rows) + recoloured
             parts = [text for count, text in (
                 (pulled, f"{pulled} added or changed here"), (removed, f"{removed} removed here"), (gone, f"{counted(gone, 'calendar or list', 'calendars or lists')} gone from the server, removed here"),
-                (sent, f"{sent} sent to the server"),
+                (sent, f"{sent} sent to the server"), (recoloured, f"{counted(recoloured, 'colour')} changed"),
             ) if count]
             summary = f"{CALENDARS_WORDS}: " + ", ".join(parts) if parts else f"{CALENDARS_WORDS} are up to date"
             if problems:

@@ -10,6 +10,7 @@ from chrono_mail.core.account import Account, ConnectionSecurity, ServerSettings
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountAddResult, AccountSummary, _refuse_same_account, _summary
 from chrono_mail.engine.google_access import google_bearer, google_kinds
+from chrono_mail.engine.google_colours import sync_colours
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.newkey import recovery_code_not_stored
 from chrono_mail.engine.pimaccess import open_pim
@@ -21,9 +22,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.4.597"
+__version__ = "commands_dav.py 4.4.598"
 
 # --- Version history ----------------------------------------------------
+# v4.4.598: A Google Calendar account reads and sends its events' colours after each synchronisation; recoloured and colour_errors (D-337)
 # v4.4.597: Google Calendar keeps only calendars, Google Contacts only address books (D-335)
 # v4.4.593: a Google account reaches its server with the access code of its sign-in (D-335)
 # v4.4.510: the synchronisation also keeps whether the server always mails the answers and the addresses it knows as this user (D-310)
@@ -171,6 +173,8 @@ class DavSyncSummary:
     removed: int = 0  # calendars, task lists and address books the server confirmed deleted, taken away here too (R-25)
     made_on_server: int = 0  # made here offline, now made on the server (R-29)
     certificate: CertificateTrouble | None = None  # its server's certificate could not be verified: nothing was synchronised (D-299)
+    recoloured: int = 0  # events of a Google calendar whose colour changed (D-337)
+    colour_errors: tuple[str, ...] = ()  # what went wrong with Google's event colours; the calendars themselves were synchronised (D-337)
 
 
 def keep_looks(engine: Engine, account_id: str, before: Mapping[str, CollectionLook | None], after: Mapping[str, CollectionLook | None]) -> None:
@@ -205,13 +209,14 @@ def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool 
             )
             keep_looks(engine, account_id, {key: looks.get(key) for key in report.looks}, report.looks)
             _record_auto_schedule(engine, account_id, client)
+            colours = sync_colours(engine, settings, store)  # Google's event colours, which its CalDAV does not carry (D-337)
     if report.conflicts:
         engine.report(Change("conflicts_changed", account_id))
     if report.pushed or report.deleted_on_server or report.made_on_server or report.conflicts or report.errors:
         engine.report(Change("waiting_changed", account_id))  # what waited may have gone (or still waits): the window asks again (D-194)
     return DavSyncSummary(
         account_id, report.collections, report.created, report.pulled, report.pushed, report.deleted_here, report.deleted_on_server, report.conflicts, tuple(report.errors),
-        report.removed, report.made_on_server,
+        report.removed, report.made_on_server, recoloured=colours.recoloured, colour_errors=tuple(colours.errors),
     )
 
 

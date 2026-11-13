@@ -18,3 +18,4 @@ See also: [[mail-window]]
 - [[D-129]] Where tags are made and used
 - [[D-165]] The Tags window
 - [[D-131]] Categories become tags
+- [[D-337]] Google event colours through Google's Calendar API

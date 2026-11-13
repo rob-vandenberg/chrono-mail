@@ -8,18 +8,20 @@ from contextlib import ExitStack, contextmanager
 from chrono_mail.core import CollectionInfo
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path
+from chrono_mail.engine.google_colours import sync_colours
 from chrono_mail.engine.pimaccess import account_name
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pim.itip import with_organizer
 from chrono_mail.pimstore import PimStore
-from chrono_mail.sync.davitems import CONFLICT, WAITING, ItemGateway, Outcome, ServerRefused, on_server
+from chrono_mail.sync.davitems import CONFLICT, DONE, WAITING, ItemGateway, Outcome, ServerRefused, on_server
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 4.4.555"
+__version__ = "pim_server.py 4.4.598"
 
 # --- Version history ----------------------------------------------------
+# v4.4.598: An event the server of a Google calendar took gets its colour tag sent to Google right after it (D-337)
 # v4.4.555: put_organizer_last: a copy saved without its organizer first, so a server that mails whatever it is told stays silent; put: mailed (D-310)
 # v4.4.515: a delete can say what the server's copy needs first; restore: the way back after a refused delete, refused as well: a sync conflict, told calmly (D-310)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -72,7 +74,18 @@ class ItemWriter:
             raise UsageError(f"The server did not take the change ({error}); nothing was changed") from None
         if mailed:
             gateway.organizer_now(info, outcome.item)
-        return self._count(outcome)
+        saved = self._count(outcome)
+        self._colour(info, outcome)
+        return saved
+
+    def _colour(self, info: CollectionInfo, outcome: Outcome) -> None:
+        """An event Google's server took: its colour tag goes to Google right after it, as the synchronisation would send it (D-337). What
+        fails waits for the next synchronisation; the save itself is done."""
+        if outcome.status != DONE or not outcome.item:
+            return
+        settings = self.engine.config().find(self.account)
+        if settings.google:
+            sync_colours(self.engine, settings, self.store, (outcome.item,), info.collection_id)
 
     def put_organizer_last(self, info: CollectionInfo, text: str, item: str | None = None) -> str:
         """Save an item a server may mail nothing about, whatever it is told: first without its organizer, then with it. Measured on Kerio: a first save with an
@@ -111,7 +124,9 @@ class ItemWriter:
             self.store.put(info.collection_id, text, item)
             return
         try:
-            self._count(gateway.save(info, text, item))
+            outcome = gateway.save(info, text, item)
+            self._count(outcome)
+            self._colour(info, outcome)
         except ServerRefused as error:
             gateway.hold(info, item, text, str(error))
             self.engine.report(Change("conflicts_changed", self.account))

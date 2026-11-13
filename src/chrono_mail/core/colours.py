@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.4.550"
+__version__ = "colours.py 4.4.598"
 
 # --- Version history ----------------------------------------------------
+# v4.4.598: GOOGLE_EVENT_COLOURS and google_colour_nearest: Google's event colours by their number, the nearest one to a colour (D-337)
 # v4.4.550: task_grey is also the grey of a cancelled event (D-316)
 # v4.4.534: the four answer buttons of an invitation are gradients, top to bottom: Accept green, Tentative orange, Delegate blue, Decline red (the owner, D-310)
 # v4.4.505: accept_button and decline_button: Accept green and Decline red on the invitation card, with on_answer_button for their text (D-310)
@@ -348,6 +349,21 @@ SUGGESTED_EVENT_COLOURS: tuple[tuple[str, str, str], ...] = (
     ("g10", "Basil", "#0b8043"), ("g7", "Peacock", "#039be5"), ("g9", "Blueberry", "#3f51b5"), ("g1", "Lavender", "#7986cb"), ("g3", "Grape", "#8e24aa"),
     ("g8", "Graphite", "#616161"),
 )
+
+# Google Calendar's own number of each of its eleven event colours (the Calendar API's colorId), and the colour Google's website shows for it (D-337).
+GOOGLE_EVENT_COLOURS: dict[str, str] = {colour_id[1:]: colour for colour_id, _, colour in SUGGESTED_EVENT_COLOURS}
+
+
+def google_colour_nearest(colour: str) -> str:
+    """The number of Google's event colour nearest to a colour "#rrggbb" (D-337)."""
+    red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
+
+    def distance(item: tuple[str, str]) -> int:
+        value = item[1]
+        return (int(value[1:3], 16) - red) ** 2 + (int(value[3:5], 16) - green) ** 2 + (int(value[5:7], 16) - blue) ** 2
+
+    return min(GOOGLE_EVENT_COLOURS.items(), key=distance)[0]
+
 
 # The CSS colour names an appointment's COLOR property (RFC 7986) is written in, so that other programs show something close.
 CSS_COLOURS: dict[str, str] = {

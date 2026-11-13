@@ -7,6 +7,7 @@ from typing import Literal
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import OWN_COLOUR_ID, CollectionInfo, CollectionKind, PaletteColour, StorageError
 from chrono_mail.core.colours import css_colour, css_name_nearest
+from chrono_mail.engine.google_colours import google_colour, shown_colours
 from chrono_mail.engine.invitations import take_mark_off
 from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, delete_copy, meeting_mail, news_of_status, organizer_from, organizing_account, quiet, settings_of, who_mails, your_addresses_lower
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
@@ -20,9 +21,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.571"
+__version__ = "commands_calendar.py 4.4.598"
 
 # --- Version history ----------------------------------------------------
+# v4.4.598: An event of a Google calendar without a colour of its own shows Google's colour (D-337)
 # v4.4.571: event.list takes a tag: only the events with that tag (D-327)
 # v4.4.558: A row no longer says answerable and whole: the menus go by invited, and an invitation with no organizer you declined counts as invited
 # v4.4.557: event.cancel and event.restore, server first, with a real cancellation or a new version for your meeting and silent on someone else's; a Cancelled event takes no edit or move until it is Restored (D-310)
@@ -284,6 +286,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
             names = {info.collection_id: info for info in store.collections(CollectionKind.EVENTS)}
             settings = engine.config().find(account)
             palettes = {identifier: palette_for(settings, info) for identifier, info in names.items()}
+            google = shown_colours(engine, settings)  # Google's colours of its events, which its CalDAV does not carry (D-337)
             if parameters.calendar is not None:
                 chosen = (parameters.calendar,) if parameters.calendar in names else ()
             else:
@@ -311,7 +314,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                     hidden = _declined(e, yours)
                     if hidden and not parameters.hidden:
                         continue
-                    other = css_colour(e.css_colour) if not e.colour_id else ""
+                    other = (google_colour(google, item.collection, e.uid, e.recurrence_id) or css_colour(e.css_colour)) if not e.colour_id else ""
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,

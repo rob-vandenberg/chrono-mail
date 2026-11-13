@@ -57,3 +57,4 @@ See also: [[sync-conflicts]]
 - [[D-331]] The same tabs on Settings > Sidebar and Settings > Tags
 - [[D-332]] One list of tags, each shown in the sections chosen
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
+- [[D-337]] Google event colours through Google's Calendar API
