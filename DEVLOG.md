@@ -4415,3 +4415,8 @@ Tests: tests/test_calendar_tags.py (1 new), tests/ui/test_ui_calendar_tags.py (2
 
 What landed: the owner's wish: the Calendar's header row reads Today, ‹, ›, the title; Show declined and Hide past events stay on the right (`ui/calendarview.py`). Review round 1 found that Tab still went ‹, ›, Today: the Tab order now follows the row (fixed, with a test). Round 2: nothing real.
 Tests: tests/ui/test_ui_calendar.py (1 new, fails on 4.4.609); 36 Calendar window tests pass; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
+
+## 2026-11-14 4.4.611 Tab goes left to right through the Calendar's header row
+
+What landed: the owner's wish: Tab goes Today, ‹, ›, Show declined, Hide past events, as the row reads; before, it reached Hide past events before Show declined (`ui/calendarview.py`, setTabOrder).
+Tests: tests/ui/test_ui_calendar.py (the header test checks the whole Tab order; fails on 4.4.610); 36 Calendar window tests pass; Pyrefly 0 errors on the program. Review: one Sonnet round, nothing real.

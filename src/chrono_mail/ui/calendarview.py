@@ -54,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.610"
+__version__ = "calendarview.py 4.4.611"
 
 # --- Version history ----------------------------------------------------
+# v4.4.611: Tab goes left to right through the whole header row, Show declined before Hide past events (the owner)
 # v4.4.610: Today stands in front of the arrows, and Tab goes Today, ‹, › (the owner)
 # v4.4.609: The Tags list holds only the tags of the ticked calendars; a tag filter whose tag goes with an untick goes off (D-347)
 # v4.4.602: Each appointment's tags as they are shown (a Google calendar's as "Rood (Esther)"), drawn again when a calendar is renamed (D-341)
@@ -263,8 +264,10 @@ class CalendarPage(PimPage):
         self.hidden_button.setCheckable(True)
         self.hidden_button.setChecked(self.show_hidden)
         nav_layout.addWidget(self.today_button)  # Today first, then the arrows and the title (the owner)
-        QWidget.setTabOrder(self.today_button, self.previous_button)  # Tab goes as the row reads: Today, ‹, ›
+        QWidget.setTabOrder(self.today_button, self.previous_button)  # Tab goes as the row reads: Today, ‹, ›, Show declined, Hide past events
         QWidget.setTabOrder(self.previous_button, self.next_button)
+        QWidget.setTabOrder(self.next_button, self.hidden_button)
+        QWidget.setTabOrder(self.hidden_button, self.past_button)
         nav_layout.addWidget(self.previous_button)
         nav_layout.addWidget(self.next_button)
         nav_layout.addWidget(self.title)
