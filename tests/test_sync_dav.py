@@ -1,19 +1,23 @@
 from pathlib import Path
 from typing import override
 
+import json
+
 import pytest
 
 from chrono_mail.core import AuthenticationError, CollectionKind, ProtocolError
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, DavConflict, RemoteChanges, RemoteCollection, RemoteItem, folder_key
 from chrono_mail.sync.davconflicts import load_conflicts
+from chrono_mail.sync import davsync
 from chrono_mail.sync.davsync import DavReport, sync_dav, unsent_changes
 from tests.fakedav import Collection, FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_dav.py 4.4.512"
+__version__ = "test_sync_dav.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: a contact the server lists but refuses is said once, asked for again only when it changes on the server or at a new start (D-348)
 # v4.4.512: a calendar remembers whether it is someone else's (D-310)
 # v2.4.333: the line of an item that could not be fetched counts it one way ("1 item")
 # v1.1.234: a collection deleted on the server goes here only on the server's confirmation; a failed list or check removes nothing; changed here:
@@ -421,3 +425,107 @@ def test_a_real_mass_delete_on_the_server_is_done_here_at_the_second_synchronisa
         forgetful = ForgetfulClient(server.url, 1000)
         assert sync_dav(forgetful, setup.store, setup.state, durable=False).errors != []
         assert sync_dav(forgetful, setup.store, setup.state, durable=False).deleted_here == 15 and len(setup.titles(CollectionKind.EVENTS)) == 5
+
+
+REFUSED_TWO: str = "Contacts: 2 contacts the server will not hand out; Chrono Mail asks again when they change on the server"
+
+
+def refusing(server: FakeDav) -> None:
+    server.add("contacts", "c1.vcf", card("c1", "Ann Lee"))
+    server.add("contacts", "c2.vcf", card("c2", "Bo Berg"))
+    server.add("contacts", "c3.vcf", card("c3", "Cas Dijk"))
+    server.withheld = {"c2.vcf", "c3.vcf"}
+
+
+@pytest.mark.parametrize("sync_tokens", [True, False], ids=["sync tokens", "ctag"])
+def test_contacts_the_server_refuses_are_said_once_and_not_asked_for_again(tmp_path: Path, sync_tokens: bool) -> None:
+    with FakeDav(sync_tokens=sync_tokens) as server:
+        refusing(server)
+        setup = Setup(tmp_path, server)
+        assert setup.sync().errors == [REFUSED_TWO]
+        assert setup.titles(CollectionKind.CONTACTS) == ["Ann Lee"]
+        gets = server.count("GET")
+        assert setup.sync().errors == [] and server.count("GET") == gets  # not asked again, nothing said (D-348)
+        server.add("tasks", "t9.ics", task("t9", "Other"))  # the server changes elsewhere: the contacts' listing comes again, the refused ones stay unasked
+        server.add("contacts", "c4.vcf", card("c4", "Dirk Post"))
+        assert setup.sync().errors == [] and server.count("GET") == gets
+        assert setup.titles(CollectionKind.CONTACTS) == ["Ann Lee", "Dirk Post"]
+
+
+def test_a_refused_contact_is_asked_for_again_when_it_changes_on_the_server(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        refusing(server)
+        setup = Setup(tmp_path, server)
+        setup.sync()
+        server.add("contacts", "c3.vcf", card("c3", "Cas Dijk-Smit"))  # changed, still refused: asked once, said by nothing
+        gets = server.count("GET")
+        assert setup.sync().errors == [] and server.count("GET") == gets + 1
+        server.add("contacts", "c2.vcf", card("c2", "Bo Berg-Smit"))
+        server.withheld.discard("c2.vcf")
+        assert setup.sync().errors == []
+        assert setup.titles(CollectionKind.CONTACTS) == ["Ann Lee", "Bo Berg-Smit"]
+
+
+def test_a_new_start_asks_once_more_for_the_refused_contacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with FakeDav() as server:
+        refusing(server)
+        setup = Setup(tmp_path, server)
+        setup.sync()
+        monkeypatch.setattr(davsync, "RUN", "a new start")
+        gets = server.count("GET")
+        assert setup.sync().errors == [] and server.count("GET") == gets + 2  # still refused: asked once, nothing said
+        assert setup.sync().errors == [] and server.count("GET") == gets + 2  # and not again in the same start
+        monkeypatch.setattr(davsync, "RUN", "one more start")
+        server.withheld.clear()  # the administrator gave access without changing them
+        assert setup.sync().errors == []
+        assert setup.titles(CollectionKind.CONTACTS) == ["Ann Lee", "Bo Berg", "Cas Dijk"]
+
+
+def test_a_refused_contact_gone_from_the_server_is_forgotten(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        refusing(server)
+        setup = Setup(tmp_path, server)
+        setup.sync()
+        server.remove("contacts", "c2.vcf")
+        assert setup.sync().errors == []
+        kept = json.loads(setup.state.read_text("utf-8"))["collections"][setup.collection(CollectionKind.CONTACTS)]["withheld"]
+        assert [href.rsplit("/", 1)[-1] for href in kept] == ["c3.vcf"]
+
+
+def test_an_item_that_fails_only_for_now_is_still_said_and_asked_for_again(tmp_path: Path) -> None:
+    with FakeDav(multiget=False) as server:
+        server.add("events", "e1.ics", event("e1", "Meeting"))
+        server.gets_failing = True
+        setup = Setup(tmp_path, server)
+        assert setup.sync().errors == ["Calendar: 1 item could not be fetched; asked for again at the next synchronisation"]
+        server.gets_failing = False
+        assert setup.sync().errors == [] and setup.titles(CollectionKind.EVENTS) == ["Meeting"]
+
+
+def test_a_refused_contact_that_fails_for_now_at_a_new_start_is_asked_again_at_the_next_synchronisation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with FakeDav(sync_tokens=False) as server:
+        refusing(server)
+        setup = Setup(tmp_path, server)
+        setup.sync()
+        monkeypatch.setattr(davsync, "RUN", "a new start")
+        server.gets_failing = True
+        assert setup.sync().errors == ["Contacts: 2 items could not be fetched; asked for again at the next synchronisation"]
+        server.gets_failing = False
+        server.withheld.clear()
+        assert setup.sync().errors == []  # as the line promised (D-348)
+        assert setup.titles(CollectionKind.CONTACTS) == ["Ann Lee", "Bo Berg", "Cas Dijk"]
+
+
+def test_a_listing_the_guard_refuses_forgets_no_refused_contact(tmp_path: Path) -> None:
+    with FakeDav(sync_tokens=False) as server:
+        refusing(server)
+        for number in range(12):
+            server.add("contacts", f"m{number}.vcf", card(f"m{number}", f"Person {number:02}"))
+        setup = Setup(tmp_path, server)
+        assert setup.sync().errors == [REFUSED_TWO]
+        server.add("contacts", "new.vcf", card("new", "New One"))  # the listing comes again
+        cut = sync_dav(EmptyListingClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        assert any("nothing was removed here" in error for error in cut.errors)
+        assert setup.sync().errors == []  # the refused ones are still known: not said again (D-348)

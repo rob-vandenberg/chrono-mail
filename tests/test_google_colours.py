@@ -19,9 +19,10 @@ from tests.test_engine_commands import call
 from tests.test_google_sign_in import CLIENT, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_colours.py 4.4.608"
+__version__ = "test_google_colours.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: Google busy or out of reach for the colours is said by nothing, only at the third synchronisation in a row, once; a refusal still is (D-348)
 # v4.4.608: the Google Calendar account is found by its server: a new sign-in gives no Shown as name (D-346)
 # v4.4.602: A Google colour is a tag of its own calendar, "Rood|<calendar id>", never in the person's tag list (D-341): the tests of D-340's rule
 #           (Google's colour put on the person's tag of that name) are replaced by tests that the person's tag is never touched
@@ -56,6 +57,7 @@ class FakeCalendarApi:
         self.forgets_tokens: bool = False  # a sync token is answered with 410 Gone
         self.busy: bool = False  # every request is answered with 503
         self.limited: bool = False  # a PATCH is answered with Google's 403 for too many requests
+        self.refusing: bool = False  # a list is answered with a lasting 403 (not allowed)
         self.patches: list[tuple[str, str]] = []  # (Google's id, the colorId sent; "" for none)
         self.lists: list[str] = []  # the sync token of each list ("" for a whole read)
         self.asked: int = 0  # every list request, also one Google refuses
@@ -140,6 +142,9 @@ class FakeCalendarApi:
         self.asked += 1
         if self.busy:
             self.send(handler, 503, {"error": {"message": "Backend Error"}})
+            return
+        if self.refusing:
+            self.send(handler, 403, {"error": {"message": "Forbidden"}})
             return
         if handler.headers.get("Authorization") != "Bearer access-1":
             self.send(handler, 401, {"error": {"message": "Invalid Credentials"}})
@@ -402,7 +407,7 @@ def test_a_colour_tag_changed_while_google_is_busy_is_sent_at_the_next_synchroni
     info = call(engine, "event.edit", item=item_of(engine, "Dentist"), add_tag=("Work",))
     assert info.tags == ("Work",) and api.patches == []  # the save itself is done; the colour waits
     summary = call(engine, "dav.sync", account=account)[0]
-    assert summary.colour_errors and api.patches == []  # said once the synchronisation runs, never lost
+    assert summary.colour_errors == () and api.patches == []  # busy for a moment: said by nothing, never lost (D-348)
     api.busy = False
     call(engine, "dav.sync", account=account)
     assert api.patches == [("g-u1", "10")]
@@ -778,3 +783,32 @@ def test_a_google_tag_stays_on_an_event_that_is_saved_or_synchronised(google_wor
     call(engine, "event.edit", item=item_of(engine, "Dentist"), summary="Dentist, later")
     assert next(tag.events for tag in call(engine, "tag.list") if tag.name == ours("Rood")) == 1  # still counted after a save
     assert tags_shown(engine)["Dentist, later"] == (ours("Rood"),)
+
+
+CALM: str = "Event colours could not be read from Google for a while; Chrono Mail keeps trying"
+
+
+def test_google_out_of_reach_for_the_colours_is_said_only_at_the_third_synchronisation_in_a_row(
+    google_world: tuple[Engine, str, FakeDav, FakeCalendarApi],
+) -> None:
+    engine, account, calendars, api = google_world
+    on_both(calendars, api, "u1", "Dentist", "5")
+    assert call(engine, "dav.sync", account=account)[0].colour_errors == ()
+    api.busy = True
+    said = [call(engine, "dav.sync", account=account)[0].colour_errors for _ in range(4)]
+    assert said == [(), (), (CALM,), ()]  # a broken-off connection or a busy Google is passing: said once, calmly, at the third time (D-348)
+    api.busy = False
+    assert call(engine, "dav.sync", account=account)[0].colour_errors == ()
+    api.busy = True
+    said = [call(engine, "dav.sync", account=account)[0].colour_errors for _ in range(3)]
+    assert said == [(), (), (CALM,)]  # a success counted from 0 again
+
+
+def test_a_lasting_refusal_of_google_for_the_colours_is_still_said_at_once(google_world: tuple[Engine, str, FakeDav, FakeCalendarApi]) -> None:
+    engine, account, calendars, api = google_world
+    on_both(calendars, api, "u1", "Dentist", "5")
+    call(engine, "dav.sync", account=account)
+    api.refusing = True
+    errors = call(engine, "dav.sync", account=account)[0].colour_errors
+    assert len(errors) == 1 and errors[0].startswith("Event colours: Google refused")
+

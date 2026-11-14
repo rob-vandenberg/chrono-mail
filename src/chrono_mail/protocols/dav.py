@@ -17,9 +17,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.604"
+__version__ = "dav.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: fetch tells the items the server refuses for good (refused) apart from those that failed only for now (D-348)
 # v4.4.604: access: Google's access code, for one's own name of a calendar (D-343)
 # v4.4.603: a refused sign-in says sign-in name (D-342)
 # v4.4.597: kinds: a client that keeps only some kinds of folder; a collection is someone else's only when none of this user's principals owns it: Google names one for calendars and one for
@@ -613,8 +614,10 @@ class DavClient:
         found = next((value for key, value in self._multiget(collection, [href]).items() if canonical_href(key) == wanted), None)
         return found if found is not None else self.get(href)
 
-    def fetch(self, collection: RemoteCollection, hrefs: list[str]) -> dict[str, tuple[str, str]]:
-        """The text and version tag of items: {href: (etag, text)}. Several at a time (multiget); an item that cannot be fetched is left out."""
+    def fetch(self, collection: RemoteCollection, hrefs: list[str], refused: set[str] | None = None) -> dict[str, tuple[str, str]]:
+        """The text and version tag of items: {href: (etag, text)}. Several at a time (multiget); an item that cannot be fetched is left out. With
+        refused, the items the server will not hand out for good (not there by GET, or a lasting error status such as 403) are added to it; an item
+        that failed only for now (no connection, a timeout, the server busy) is not (D-348)."""
         found: dict[str, tuple[str, str]] = {}
         for start in range(0, len(hrefs), MULTIGET_SIZE):
             chunk = hrefs[start : start + MULTIGET_SIZE]
@@ -625,10 +628,14 @@ class DavClient:
                         single = self.get(href)
                     except AuthenticationError:
                         raise
-                    except ProtocolError:
+                    except ProtocolError as error:
+                        if refused is not None and not passing_failure(error):
+                            refused.add(href)  # a lasting "no" of the server for this item (D-348)
                         continue  # this item only (a timeout, an error status): left out, the caller says so and asks again next time
                     if single is not None:
                         found[href] = single
+                    elif refused is not None:
+                        refused.add(href)  # listed, yet "not there" when asked: Kerio's way of refusing an item (D-348)
         return found
 
     def get(self, href: str) -> tuple[str, str] | None:

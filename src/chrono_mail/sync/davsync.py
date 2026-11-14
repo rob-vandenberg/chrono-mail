@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import urllib.parse
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -54,9 +55,11 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.604"
+__version__ = "davsync.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: an item the server lists but refuses for good is remembered with its version tag (withheld), said once, and asked for again only when
+#           it changes on the server or once at a new start of Chrono Mail; the listing is then remembered again (D-348)
 # v4.4.604: a Google calendar's name is sent as one's own name for it, never the calendar's own name (D-343)
 # v4.4.597: a folder of a kind the account no longer keeps (Google Calendar's address book) is dropped here once, never on the server (D-335)
 # v4.4.555: organizer_later: a waiting copy goes without its organizer first, so the server mails nothing; a conflict or a delete drops that (D-310)
@@ -94,6 +97,7 @@ __version__ = "davsync.py 4.4.604"
 STATE_VERSION: int = 1
 SAFE_NAME: re.Pattern[str] = re.compile(r"[A-Za-z0-9._@-]{1,100}")
 PUBLIC_SUFFIX: str = " (public)"
+RUN: str = uuid.uuid4().hex  # this start of Chrono Mail: the withheld items are asked for once per start (D-348)
 VANISH_MINIMUM: int = 10  # the guard against a listing that lost most items: as for mail (D-049), more than half of at least this many
 
 
@@ -114,6 +118,8 @@ class CollectionState:
     links: dict[str, ItemLink] = field(default_factory=dict[str, ItemLink])  # by address on the server
     refused: str = ""  # the digest of a complete listing the guard refused; the same listing at the next synchronisation is trusted
     organizer_later: set[str] = field(default_factory=set[str])  # items that wait here: sent without their organizer first, then as they are, so the server mails nothing (D-310)
+    withheld: dict[str, str] = field(default_factory=dict[str, str])  # items the server lists but refuses for good, by address: the version tag it listed (D-348)
+    withheld_run: str = ""  # the RUN in which the withheld items were last asked for: a new start of Chrono Mail asks once more (D-348)
 
 
 def _link_description(link: ItemLink) -> dict[str, str]:
@@ -138,7 +144,9 @@ class DavState:
                 return
             for collection, description in data["collections"].items():
                 state = CollectionState(str(description.get("token", "")), str(description.get("ctag", "")), refused=str(description.get("refused", "")),
-                                        organizer_later={str(item) for item in description.get("organizer_later", [])})
+                                        organizer_later={str(item) for item in description.get("organizer_later", [])},
+                                        withheld={canonical_href(str(href)): str(etag) for href, etag in description.get("withheld", {}).items()},
+                                        withheld_run=str(description.get("withheld_run", "")))
                 for href, link in description.get("links", {}).items():
                     state.links[canonical_href(str(href))] = ItemLink(str(link["id"]), str(link["etag"]), str(link["digest"]), str(link.get("before_delete", "")))
                 self.collections[str(collection)] = state
@@ -157,6 +165,8 @@ class DavState:
                     "ctag": state.ctag,
                     "refused": state.refused,
                     "organizer_later": sorted(state.organizer_later),
+                    "withheld": state.withheld,
+                    "withheld_run": state.withheld_run,
                     "links": {href: _link_description(link) for href, link in state.links.items()},
                 }
                 for identifier, state in self.collections.items()
@@ -573,8 +583,11 @@ def _pull(
     client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, collection_state: CollectionState, report: DavReport, remove_here: bool = True,
 ) -> None:
     listing = _listing(client, remote, collection_state)
+    retry = bool(collection_state.withheld) and collection_state.withheld_run != RUN  # once per start of Chrono Mail (D-348)
     if listing is None:
-        return
+        if not retry:
+            return
+        listing = (list[RemoteItem](), list[str](), collection_state.token if remote.sync_token else collection_state.ctag, False)  # nothing changed: only the withheld
     items, removed, marker, complete = listing
     links = collection_state.links
     trusted = True  # whether the listing may be remembered as seen (its token or ctag kept)
@@ -594,10 +607,32 @@ def _pull(
                 removed, trusted = list[str](), False
         else:
             collection_state.refused = ""
-    wanted = [item.href for item in items if item.href not in links or not item.etag or links[item.href].etag != item.etag]
-    fetched: dict[str, tuple[str, str]] = client.fetch(remote, wanted) if wanted else {}
+    withheld = collection_state.withheld
+    for href in removed if not complete else [href for href in withheld if href not in {item.href for item in items}] if trusted else []:
+        withheld.pop(href, None)  # no longer on the server: nothing to ask for (a listing the guard refused forgets nothing)
+    listed = {item.href: item.etag for item in items}
+    wanted = [
+        item.href for item in items
+        if (item.href not in links or not item.etag or links[item.href].etag != item.etag)
+        and (retry or item.href not in withheld or not item.etag or withheld[item.href] != item.etag)  # refused before in this version: not asked again (D-348)
+    ]
+    if retry:
+        wanted += [href for href in withheld if href not in listed and href not in links]  # a new start asks once more for those the listing left out
+    refused: set[str] = set()
+    fetched: dict[str, tuple[str, str]] = client.fetch(remote, wanted, refused) if wanted else {}
     complete_fetch = trusted
-    missing = [href for href in wanted if href not in fetched]
+    new_refusals = [href for href in wanted if href in refused and href not in withheld]
+    for href in wanted:
+        if href in fetched:
+            withheld.pop(href, None)
+        elif href in refused:
+            withheld[href] = listed.get(href, withheld.get(href, ""))
+    if withheld and not any(href in withheld for href in wanted if href not in fetched and href not in refused):
+        collection_state.withheld_run = RUN  # asked in this start: the next synchronisations leave them be until they change; one that failed only for now is asked again
+    if new_refusals:
+        noun = {CollectionKind.CONTACTS: "contact", CollectionKind.EVENTS: "appointment", CollectionKind.TASKS: "task"}.get(local.kind, "item")
+        report.errors.append(f"{remote.name}: {counted(len(new_refusals), noun)} the server will not hand out; Chrono Mail asks again when they change on the server")
+    missing = [href for href in wanted if href not in fetched and href not in refused]
     if missing:
         report.errors.append(f"{remote.name}: {counted(len(missing), 'item')} could not be fetched; asked for again at the next synchronisation")
         complete_fetch = False

@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 4.4.593"
+__version__ = "fakedav.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: withheld: items it lists but never hands out, a GET answers 403 (Kerio's Public Contacts, D-348)
 # v4.4.593: bearer: a server that takes only this access code, as Google's does (D-335)
 # v4.4.512: a collection can state its DAV:owner (owners)
 # v4.4.510: announces, product and user_addresses: what a server says about mailing invitations
@@ -86,6 +87,7 @@ class FakeDav:
         self.empty_for_unknown: bool = False  # a PROPFIND of an unknown address answers an empty 207 (Kerio) instead of 404
         self.no_contact_by_get: bool = False  # a GET of an existing contact answers 404, the multiget gives it (Kerio, checked 2026-10-22)
         self.gets_failing: bool = False  # GET answers 503 (busy for now)
+        self.withheld: set[str] = set()  # item names it lists but never hands out: the multiget leaves them out, a GET answers 403 (Kerio's Public Contacts)
         self.rewrite: Callable[[str], str] | None = None  # a new item (If-None-Match: *) stored as this gives it, under a newer version than
         # the one the PUT answers (Kerio adds its own parameters, lines and reminders, and X-SENT once it sent an invitation)
         self.no_contact_match: bool = False  # a contact's PUT ignores If-Match: an old version is written over (Kerio, measured 2026-11-03)
@@ -235,6 +237,8 @@ class FakeDav:
             found = self.find_item(path)
             if self.gets_failing:
                 self.respond(handler, 503, "not now")
+            elif found is not None and path.rsplit("/", 1)[-1] in self.withheld:
+                self.respond(handler, 403, "not allowed")
             elif found is None or (self.no_contact_by_get and found[1].kind == "addressbook"):
                 self.respond(handler, 404)
             else:
@@ -444,7 +448,9 @@ class FakeDav:
             responses = []
             for href in hrefs:
                 name = href[len(self.collection_path(key)):]
-                if name in collection.items:
+                if name in self.withheld:
+                    responses.append(f"<d:response><d:href>{escape(href)}</d:href><d:status>HTTP/1.1 403 Forbidden</d:status></d:response>")
+                elif name in collection.items:
                     etag, text = collection.items[name]
                     tag = "card:address-data" if collection.kind == "addressbook" else "c:calendar-data"
                     responses.append(self.entry(href, f'<d:getetag>"{etag}"</d:getetag><{tag}>{escape(text)}</{tag}>'))

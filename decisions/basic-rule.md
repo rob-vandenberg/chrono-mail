@@ -10,3 +10,4 @@ Read before work on anything: it comes before every other decision.
 - [[D-340]] Two Google colours of one name are one tag of one colour
 - [[D-341]] A Google colour is a tag of its own calendar
 - [[D-343]] Renaming a Google calendar gives it a name only for you
+- [[D-348]] A server's lasting "no" to an item is said once; a passing failure of Google's colours is said only when it lasts

@@ -33,9 +33,11 @@ from chrono_mail.protocols.google import CalendarUnknown, EventGone, GoogleRefus
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "google_colours.py 4.4.608"
+__version__ = "google_colours.py 4.4.613"
 
 # --- Version history ----------------------------------------------------
+# v4.4.613: a passing failure of the colours (Google could not be reached, busy) is said by nothing; only at the third synchronisation in a row,
+#           once, calmly (D-348)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A Google colour is a tag of its own calendar (name|calendar id), never in the person's tag list; a calendar tag chosen here goes to Google first (D-341)
 # v4.4.601: What is in Google counts: a tag whose name is a Google colour always has that colour, and two colours of one name are one tag of one colour (D-340)
@@ -90,11 +92,15 @@ def event_key(uid: str, recurrence_id: Moment | None = None) -> str:
     return f"{uid} {part}" if part else uid
 
 
+FAILURES_SAID: int = 3  # the synchronisation in a row on which a passing failure of the colours is said, once (the owner, D-348)
+
+
 @dataclass
 class Kept:
     """What is kept for one account: its calendars."""
 
     calendars: dict[str, CalendarColours] = field(default_factory=dict)
+    failures: int = 0  # synchronisations in a row on which Google could not be reached for the colours: said only at the third (D-348)
 
 
 def _load(path: Path) -> Kept:
@@ -126,12 +132,13 @@ def _load(path: Path) -> Kept:
             {str(key): str(value) for key, value in wanted.items()} if isinstance(wanted, dict) else {},
             {str(key): str(value) for key, value in leads.items()} if isinstance(leads, dict) else {},
         )
-    return Kept(found)
+    failures = data.get("failures", 0)
+    return Kept(found, failures if isinstance(failures, int) and failures >= 0 else 0)
 
 
 def _save(engine: Engine, path: Path, kept: Kept) -> None:
     calendars = kept.calendars
-    data = {"format": FORMAT, "calendars": {
+    data = {"format": FORMAT, "failures": kept.failures, "calendars": {
         collection: {"token": kept.token, "events": {key: list(value) for key, value in kept.events.items()},
                      "labels": {key: list(value) for key, value in kept.labels.items()}, "tags": kept.tags, "unknown": kept.unknown, "compared": kept.compared,
                      "calendar": kept.calendar, "wanted": kept.wanted, "leads": kept.leads}
@@ -571,6 +578,7 @@ def _sync_colours(engine: Engine, settings: AccountSettings, store: PimStore, it
     colour_of_tag = _tag_colours(engine)
     with _LOCK:
         kept_all = _load(path)
+        passing = False  # Google could not be reached for a moment (a broken-off connection, a timeout, busy): said by nothing, tried again (D-348)
         try:
             for info, calendar in calendars:
                 kept = kept_all.calendars.setdefault(info.collection_id, CalendarColours())
@@ -586,15 +594,22 @@ def _sync_colours(engine: Engine, settings: AccountSettings, store: PimStore, it
                 except AuthenticationError as error:
                     result.errors.append(f"Event colours: {error}")
                     break
-                except ProtocolError as error:
-                    if not items:  # after one save a passing failure is said by nothing: the synchronisation tries again
+                except GoogleRefused as error:
+                    if not items:  # after one save a failure is said by nothing: the synchronisation tries again
                         result.errors.append(f"Event colours: {error}")
+                    continue
+                except ProtocolError:
+                    passing = True
                     continue
                 except (ChronoMailError, OSError) as error:  # the index or an item here could not be read: this calendar waits, the others go on
                     result.errors.append(f"Event colours: {error}")
                     continue
-                if not reached and not items:
-                    result.errors.append("Event colours: Google could not be reached; tried again at the next synchronisation")
+                if not reached:
+                    passing = True
+            if not items:  # only a whole synchronisation counts; one save tells nothing either way
+                kept_all.failures = kept_all.failures + 1 if passing else 0
+                if kept_all.failures == FAILURES_SAID:
+                    result.errors.append("Event colours could not be read from Google for a while; Chrono Mail keeps trying")
             for gone in [key for key in kept_all.calendars if key not in {info.collection_id for info in store.collections()}]:
                 del kept_all.calendars[gone]  # a calendar no longer here: its colours go with it
             _tag_the_items(store, kept_all, tuple(info.collection_id for info, _ in calendars))
