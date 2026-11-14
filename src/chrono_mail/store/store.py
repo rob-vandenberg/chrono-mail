@@ -20,9 +20,12 @@ from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 4.2.453"
+__version__ = "store.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: delete_folder names the folder in .deleted with the moment of its deletion; purge_deleted_folders(older_than_days) erases only
+#           the folders deleted longer ago, gives one set aside without that moment the present one first, and takes the folder lock
+#           only to choose them: each is renamed to <name>.purging under the lock and erased after it (a large folder never holds it up)
 # v4.2.453: folder_paths: the folder paths of a store read from their descriptions only, nothing opened or written (the rules follow their folders, D-302)
 # v4.2.418: received_by: which account received each message, written once (store/receivedby.py); a copy keeps it (D-292)
 # v4.2.403: make_parents_real: a folder that is only the parent of others becomes a folder of its own (D-285); a rename takes the
@@ -95,6 +98,7 @@ class RenameRefused(StorageError):
     """A folder rename refused before anything was written (no such folder, the new path taken, into itself)."""
 
 
+PURGING_SUFFIX: str = ".purging"  # a folder in .deleted the purge has chosen and is erasing (<directory>.<seconds>.purging)
 RENAME_NOTE: str = "folder-rename"  # a private note: the rename of mail kept here that is under way (old and new path), D-285
 
 def _folder_lock(root: Path) -> threading.RLock:
@@ -486,29 +490,73 @@ class Store:
             self._checkpoint("rename-folder:after-folder")
 
     def delete_folder(self, path: tuple[str, ...], require_empty: bool = True) -> None:
-        """Take a folder out of the store. Its files stay in .deleted until purge_deleted_folders()."""
-        entry = self._entry(path)
-        if require_empty and self.list_messages(path):
-            raise StorageError("The folder is not empty")
-        self._checkpoint("delete-folder:before-move")
-        try:
-            os.rename(self.root / "folders" / entry.directory, self.root / ".deleted" / entry.directory)
-            if self._durable:
-                fsync_directory(self.root / "folders")
-                fsync_directory(self.root / ".deleted")
-        except OSError as error:
-            raise StorageError(f"The folder could not be deleted: {error.strerror}") from None
-        del self._folders[path]
-        self._checkpoint("delete-folder:after-move")
+        """Take a folder out of the store. Its files go to .deleted under a name that carries the moment of the deletion
+        (<directory>.<seconds>), so purge_deleted_folders() knows their age also after a restart."""
+        with _folder_lock(self.root):  # never between a purge's look at .deleted and its choice of the folders to erase
+            entry = self._entry(path)
+            if require_empty and self.list_messages(path):
+                raise StorageError("The folder is not empty")
+            self._checkpoint("delete-folder:before-move")
+            try:
+                os.rename(self.root / "folders" / entry.directory, self.root / ".deleted" / f"{entry.directory}.{int(time.time())}")
+                if self._durable:
+                    fsync_directory(self.root / "folders")
+                    fsync_directory(self.root / ".deleted")
+            except OSError as error:
+                raise StorageError(f"The folder could not be deleted: {error.strerror}") from None
+            del self._folders[path]
+            self._checkpoint("delete-folder:after-move")
 
-    def purge_deleted_folders(self) -> int:
-        """Remove for good what delete_folder() set aside. Returns the number of folders removed."""
-        removed = 0
-        for directory in sorted((self.root / ".deleted").iterdir()):
-            self._checkpoint("purge:before-remove")
-            shutil.rmtree(directory)
-            removed += 1
-        return removed
+    def purge_deleted_folders(self, older_than_days: float = 0.0) -> int:
+        """Erase the folders in .deleted that were deleted more than this many days ago (0: all of them, an explicit purge). Returns the
+        number of folders erased. A folder set aside without the moment in its name (a delete before 4.4.615, a repaired duplicate) is
+        given the present moment first, so it is erased that many days from now and never sooner. Under the folder lock only the old
+        folders are chosen and each is renamed to <name>.purging (being erased); the erase itself runs after the lock is released, so a
+        large folder never holds up the changes to the folder list. Only what is in .deleted goes; cut short anywhere, what is left (a
+        folder still to be marked, or one marked and half erased) is erased by the next run; one that cannot be erased now is tried again."""
+        limit = time.time() - older_than_days * 86400
+        base = self.root / ".deleted"
+        doomed: list[Path] = []
+        with _folder_lock(self.root):  # the lock of the changes to the folder list (a delete moves its folder in meanwhile)
+            try:
+                entries = sorted(base.iterdir()) if base.is_dir() else []
+            except OSError as error:
+                raise StorageError(f"The deleted folders could not be read: {error.strerror}") from None
+            for directory in entries:
+                if directory.is_symlink() or not directory.is_dir():
+                    continue  # only the folders the store set aside
+                if directory.name.endswith(PURGING_SUFFIX):
+                    doomed.append(directory)  # chosen by an earlier run that was cut short: finished now
+                    continue
+                name, _, moment = directory.name.rpartition(".")
+                try:
+                    if not (name and moment.isdigit()):
+                        self._checkpoint("purge:before-stamp")
+                        stamped = base / f"{directory.name}.{int(time.time())}"
+                        os.rename(directory, stamped)
+                        if self._durable:
+                            fsync_directory(base)
+                        directory, moment = stamped, stamped.name.rpartition(".")[2]
+                    if int(moment) <= limit:
+                        self._checkpoint("purge:before-mark")
+                        marked = base / f"{directory.name}{PURGING_SUFFIX}"
+                        os.rename(directory, marked)
+                        doomed.append(marked)
+                except OSError:
+                    continue  # tried again by the next run
+            if doomed and self._durable:
+                fsync_directory(base)
+        erased = 0
+        for directory in doomed:  # outside the lock: the folder list is free while the files go
+            try:
+                self._checkpoint("purge:before-remove")
+                shutil.rmtree(directory)
+                erased += 1
+            except OSError:
+                continue  # tried again by the next run
+        if erased and self._durable:
+            fsync_directory(base)
+        return erased
 
     def _entry(self, path: tuple[str, ...]) -> _FolderEntry:
         entry = self._folders.get(path)

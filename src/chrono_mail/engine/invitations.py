@@ -1,6 +1,6 @@
 """What a calendar message in a mail asks or tells, for the card shown above its text (iTIP, RFC 5546; D-310)."""
 import sqlite3
-from collections.abc import Collection, Iterable, Iterator, Sequence
+from collections.abc import Collection, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
 from html.parser import HTMLParser
 from dataclasses import dataclass, replace
@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, cancelled_in, kept_mail, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.557"
+__version__ = "invitations.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: your_calendars is typed as a Generator, as contextmanager wants (Pyrefly)
 # v4.4.557: kept_cancelled: an invitation knows its event is Cancelled too, so its card greys the answers until Restore (D-310)
 # v4.4.555: kept_cancelled: a cancellation knows it is Cancelled already; asks_nothing: a file with no organizer (D-310)
 # v4.4.554: copy_holds; a card remembers Change my answer on a declined event; a copy in a server calendar needs no mark (D-310)
@@ -243,7 +244,7 @@ def is_yours(info: CollectionInfo) -> bool:
 
 
 @contextmanager
-def your_calendars(engine: Engine, kind: CollectionKind) -> Iterator[list[tuple[str, PimStore, CollectionInfo]]]:
+def your_calendars(engine: Engine, kind: CollectionKind) -> Generator[list[tuple[str, PimStore, CollectionInfo]]]:
     """Every calendar that counts as yours, each store opened once, your private ones first: a public one only when none of those holds the item.
     An account whose calendars cannot be opened (removed meanwhile, no key, a file gone meanwhile) is skipped."""
     with ExitStack() as opened:

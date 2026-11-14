@@ -53,3 +53,4 @@ See also: [[security]]
 - [[D-072]] The calendar and contact store
 - [[D-128]] Tags live in the properties file
 - [[D-320]] Secondary sort: messages with the same value by when they were received
+- [[D-350]] What is deleted is erased after 30 days

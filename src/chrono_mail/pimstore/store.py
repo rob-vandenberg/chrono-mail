@@ -14,9 +14,10 @@ from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, w
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 3.6.350"
+__version__ = "store.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: purge_deleted has a crash point before each removal; the directory of the items deleted from a collection that still exists stays
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.225: Private files: encrypted texts the synchronisation keeps beside the items (the agreed version of an item changed here, the sync
 #           conflicts), written atomically (D-194)
@@ -446,7 +447,9 @@ class PimStore:
         return count
 
     def purge_deleted(self, older_than_days: float = 30.0) -> int:
-        """Erase what was deleted more than this many days ago. Returns the number of files and directories erased."""
+        """Erase what was deleted more than this many days ago. Returns the number of files and directories erased. Only what is in `.deleted`
+        and older goes; cut short anywhere, what is left is erased by the next run. The directory of a collection that still exists stays, also
+        when empty: a delete at the same moment moves its file into it."""
         limit = time.time() - older_than_days * 86400
         erased = 0
         base = self.root / ".deleted"
@@ -454,14 +457,16 @@ class PimStore:
             try:
                 if path.is_dir() and "." in path.name:  # a collection that was taken away: <id>.<seconds>
                     if int(path.name.rsplit(".", 1)[1]) < limit:
+                        self._checkpoint("purge:before-remove")
                         shutil.rmtree(path)
                         erased += 1
                 elif path.is_dir():  # the items deleted from one collection: <id>.<milliseconds>
                     for item in list(path.iterdir()):
                         if int(item.name.rsplit(".", 1)[1]) / 1000 < limit:
+                            self._checkpoint("purge:before-remove")
                             item.unlink()
                             erased += 1
-                    if not any(path.iterdir()):
+                    if not (self.root / "collections" / path.name).is_dir() and not any(path.iterdir()):
                         path.rmdir()
             except (OSError, ValueError, IndexError):
                 continue

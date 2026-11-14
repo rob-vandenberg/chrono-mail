@@ -47,9 +47,10 @@ from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 4.2.465"
+__version__ = "restoredialog.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the account list wraps its lines and never scrolls sideways: a long line shows whole at any width
 # v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.2.437: the backup password is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/restore.ui, D-276): the parts the backup does not hold are hidden; the file's name is
@@ -143,6 +144,9 @@ class RestoreDialog(QDialog):
         self.select_all.clicked.connect(self._select_all_clicked)
         self.accounts: QListWidget = forms.part(form, QListWidget, "accounts")
         self.accounts.setMinimumHeight(wpx(100))
+        self.accounts.setWordWrap(True)  # a long line (a long address with its counts) shows whole at any width
+        self.accounts.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.accounts.setResizeMode(QListWidget.ResizeMode.Adjust)  # the lines wrap again when the window gets wider or narrower
         for row in contents.accounts:
             item = QListWidgetItem(entry_text(row), self.accounts)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)

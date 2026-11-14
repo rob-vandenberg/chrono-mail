@@ -56,7 +56,7 @@ Only `ui` may import PySide6.
 - **One file per message**, the complete raw message, **encrypted** with authenticated encryption, which also detects damage or tampering per message.
 - **File names are random** (32 hex), plus the flag suffix. The info separator is `!` on every platform (Windows forbids `:`), so a store can move between platforms. Changing a flag is an atomic rename.
 - **Encryption is on by default**, chosen per account. Switching an existing store is a migration and is not built.
-- A deleted folder moves to `.deleted/`; purging is explicit.
+- A deleted folder moves to `.deleted/<directory>.<seconds>` (the moment of deletion in its name) and is erased 30 days later by the start-up command `pim.purge-deleted`, which also erases deleted calendar, contact and task items after 30 days (D-072, 4.4.615).
 - **A message has at most two files** (D-176): the message itself and, only when it has any, its properties file `properties/<store id>.json` in the store (tags, snooze time and origin, archive origin: what cannot be written into received mail). The properties folder is one per mailbox, so a move never touches it. Our own waiting messages carry their schedule in themselves (a repeating message its whole timetable); recording progress replaces the message under the same id, verified before the one rename.
 
 ### 4.2 Index (D-005, D-025)

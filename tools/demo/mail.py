@@ -1,3 +1,4 @@
+import html
 import random
 import struct
 import zlib
@@ -25,9 +26,11 @@ from tools.demo.meetings import meetings
 from tools.demo.people import SENDERS, Person, Sender
 
 # --- Version ------------------------------------------------------------
-__version__ = "mail.py 4.4.614"
+__version__ = "mail.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: formatted HTML mail from people: a client's answer to a quote in the Work Inbox and a brief in the Freelance studio Inbox,
+#           with bold, a table and a list, made outside the random stream so every other message stays the same
 # v4.4.614: the calendar mail of the Work Inbox (an invitation to answer, one accepted, one declined, an answer to her own meeting, a file of
 #           several items, D-310); mail of the book club tagged Book club; the tags themselves come from tagging.py (one list, D-332)
 # v2.3.321: Initial: the demo's 100,000 messages over five years, spam, marks, tags, archive, snooze, schedule, drafts and Outbox (D-243)
@@ -50,6 +53,7 @@ SIGNATURES: dict[str, str] = {
     "freelance": "Anna Clark Studio\nDesign for small businesses\nannaclark.example.com",
 }
 LOCAL_ONLY_FOLDERS: tuple[str, ...] = ("Outbox", "Scheduled", "Recovered", "Snoozed")
+FORMATTED_SEED: int = 4615  # the formatted mail of people has a generator of its own: the rest of the demo stays the same
 
 Progress = Callable[[str, int, int], None]
 
@@ -366,6 +370,60 @@ class MailMaker:
         """The invitations and other calendar mail of the Work Inbox, about the coming days (D-310)."""
         return [Planned("work", ("Inbox",), mail.raw, mail.moment, set(mail.flags)) for mail in meetings(self.today, self.people).mails]
 
+    def formatted_mail(self) -> list[Planned]:
+        """Formatted (HTML) mail from people, with a plain-text part of the same content: a client's answer to a quote in the Work
+        Inbox, this morning and not read yet, and a brief in the Freelance studio Inbox from yesterday afternoon."""
+        writer = MailMaker(self.people, self.today, 0, seed=FORMATTED_SEED)  # never self.random: every other message stays the same
+        planned: list[Planned] = []
+        client = next((person for person in self.people if person.circle == "client" and person.company == "Bluebird Bakery"), None)
+        if client is not None:
+            account = self.accounts["work"]
+            rows = (("Box design, three sizes", "14", "£1,120"), ("Illustrations", "9", "£720"), ("Print management", "3", "£240"))
+            points = ("Could the small box have a window, so the biscuits show?", "We'd like to see the proofs before the end of the month.",
+                      "The print run stays at 2,000 of each size.")
+            text = ("Dear Anna,\n\nThank you for the quote for the spring packaging. We went through it with the team on Friday and we're happy "
+                    "to go ahead.\n\n" + "\n".join(f"{item}: {hours} hours, {cost}" for item, hours, cost in rows) + "\nTotal: 26 hours, £2,080\n\n"
+                    "A few things from our side:\n\n" + "\n".join(f"- {point}" for point in points)
+                    + f"\n\nLooking forward to the first sketches!\n\nKind regards,\n{client.name}\n{client.company}\n")
+            cells = "".join(f"<tr><td>{html.escape(item)}</td><td align='right'>{html.escape(hours)}</td><td align='right'>{html.escape(cost)}</td></tr>"
+                            for item, hours, cost in rows)
+            body = ("<html><body style='font-family:sans-serif'><p>Dear Anna,</p>"
+                    "<p>Thank you for the quote for the <b>spring packaging</b>. We went through it with the team on Friday and we're happy to "
+                    "<b>go ahead</b>.</p>"
+                    "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse'>"
+                    "<tr><th align='left'>Item</th><th align='right'>Hours</th><th align='right'>Cost</th></tr>" + cells
+                    + "<tr><td><b>Total</b></td><td align='right'><b>26</b></td><td align='right'><b>£2,080</b></td></tr></table>"
+                    "<p>A few things from our side:</p><ul>" + "".join(f"<li>{html.escape(point)}</li>" for point in points) + "</ul>"
+                    "<p>Looking forward to the first sketches!</p>"
+                    f"<p>Kind regards,<br>{html.escape(client.name)}<br><i>{html.escape(client.company)}</i></p></body></html>")
+            moment = min(self.today.replace(hour=8, minute=42, second=0, microsecond=0), self.today - timedelta(minutes=20))
+            raw, _ = writer.message((client.name, client.address), (PERSON, account.address), "Quote for the spring packaging", text, moment, account,
+                                    html=body)
+            planned.append(Planned("work", ("Inbox",), raw, moment, tags=("Clients",)))
+        owner = next((person for person in self.people if person.circle == "freelance"), None)
+        if owner is not None:
+            account = self.accounts["freelance"]
+            rows = (("Menu cards", "40", "A4, folded"), ("Table cards", "20", "A6"), ("Window poster", "2", "A2"))
+            wishes = ("The colours of the new awning: dark green and cream.", "Room for a daily special on the menu card.",
+                      "Printed by the 1st of next month, for the reopening.")
+            text = ("Hi Anna,\n\nAs promised on the phone, here is the brief for the new menu cards of our café.\n\n"
+                    + "\n".join(f"{item}: {count}, {size}" for item, count, size in rows) + "\n\nWhat matters most to us:\n\n"
+                    + "\n".join(f"- {wish}" for wish in wishes) + f"\n\nCould you send me a quote this week?\n\nThanks,\n{owner.name}\n")
+            cells = "".join(f"<tr><td>{html.escape(item)}</td><td align='right'>{html.escape(count)}</td><td>{html.escape(size)}</td></tr>"
+                            for item, count, size in rows)
+            body = ("<html><body style='font-family:sans-serif'><p>Hi Anna,</p>"
+                    "<p>As promised on the phone, here is the brief for the <b>new menu cards</b> of our café.</p>"
+                    "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse'>"
+                    "<tr><th align='left'>Item</th><th align='right'>Number</th><th align='left'>Size</th></tr>" + cells + "</table>"
+                    "<p>What matters most to us:</p><ul>" + "".join(f"<li>{html.escape(wish)}</li>" for wish in wishes) + "</ul>"
+                    "<p>Could you send me a quote <b>this week</b>?</p>"
+                    f"<p>Thanks,<br>{html.escape(owner.name)}</p></body></html>")
+            moment = (self.today - timedelta(days=1)).replace(hour=16, minute=20, second=0, microsecond=0)
+            raw, _ = writer.message((owner.name, owner.address), (PERSON, account.address), "Brief for the new menu cards", text, moment, account,
+                                    html=body)
+            planned.append(Planned("freelance", ("Inbox",), raw, moment, {MessageFlag.SEEN}))
+        return planned
+
     def _topic_folder(self, account: DemoAccount, item: Planned) -> str:
         folders = list(account.folders)
         leaves = [folder for folder in folders if not any(other.startswith(folder + "/") for other in folders)]
@@ -453,13 +511,14 @@ def finishing_touches(engine: Engine, account_ids: dict[str, str], stored: dict[
 
 def build_mail(engine: Engine, account_ids: dict[str, str], people: list[Person], today: datetime, total: int, progress: Progress) -> int:
     """All of the demo's mail. Returns how many messages came in and were sent over the years (the drafts, the Outbox and the scheduled
-    messages, and the calendar mail of the Work Inbox, come on top)."""
+    messages, the calendar mail of the Work Inbox and the formatted mail of people, come on top)."""
     maker = MailMaker(people, today, total)
     planned = maker.plan()
     maker.place(planned)
     received = len(planned)
     planned.extend(maker.unsent())
     planned.extend(maker.calendar_mail())
+    planned.extend(maker.formatted_mail())
     stored = store_mail(engine, account_ids, planned, progress)
     record_imap(engine, account_ids, stored)
     places = list(stored)

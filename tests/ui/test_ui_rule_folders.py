@@ -10,9 +10,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, answer_input, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rule_folders.py 4.4.538"
+__version__ = "test_ui_rule_folders.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The Delete folder question asks only that, without a word about .deleted (nothing brings a deleted folder back)
 # v4.4.538: The status line shows the steps of a folder rename while they run and clears the rules step when nothing follows it
 # v4.2.453: Initial version: Rename folder and Delete folder… say what the rules did, a rule change found by a check is told in the status
 #           line, and Settings > Rules on screen shows the rules as they are now; the rule editor keeps a rule of several accounts and follows
@@ -58,6 +59,14 @@ def test_delete_folder_says_which_rules_are_switched_off(world: World, qtbot: Qt
     world.dialogs.answer = QMessageBox.StandardButton.Yes
     world.window.folders.delete_folder()
     wait(qtbot, lambda: world.window.status_label.text() == "Folder deleted. Rule “Projects rule” is switched off: its folder Projects was deleted")
+
+
+def test_the_delete_folder_question_asks_only_that(world: World, qtbot: QtBot) -> None:
+    started_with_projects(qtbot, world)
+    world.dialogs.answer = QMessageBox.StandardButton.No
+    world.window.folders.delete_folder()
+    assert world.dialogs.shown == [("question", "Delete folder", "Delete the folder “Projects”, its subfolders and all the messages in them?")]
+    assert ".deleted" not in world.dialogs.shown[0][2]
 
 
 def test_a_rule_change_found_by_a_check_is_told_in_the_status_line(world: World, qtbot: QtBot) -> None:

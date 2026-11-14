@@ -186,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 - `packaging\chrono_mail_main.py` is the start of the packaged program: it points Qt to the HTML viewer's helper
   `QtWebEngineProcess.exe` next to the program. Keep it; without it the viewer cannot start, or borrows a helper of a
   Qt installed elsewhere.
-- **These two Windows files were written on Linux and have never run on Windows.** Expect small fixes on the first run.
+- **These two Windows files were written on Linux; they built the first setup.exe on Windows in 0.5.128 (three fixes in 0.5.129).** Expect small fixes when they change.
   Report each one with the exact error, propose the fix, and change them only after "Proceed".
 - **Test** as PACKAGING.md section 4.4 says (Start menu entry, start, the HTML viewer uses its own helper, an HTML
   message, uninstall), ideally also on a clean Windows without Python (for example Windows Sandbox).

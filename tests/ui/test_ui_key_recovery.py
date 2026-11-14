@@ -13,9 +13,10 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from tests.ui.world import World, answer_input, answer_open_file, menu_named, reject_dialog, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_key_recovery.py 3.6.350"
+__version__ = "test_ui_key_recovery.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the status texts name Menu > File > Use a recovery code…
 # v3.6.350: kept Local Folders whose key is gone: Start without this mail, greyed when it does not apply; with its older key here,
 #           Start without says that Try again can still bring the mail back
 # v2.4.322: the key items are "Show the recovery code…" and "Use a recovery code…" (D-244)
@@ -292,6 +293,15 @@ def test_a_missing_key_is_never_hidden_behind_local_folders_older_key(world: Wor
         dialog = RestoreKeyDialog(world.backend, None, status)
         qtbot.addWidget(dialog)
         assert (dialog.windowTitle(), dialog.start_without_button.isEnabled(), dialog.declined) == (title, offered, declined)
+
+
+def test_the_status_texts_name_the_menu_path_as_the_window_shows_it(world: World) -> None:
+    """They said "File > Use a recovery code"; the window has it at Menu > File > Use a recovery code…."""
+    from chrono_mail.ui.restorekeydialog import NOT_TAKEN_BACK, OTHER_STILL_MISSING, STILL_MISSING
+
+    path = "Menu > File > " + world.window.act_restore_key.text()
+    assert path == "Menu > File > Use a recovery code…"
+    assert all(path in text for text in (NOT_TAKEN_BACK, STILL_MISSING, OTHER_STILL_MISSING))
 
 
 def _declined(self: RestoreKeyDialog) -> int:

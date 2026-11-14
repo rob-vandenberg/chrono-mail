@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,11 +10,15 @@ import pytest
 from chrono_mail.core import FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.crypto import DataKey, generate_data_key
 from chrono_mail.store import Store
+from chrono_mail.store import store as store_module
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_interruption.py 1.1.206"
+__version__ = "test_store_interruption.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The purge of the folders deleted over 30 days ago, interrupted before each folder is marked as being erased, before each
+#           removal, in the middle of one and before a folder set aside by an older version is given its moment; the folder lock is free
+#           while a folder is erased
 # v1.1.206: Replacing a message's content, interrupted at every step (D-176)
 # v0.2.101: Folders made at the same moment; the repair of duplicate folders, interrupted at every step
 # v0.0.7: Initial store interruption tests
@@ -207,6 +212,114 @@ def test_crash_while_purging_deleted_folders(tmp_path: Path) -> None:
     assert len(list((case.root / ".deleted").iterdir())) == 2
     assert store.purge_deleted_folders() == 2
     assert list((case.root / ".deleted").iterdir()) == []
+    case.assert_bystander_intact(store)
+
+
+DAY = 86_400
+
+
+def deleted_long_ago(case: Case, name: str, days: int) -> Path:
+    """A folder with a message, deleted this many days ago (the moment is in its name in .deleted)."""
+    case.store.create_folder((name,))
+    case.store.deliver((name,), RAW)
+    directory = case.store._folder_directory((name,)).name  # noqa: SLF001
+    case.store.delete_folder((name,), require_empty=False)
+    [moved] = list((case.root / ".deleted").glob(f"{directory}.*"))
+    return moved.rename(moved.with_name(f"{directory}.{int(time.time()) - days * DAY}"))
+
+
+def being_erased(path: Path) -> Path:
+    """The name a folder of .deleted has once the purge chose it, until it is erased."""
+    return path.with_name(path.name + ".purging")
+
+
+@pytest.mark.parametrize(("point", "occurrence"), [(point, occurrence) for point in ("purge:before-mark", "purge:before-remove") for occurrence in (1, 2, 3)])
+def test_crash_before_each_step_of_erasing_an_old_deleted_folder(tmp_path: Path, point: str, occurrence: int) -> None:
+    case = Case(tmp_path)
+    old = [deleted_long_ago(case, name, days) for name, days in (("One", 31), ("Two", 40), ("Three", 365))]
+    new = deleted_long_ago(case, "Recent", 29)
+    case.store.create_folder(("Live",))
+    live = case.store.deliver(("Live",), RAW)
+    with pytest.raises(SimulatedCrash):
+        case.with_crash(point, occurrence).purge_deleted_folders(30)
+    store = case.restart()
+    case.assert_bystander_intact(store)
+    left = [path for path in old if path.exists() or being_erased(path).exists()]
+    erased_before = occurrence - 1 if point == "purge:before-remove" else 0
+    assert len(left) == 3 - erased_before and new.exists() and not being_erased(new).exists()  # the recent one is never chosen
+    assert all(any((path if path.exists() else being_erased(path)).rglob("*")) for path in left)  # untouched: still holding their files
+    if point == "purge:before-mark":
+        assert sum(path.exists() for path in old) == 3 - (occurrence - 1)  # the ones not chosen before the crash keep their name
+    assert store.purge_deleted_folders(30) == 3 - erased_before  # the next run erases what was left, also the ones already chosen
+    assert not any(path.exists() or being_erased(path).exists() for path in old) and new.exists()
+    assert store.read(live) == RAW
+    case.assert_bystander_intact(store)
+
+
+def test_the_folder_lock_is_free_while_a_deleted_folder_is_erased(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case = Case(tmp_path)
+    old = deleted_long_ago(case, "Old", 31)
+    taken: list[bool] = []
+    real_unlink = os.unlink
+
+    def take_the_lock() -> None:
+        lock = store_module._folder_lock(case.root)  # noqa: SLF001
+        free = lock.acquire(blocking=False)  # never waits: held by the purge, it answers False at once
+        if free:
+            lock.release()
+        taken.append(free)
+
+    def unlink_and_try_the_lock(path: str | os.PathLike[str], *, dir_fd: int | None = None) -> None:
+        if not taken:  # in the middle of the erase: another command takes the folder lock
+            other = threading.Thread(target=take_the_lock)
+            other.start()
+            other.join()
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink_and_try_the_lock)
+    assert case.store.purge_deleted_folders(30) == 1
+    monkeypatch.setattr(os, "unlink", real_unlink)
+    assert taken == [True] and not old.exists() and not being_erased(old).exists()
+    case.assert_bystander_intact(case.restart())
+
+
+def test_crash_in_the_middle_of_erasing_a_deleted_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case = Case(tmp_path)
+    old = deleted_long_ago(case, "Old", 31)
+    erased = {"count": 0}
+    real_unlink = os.unlink
+
+    def unlink_then_crash(path: str | os.PathLike[str], *, dir_fd: int | None = None) -> None:
+        if erased["count"] == 1:
+            raise SimulatedCrash("rmtree")
+        erased["count"] += 1
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink_then_crash)
+    with pytest.raises(SimulatedCrash):
+        case.store.purge_deleted_folders(30)
+    monkeypatch.setattr(os, "unlink", real_unlink)
+    assert being_erased(old).exists() and not old.exists()  # half erased: still in .deleted, marked as being erased
+    store = case.restart()
+    case.assert_bystander_intact(store)
+    assert store.purge_deleted_folders(30) == 1 and not being_erased(old).exists()
+    assert sorted(path.name for path in (case.root / "folders").iterdir()) == sorted(store._folder_directory(path).name for path in (INBOX, ARCHIVE))  # noqa: SLF001
+    case.assert_bystander_intact(store)
+
+
+def test_crash_before_a_folder_set_aside_by_an_older_version_is_given_its_moment(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    case.store.create_folder(("Old",))
+    case.store.deliver(("Old",), RAW)
+    directory = case.store._folder_directory(("Old",))  # noqa: SLF001
+    os.rename(directory, case.root / ".deleted" / directory.name)  # as a delete before 4.4.615 left it
+    with pytest.raises(SimulatedCrash):
+        case.with_crash("purge:before-stamp").purge_deleted_folders(30)
+    assert (case.root / ".deleted" / directory.name).is_dir()  # untouched
+    store = case.restart()
+    assert store.purge_deleted_folders(30) == 0
+    [stamped] = list((case.root / ".deleted").iterdir())
+    assert stamped.name.startswith(directory.name + ".") and any(stamped.rglob("*"))  # kept whole, 30 days from now
     case.assert_bystander_intact(store)
 
 

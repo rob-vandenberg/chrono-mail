@@ -20,9 +20,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 4.2.463"
+__version__ = "test_engine_local.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: every way out for a missing key names Menu > File > Use a recovery code…
 # v4.2.463: key.code-pending says whether the new key's recovery code was never confirmed as stored (UR-08)
 # v3.6.350: no new key while kept Local Folders needs its own; Start without this mail sets it aside, never deleted
 # v3.6.349: kept Local Folders whose key is gone names the recovery code, and that code brings it back (RV-177)
@@ -644,6 +645,27 @@ def test_the_older_keys_recovery_code_takes_kept_mail_back(tmp_path: Path) -> No
     assert status.take_back and not status.kept_other
     call(engine, "local.take-back")
     assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+
+
+def test_every_way_out_for_a_missing_key_names_the_menu_path_as_the_window_shows_it(tmp_path: Path) -> None:
+    """The texts said "File > Use a recovery code"; the window has it at Menu > File > Use a recovery code…."""
+    from chrono_mail.core import CryptoError
+
+    path = "Menu > File > Use a recovery code…"
+    engine, _code, _key_id = _kept_without_key(tmp_path / "gone")
+    with pytest.raises(CryptoError) as gone:
+        call(engine, "local.enable")
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp, pytest.raises(CryptoError) as no_new_key:
+        add_account(engine, pop, smtp)
+    engine, _code, _key_id = _kept_with_older_key(tmp_path / "older-gone", keep_old_key=False)
+    with pytest.raises(CryptoError) as older_gone:
+        call(engine, "local.enable")
+    engine, _code, _key_id = _kept_with_older_key(tmp_path / "older-here", keep_old_key=True)
+    with pytest.raises(CryptoError) as older_here:
+        call(engine, "local.enable")
+    texts = [str(raised.value) for raised in (gone, no_new_key, older_gone, older_here)]
+    assert "No new key was made" in texts[1] and "taken back first" in texts[3]
+    assert all(path in text for text in texts), texts
 
 
 def test_a_rewrite_with_this_computers_key_that_is_cut_off_is_finished_or_undone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

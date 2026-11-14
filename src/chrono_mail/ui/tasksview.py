@@ -61,9 +61,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.584"
+__version__ = "tasksview.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: _collection_of: the list a selected task is in (Delete says whether it goes to a server by the task's own list)
 # v4.4.584: The Tags block without "All tasks": a click turns a tag filter on and off (D-334)
 # v4.4.581: The answer about one changed task, asked before the list was asked again, is not used: it was asked with the old tag, tab or
 #           search (a task losing the chosen tag left the list of every task, D-146); a task just saved is then selected by the list's own answer. The Tag menu offers the tags shown in Tasks (Show in), and a tag a selected task carries all the same (D-332)
@@ -453,6 +454,7 @@ class TasksPage(PimListPage):
     new_icon = "list-add"
     section_name = "Tasks"
     item_word = "task"
+    collection_word = "a list"
 
     def __init__(self, backend: Backend, settings: QSettings, parent: QWidget | None = None) -> None:
         super().__init__(backend, settings, parent)
@@ -713,6 +715,10 @@ class TasksPage(PimListPage):
     @override
     def _set_tag(self, name: str, on: bool) -> None:
         self._edit_selected(add_tag=(name,)) if on else self._edit_selected(remove_tag=(name,))
+
+    @override
+    def _collection_of(self, item: str) -> str:
+        return next((place.collection for place in self.model.places() if place.item == item), "")
 
     def _selected_rows(self) -> list[TaskPlace]:
         """The places of the selected tasks: they hold what an action needs, also for a task whose row is not in yet."""

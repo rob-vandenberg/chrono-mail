@@ -18,9 +18,10 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 4.4.509"
+__version__ = "parser.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: _calendar_charset without a needless str() (Pyrefly)
 # v4.4.509: the character set a calendar part states is kept (D-310)
 # v4.4.505: a calendar part keeps its method parameter (Attachment.method, RFC 6047, D-310)
 # v3.4.344: a date outside 2 January of year 2 to 30 December 9998 is unreadable: it could not be turned into another time zone (RV-34, RV-118)
@@ -289,7 +290,7 @@ def _calendar_method(part: MIMEPart) -> str:
 def _calendar_charset(part: MIMEPart) -> str:
     """The character set a calendar part states; "" when it has none, or a damaged one."""
     try:
-        return str(part.get_content_charset() or "")
+        return part.get_content_charset() or ""
     except Exception:  # noqa: BLE001 - a damaged header is a missing parameter
         return ""
 

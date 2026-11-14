@@ -1,4 +1,4 @@
-"""Settings > Sync conflicts (D-194): one row per item that differs between Chrono Mail and its server, ticked and settled with Use Chrono Mail or
+"""The Sync conflicts window (Menu > Sync conflicts…) (D-194): one row per item that differs between Chrono Mail and its server, ticked and settled with Use Chrono Mail or
 Use Server data (every clashing field of each ticked item from that side), or per field in the popup a double click opens. Nothing here asks
 questions during the work: a conflict waits on this page until the person settles it, or leaves it."""
 
@@ -52,9 +52,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.4.514"
+__version__ = "syncconflicts.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.4.514: the reason of each getattr on its line (the owner's decision after 4.4.513)
 # v4.3.499: The list: What, Name, Fields, Where, together always the free width, never a horizontal scrollbar; a border dragged as a
 #           splitter, a new window width in proportion, their shares kept with the window's size; What fits its widest text until dragged;

@@ -1,3 +1,4 @@
+import random
 import re
 from datetime import UTC, datetime, timedelta
 from email import message_from_bytes
@@ -27,13 +28,15 @@ from chrono_mail.ui.app import WINDOW_SETTINGS_FILE
 from tools.demo.build import BuiltDemo, build_demo
 from tools.demo.mail import SPAM_SHARE
 from tools.demo.meetings import coming_week, tasks_with_reminders
+from tools.demo.people import SENDERS, make_people
 from tools.demo.pim import TOTAL_CONTACTS, TOTAL_EVENTS, TOTAL_TASKS
 from tools.demo.tagging import DEMO_TAGS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_demo_mail.py 4.4.614"
+__version__ = "test_demo_mail.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: formatted HTML mail from people (a client in the Work Inbox, one in the Freelance studio Inbox), not only from newsletters and spam
 # v4.4.614: (review) nothing of the coming week that starts today carries a reminder (no pop-up on the screenshots)
 # v4.4.614: the tags with their Show in choices, more calendars with the blue plus, the coming week, reminders, the invitations of the Work
 #           Inbox, Favorites with All Messages, three address books, two sync conflicts, and every address and server on an example domain
@@ -68,7 +71,7 @@ def test_the_demo_has_the_messages_asked_for_with_its_share_of_spam(demo: tuple[
     built, engine = demo
     messages = every_message(engine)
     assert built.messages == MESSAGES
-    assert len(messages) == MESSAGES + 3 + 1 + 3 + 5  # with the drafts, the one in the Outbox, the scheduled ones and the calendar mail of Work
+    assert len(messages) == MESSAGES + 3 + 1 + 3 + 5 + 2  # with the drafts, the one in the Outbox, the scheduled ones, the calendar mail of Work and the formatted mail
     junk = [raw for folder, raw in messages if folder == ("Junk",)]
     assert round(MESSAGES * SPAM_SHARE) - 2 <= len(junk) <= round(MESSAGES * SPAM_SHARE) + 2  # its share, not more
 
@@ -120,6 +123,21 @@ def test_calendars_tasks_and_contacts(demo: tuple[BuiltDemo, Engine]) -> None:
 def test_the_junk_filter_has_learned(demo: tuple[BuiltDemo, Engine]) -> None:
     built, _ = demo
     assert (built.folder / "data" / "junk-filter.bin").stat().st_size > 0
+
+
+def test_a_person_writes_formatted_html_mail_to_an_inbox(demo: tuple[BuiltDemo, Engine]) -> None:
+    """The reading pane shows a formatted mail from a person (a client), not only from newsletters and spam: bold, a table, a list."""
+    _, engine = demo
+    people = {person.address for person in make_people(random.Random(2025))}  # the people of the demo, as build_demo makes them
+    companies = {sender.address for sender in SENDERS}
+    formatted: list[str] = []
+    for folder, raw in every_message(engine):
+        parsed = parse_message(raw)
+        sender = parsed.from_addresses[0].address if parsed.from_addresses else ""
+        if folder == ("Inbox",) and sender in people and sender not in companies and parsed.html_body and parsed.text_body and parsed.text_body.strip():
+            if "<table" in parsed.html_body and "<b>" in parsed.html_body:
+                formatted.append(sender)
+    assert formatted
 
 
 def test_the_same_demo_every_time(tmp_path: Path) -> None:

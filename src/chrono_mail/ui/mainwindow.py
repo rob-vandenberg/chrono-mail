@@ -64,6 +64,7 @@ from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown_key
 from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
+from chrono_mail.engine.commands_pim import PIM_PURGE_DELETED, PurgeResult
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
@@ -72,9 +73,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.605"
+__version__ = "mainwindow.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: A section switch from the folder list takes the focus to the new sidebar itself, so hiding the old one no longer
+#           hands it to the message list, which opened its first message (D-334, OR-16); the recovery docstring names Menu > File
+# v4.4.615: The start erases the appointments, contacts and tasks deleted over 30 days ago (pim.purge-deleted, D-072)
 # v4.4.605: Refresh in Calendar, Contacts and Tasks is Send and Receive, as in Mail (D-344)
 # v4.4.593: every account the Add window added gets its first fill (Google: its calendars and its contacts, D-335)
 # v4.4.588: A tag renamed in Settings > Tags keeps its filter on in the four Tags blocks, Mail's view following (D-334)
@@ -1458,6 +1462,7 @@ class MainWindow(QMainWindow):
             self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
             self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
             self._colours_to_tags()  # once per account: appointment colours become tags (D-329)
+            self._purge_deleted()  # what was deleted over 30 days ago is erased (D-072)
             self._started = True
             for path in self._files_waiting:
                 self.open_calendar_file(path)
@@ -1474,6 +1479,18 @@ class MainWindow(QMainWindow):
                 self.report.show(f"The colours of {counted(result.appointments, 'appointment')} are now tags")
 
         self.backend.ask(EVENT_COLOURS_TO_TAGS, NoParameters(), done, lambda error: None, owner=self)
+
+    def _purge_deleted(self) -> None:
+        """Erase the appointments, contacts and tasks deleted more than 30 days ago (D-072), in the background; a word only when it could not."""
+
+        def done(result: PurgeResult) -> None:
+            if result.failed:
+                self.report.show(f"Items deleted long ago are kept a while longer in {', '.join(result.failed)}; they are erased at a later start")
+
+        def failed(error: ChronoMailError) -> None:
+            self.report.show("Items deleted long ago are kept a while longer; they are erased at a later start")
+
+        self.backend.ask(PIM_PURGE_DELETED, NoParameters(), done, failed, owner=self)
 
     def _with_key(self, then: Callable[[], None]) -> None:
         """Continue when the encryption key can be read; otherwise ask for it first."""
@@ -1500,7 +1517,7 @@ class MainWindow(QMainWindow):
             then()
 
     def restore_key(self) -> None:
-        """File > Use a recovery code: ask for the key and, when it is back, load everything; the key's status first, so the window says why."""
+        """Menu > File > Use a recovery code…: ask for the key and, when it is back, load everything; the key's status first, so the window says why."""
         self.backend.ask(KEY_STATUS, NoParameters(), lambda status: self._ask_for_key(lambda: self.reload_accounts(select_saved=True), worth_telling(status)), lambda error: self._ask_for_key(lambda: self.reload_accounts(select_saved=True)), owner=self)
 
     def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None, known: Callable[[], None] | None = None) -> None:
@@ -1729,9 +1746,17 @@ class MainWindow(QMainWindow):
             self.act_delete.setEnabled(True)  # Delete of the calendar, contacts and tasks
         self._show_undo()
         index = 0 if section == MAIL else 1 + list(self.pages).index(section)
+        focused = QApplication.focusWidget()
+        old_side = self.side_stack.currentWidget()
+        side_had_focus = focused is not None and old_side is not None and old_side.isAncestorOf(focused)
+        if focused is not None and side_had_focus:
+            focused.clearFocus()  # the switch places the focus itself: hiding the old sidebar would hand it to the next visible part, Mail's message list (OR-16, D-217)
         self.side_stack.setCurrentIndex(index)
         self._show_mail_conflicts()
         self.content_stack.setCurrentIndex(index)
+        new_side = self.side_stack.currentWidget()
+        if side_had_focus and new_side is not None:
+            self._focus_side(new_side)
         self.window_toolbar.show_row(self.toolbar if section == MAIL else self.pages[section].toolbar)  # one step: the window keeps its size
         self.section_bar.show_section(section)
         self.side_heading.setText(next(name for key, name, *_ in SECTIONS if key == section))
@@ -1743,6 +1768,21 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Chrono Mail" if section == MAIL else f"Chrono Mail — {dict((name, label) for name, label, *_ in SECTIONS)[section]}")
         else:
             self._update_unread_summary()
+
+    @staticmethod
+    def _focus_side(side: QWidget) -> None:
+        """The keyboard focus goes to the sidebar just shown, by Qt's own rule for a page of a stack: the part of it that
+        had the focus last, else its first part that takes the focus by Tab."""
+        target = side.focusWidget()
+        if target is None:
+            widget = side.nextInFocusChain()
+            while widget is not None and widget is not side:
+                if side.isAncestorOf(widget) and widget.focusPolicy() & Qt.FocusPolicy.TabFocus and widget.isVisible() and widget.isEnabled() and widget.focusProxy() is None:
+                    target = widget
+                    break
+                widget = widget.nextInFocusChain()
+        if target is not None:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # --- the message list's menus and clicks ---------------------------------------------------------------------
 

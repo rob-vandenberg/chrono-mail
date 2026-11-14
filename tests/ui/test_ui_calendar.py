@@ -10,6 +10,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.calendarmail import Choice
@@ -22,9 +23,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.611"
+__version__ = "test_ui_calendar.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The delete question of an appointment is plain, and names the server for a server calendar (OR-18)
 # v4.4.611: Tab goes left to right through the whole header row
 # v4.4.610: Today stands in front of the arrows in the header row
 # v4.4.573: Appointments take the colour of their first tag (D-329): the tests of the colour row and Event colours went; the hover text is the appointment's own popup
@@ -274,6 +276,31 @@ def test_a_single_event_is_deleted_after_asking(world: World, qtbot: QtBot, monk
     page.delete_selected()
     wait(qtbot, lambda: "Dentist" not in summaries(page))
     assert page.selected is None and not page.act_delete.isEnabled()
+
+
+def test_the_delete_question_of_an_appointment_is_plain_and_names_the_server_for_a_server_calendar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OR-18: the question names no store directory and no days; for a calendar kept in step with a server it says the server deletes it too."""
+    page = open_calendar(world, qtbot)
+    page._entry_clicked(next(e for e in page.entries if e.summary == "Dentist"))  # noqa: SLF001
+    asked: list[str] = []
+
+    def question(*arguments: object, **keywords: object) -> QMessageBox.StandardButton:
+        asked.append(str(arguments[2]))
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    page.delete_selected()
+    wait(qtbot, lambda: len(asked) == 1)
+    found = page.panel.info
+
+    def on_server(collection: str) -> CollectionSummary | None:
+        info = found(collection)
+        return dataclasses.replace(info, server=True) if info is not None else None
+
+    monkeypatch.setattr(page.panel, "info", on_server)
+    page.delete_selected()
+    wait(qtbot, lambda: len(asked) == 2)
+    assert asked == ["Delete “Dentist”?", "Delete “Dentist”?\n\nIt is also deleted on the server."]
 
 
 def test_your_meeting_asks_whether_to_tell_the_attendees_and_the_cancellation_opens(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

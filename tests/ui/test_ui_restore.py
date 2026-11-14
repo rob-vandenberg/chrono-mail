@@ -2,12 +2,12 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import Engine, build_registry
-from chrono_mail.engine.commands_backup import BACKUP_MAKE, BACKUP_NEW_PASSWORD
+from chrono_mail.engine.commands_backup import BACKUP_MAKE, BACKUP_NEW_PASSWORD, ContentsResult, ContentsRow
 from chrono_mail.ui.backupdialog import may_quit
 from chrono_mail.ui.recoverydialog import RESTORING_TEXT, RecoveryDialog
 from chrono_mail.ui.restoredialog import RestoreDialog
@@ -16,9 +16,10 @@ from chrono_mail.ui.windowsettings import window_settings_text
 from tests.ui.world import Dialogs, World, answer_input, answer_open_file, build_world, menu_named, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_restore.py 2.4.326"
+__version__ = "test_ui_restore.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a long account line wraps in the list: no sideways scroll bar at the window's own size
 # v2.4.326: the ticks: only what the backup holds, the accounts with their counts, greyed parts and Restore… (D-244)
 # v2.4.325: the window's settings of a backup are in use at once, and a Quit keeps them
 # v2.4.324: Initial: File > Restore… (D-244): the key first on a fresh installation, then the file, then its password (asked again when
@@ -174,3 +175,18 @@ def test_the_ticks_show_only_what_the_backup_holds_and_grey_what_cannot_be_resto
     for box in window.part_boxes.values():
         box.setChecked(False)
     assert not window.restore_button.isEnabled()
+
+
+def test_a_long_account_line_wraps_and_the_list_never_scrolls_sideways(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    row = ContentsRow("account", "a.very.long.address.of.someone@a-rather-long-domain-name.example.com", ("messages", "calendars"), 123456, 7890, True)
+    contents = ContentsResult("2026-11-14 10:00", "4.4.615", ("messages", "calendars"), (row,), 123456, 7890, False, False)
+    window = RestoreDialog(world.window.backend, QSettings(str(tmp_path / "restore.ini"), QSettings.Format.IniFormat), tmp_path / "mail.cmz", None, contents)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    accounts = window.accounts
+    item = accounts.item(0)
+    assert item is not None and item.text().endswith("(already here: what it lacks is added)")
+    assert not accounts.horizontalScrollBar().isVisible()
+    assert accounts.visualItemRect(item).width() <= accounts.viewport().width()
+    assert accounts.visualItemRect(item).height() >= 2 * accounts.fontMetrics().height()  # wrapped, not cut off

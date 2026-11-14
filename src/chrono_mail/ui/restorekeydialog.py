@@ -25,9 +25,10 @@ from chrono_mail.ui.passwordfield import PasswordBox
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "restorekeydialog.py 4.2.437"
+__version__ = "restorekeydialog.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the status texts name Menu > File > Use a recovery code…
 # v4.2.437: the recovery file's passphrase is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/restore_key.ui, D-276); the Tab order follows the window from top to bottom (Start
 #           without this mail came first); its smallest width follows the size factor
@@ -62,9 +63,9 @@ START_WITHOUT_KEY_HERE_QUESTION: str = (
     "deleted: they stay on this computer in a folder of their own, but Chrono Mail does not open them again.\n\nStart without them?"
 )
 KEY_BACK: str = "The encryption key is back."
-NOT_TAKEN_BACK: str = "Local Folders is not taken back yet; the rest of your mail is open. Use File > Use a recovery code to try again."
-STILL_MISSING: str = "The encryption key is missing, so your mail cannot be read yet. Use File > Use a recovery code."
-OTHER_STILL_MISSING: str = "Local Folders cannot be opened yet: its older key is missing. Use File > Use a recovery code."
+NOT_TAKEN_BACK: str = "Local Folders is not taken back yet; the rest of your mail is open. Use Menu > File > Use a recovery code… to try again."
+STILL_MISSING: str = "The encryption key is missing, so your mail cannot be read yet. Use Menu > File > Use a recovery code…"
+OTHER_STILL_MISSING: str = "Local Folders cannot be opened yet: its older key is missing. Use Menu > File > Use a recovery code…"
 
 
 def explanation_for(status: KeyStatus | None) -> tuple[str, str]:

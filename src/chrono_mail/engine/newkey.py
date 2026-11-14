@@ -7,9 +7,10 @@ from chrono_mail.engine.walletlabels import label_key
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "newkey.py 3.6.371"
+__version__ = "newkey.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: KEPT_KEY_MISSING names Menu > File > Use a recovery code…
 # v3.6.371: a new key gets a readable label in the wallet (B-23, D-275)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; kept_other_key and usable: Local
 #           Folders' mail kept with an older key is taken back when that key can be had; no new key while Local Folders' mail kept here
@@ -20,8 +21,8 @@ __version__ = "newkey.py 3.6.371"
 
 NOT_STORED_FILE: str = "recovery-code-not-stored"  # holds the id of the key whose recovery code the person has not confirmed yet
 KEPT_KEY_MISSING: str = (
-    "The mail of Local Folders on this computer needs its own key, and this computer's password store does not have it. Use File > Use a "
-    "recovery code to bring it back, or choose Start without this mail there. No new key was made, so that mail stays safe."
+    "The mail of Local Folders on this computer needs its own key, and this computer's password store does not have it. Use Menu > File > Use a recovery code… "
+    "to bring it back, or choose Start without this mail there. No new key was made, so that mail stays safe."
 )
 
 

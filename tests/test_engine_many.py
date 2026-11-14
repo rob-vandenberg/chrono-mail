@@ -4,9 +4,11 @@ from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
-from chrono_mail.core import ProtocolError
-from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.protocols.imap import ImapClient, uid_set
+from chrono_mail.core import MessageFlag, MessageRef, ProtocolError
+from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.engine.undo import mail_undo_labels
+from chrono_mail.protocols.imap import ImapClient, ImapRefused, uid_set
 from tests.test_engine_commands import call
 from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a fixture
 from tests.test_engine_imap_online import filled, in_step
@@ -14,9 +16,11 @@ from tests.test_engine_imap_online import filled, in_step
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_many.py 1.9.265"
+__version__ = "test_engine_many.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: marks already as asked ask no server and keep no Undo step; a real change still goes to the server; a group the server
+#           refuses fails only the messages that needed the change
 # v1.9.265: a message not done because its file is gone here is marked missing (the window warns, D-109)
 # v1.1.247: Initial: actions on many messages go to the IMAP server in groups; a refused group, a message gone there, offline (R-08)
 
@@ -137,3 +141,51 @@ def test_a_message_whose_file_is_gone_here_is_marked_missing_and_the_others_are_
     marked = call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows), flagged=True)
     assert set(marked.done) == {rows[0].message_id, rows[2].message_id}
     assert [(item.message, item.missing) for item in marked.failed] == [(rows[1].message_id, True)]
+
+
+def server_flags(world: World) -> list[set[str]]:
+    return [set(message.flags) for message in sorted(world.imap.folders["INBOX"].messages, key=lambda message: message.uid)]
+
+
+def test_marks_already_as_asked_ask_no_server_and_keep_no_undo_step(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = filled(world, 2)
+    call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows), seen=True)
+    world.engine.notice = lambda text: None
+    world.engine.close_imap_links()
+    connections: list[str] = []
+
+    def unreachable(self: ImapClient) -> None:
+        connections.append("connect")
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    result = call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows), seen=True, undo=3)
+    assert set(result.done) == set(ids(rows)) and result.failed == () and all("seen" in flags for _, flags in result.flags)
+    assert connections == [] and mail_undo_labels(world.engine, NoParameters()).undo == ""
+    away = call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows[:1]), seen=True, undo=4, leaves=True)
+    assert away.done == ids(rows[:1]) and connections == []  # they leave the list of unread mail: still noted, so Undo brings them back (D-282)
+    assert mail_undo_labels(world.engine, NoParameters()).undo != ""
+
+
+def test_a_real_change_among_unchanged_ones_still_goes_to_the_server(world: World) -> None:
+    rows = filled(world, 2)
+    call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows[:1]), seen=True)
+    world.imap.commands.clear()
+    result = call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows), seen=True, undo=5)
+    assert set(result.done) == set(ids(rows)) and result.failed == () and sent(world, "UID STORE") == 1
+    assert all("\\Seen" in flags for flags in server_flags(world))
+    assert mail_undo_labels(world.engine, NoParameters()).undo == "Mark as read (1 message)"  # only the one that changed
+
+
+def test_a_refused_group_of_marks_fails_only_the_ones_that_needed_the_change(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = filled(world, 4)
+    call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows[:2]), seen=True)
+
+    def refused(self: Mailbox, wanted: dict[MessageRef, frozenset[MessageFlag]]) -> None:
+        raise ImapRefused("The server refused: read only")  # the server says no for the whole group
+
+    monkeypatch.setattr(Mailbox, "prepare_flags", refused)
+    result = call(world.engine, "message.flag-many", account=world.account, folder="Inbox", messages=ids(rows), seen=True)
+    assert set(result.done) == set(ids(rows[:2])) and all("seen" in flags for _, flags in result.flags)  # already read: done, with their marks
+    assert {item.message for item in result.failed} == set(ids(rows[2:]))  # the unread ones: the server said no
+    assert {message_id for message_id, _ in result.flags} == set(ids(rows[:2]))

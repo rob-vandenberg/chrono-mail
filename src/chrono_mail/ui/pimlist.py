@@ -18,9 +18,11 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagname import ask_tag_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimlist.py 4.4.602"
+__version__ = "pimlist.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: Delete asks the plain question, and says that an item of a server goes there too; no store directory or days (OR-18);
+#           which items go to a server follows the selected items' own lists or address books, never every one shown (a mix says so calmly)
 # v4.4.602: New tag… takes no vertical bar: a typed one is refused with a calm line, a pasted one left out (D-341)
 # v1.9.273: R-19: delete and move of an item are the section's typed steps (_delete_step, _move_step) instead of command names
 # v1.1.245: Initial: the shared part of the Tasks and Contacts lists, before written twice (R-07)
@@ -94,6 +96,7 @@ class PimListPage(PimPage):
     model, list, delegate and search field (_items, _view, _marks_delegate, _search_field)."""
 
     item_word: str = "item"  # "task", "contact"
+    collection_word: str = "a collection"  # "a list", "an address book": what an item is kept in
 
 
     def __init__(self, backend: Backend, settings: QSettings, parent: QWidget | None = None) -> None:
@@ -113,6 +116,10 @@ class PimListPage(PimPage):
         raise NotImplementedError
 
     def _selected_items(self) -> list[str]:
+        raise NotImplementedError
+
+    def _collection_of(self, item: str) -> str:
+        """The list or address book this item of the list is in."""
         raise NotImplementedError
 
     def _set_tag(self, name: str, on: bool) -> None:
@@ -190,11 +197,22 @@ class PimListPage(PimPage):
         if not items:
             return
         word = f"this {self.item_word}" if len(items) == 1 else f"these {len(items)} {self.item_word}s"
-        if QMessageBox.question(self.content, "Delete", f"Delete {word}?\n\nThe files are kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
+        text = f"Delete {word}?"
+        on_server = [self._on_server(self._collection_of(item)) for item in items]
+        if all(on_server):
+            text += "\n\nIt is also deleted on the server." if len(items) == 1 else "\n\nThey are also deleted on the server."
+        elif any(on_server):
+            text += f"\n\nThose in {self.collection_word} on a server are also deleted there."
+        if QMessageBox.question(self.content, "Delete", text) != QMessageBox.StandardButton.Yes:
             return
         self._take_away(items)
         for item in items:
             self._delete_step(item).start(self._backend, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
+
+    def _on_server(self, collection: str) -> bool:
+        """Whether this list or address book is kept in step with a server: then an item of it is deleted there too (D-197)."""
+        info = self.panel.info(collection)
+        return info is not None and info.server
 
     def _move_selected(self, target: str) -> None:
         items = self._selected_items()

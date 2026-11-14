@@ -10,9 +10,10 @@ from tests.test_engine_commands import call
 from tests.test_engine_dav import linked, shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_conflicts.py 4.3.498"
+__version__ = "test_engine_conflicts.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the notice of a clash names Menu > Sync conflicts…
 # v4.3.498: a contact changed on a server that ignores If-Match (Kerio) is never written over, and waits when its version cannot be read;
 #           settled another way after an interrupted Keep both, its copy goes on the server first (offline later) and out of its group,
 #           unless the person changed it (also on another computer during a write not finished) or was told it is made;
@@ -148,6 +149,17 @@ def test_a_clash_is_a_conflict_kept_once_and_settled_with_chrono_mail_s_version(
         result = call(engine, "conflict.settle", conflicts=(conflict.conflict,), side="local")
         assert result.settled == (conflict.conflict,) and "SUMMARY:Ours again" in (on_server(server, "events", uid) or ("", ""))[1]
         assert call(engine, "conflict.list").conflicts == ()
+
+
+def test_the_notice_of_a_clash_names_the_sync_conflicts_window(tmp_path: Path) -> None:
+    """Sync conflicts is a window (Menu > Sync conflicts…), not a page of Settings."""
+    with FakeDav() as server:
+        engine, account, told = linked(tmp_path, server)
+        item, uid = add_event(engine, account)
+        change_on_server(server, uid, "SUMMARY:Meeting", "SUMMARY:Theirs")
+        call(engine, "event.edit", item=item, summary="Ours")
+        (notice,) = [line for line in told if "changed on the server meanwhile" in line]
+        assert "Menu > Sync conflicts…" in notice and "Settings > Sync conflicts" not in notice
 
 
 def test_a_conflict_settled_with_the_server_s_version_and_per_field(tmp_path: Path) -> None:

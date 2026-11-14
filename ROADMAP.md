@@ -43,7 +43,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12i | Rich text (HTML) composing (0.0.24). | done |
 | 1.12j | The Operations window of send and receive: a row per account with its step and bar, Errors, Log; three settings for when it opens and closes (D-138). | done (0.5.145) |
 | 1.13 | Packaging: .deb and .rpm built here (Nuitka in an Ubuntu 22.04 container, nFPM), tested on bare Ubuntu 22.04, 26.04 and Fedora 43; Flatpak dropped (D-123). Not yet: a test on GNOME. | done (0.5.127) |
-| 1.14 | Windows test run on the Windows computer: the setup.exe recipe is written (`packaging/build_windows.ps1`, `packaging/chrono-mail.iss`, `packaging/PACKAGING.md`), not yet run there. | in progress |
+| 1.14 | Windows test run on the Windows computer: the setup.exe recipe (`packaging/build_windows.ps1`, `packaging/chrono-mail.iss`, `packaging/PACKAGING.md`) built a setup.exe there (0.5.128, fixes in 0.5.129); still to test there: the installed program's password store, PACKAGING.md 4.4, 6.2 and 7. | in progress |
 
 ## Milestone 2: IMAP
 
@@ -203,7 +203,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | U.1 | `README.md` for the people who use the program (what it is, install and uninstall the easy way first, the first start, the recovery code); the developer notes moved to `CONTRIBUTING.md`. 4.4.614: README.md is the complete documentation of the whole program, with 42 screenshots, each in a light and a dark version (D-349). | done (2.3.317, 4.4.614) |
 | U.2 | The user guide in `docs/`, one page at a time, each read by the owner before the next: Getting started, Accounts, Reading mail, Writing and sending, Keeping order, Junk mail, Searching, Calendar, Contacts, Tasks, Working offline and sync conflicts, Keeping your mail safe, Moving from another program, Keyboard shortcuts, Questions and problems. | in progress: the contents page `docs/README.md` and Getting started done (2.3.317) |
 | U.3 | Screenshots with made-up mail, after the restyle of Settings and of Calendar, Contacts and Tasks. The demo profile for them (D-243, `./demo.sh`): done: the 14 accounts, folders, Local Folders, rules and settings (2.3.320); the 100,000 messages with spam, the calendars, tasks and contacts, and `tools/demo/COVERAGE.md`, what in the demo shows every action and setting (2.3.321). 4.4.614: the demo extended to every part of the program (tags, invitations, the coming week, sync conflicts, the blue plus) and checked for privacy; the 42 README screenshots in light and dark (`docs/images/`, made by the private `scratchpad/readme_shots.py`). | done (4.4.614) |
-| U.4 | Windows in the README once a setup.exe is on the release page. | done (4.4.614: install, update and uninstall on Windows in README.md) |
+| U.4 | Windows in the README once a setup.exe is on the release page and the installed program is tested there (the owner, 2026-11-14: left out of README.md until then). | open |
 
 ## Local Folders and Favorites (from 0.0.45)
 - DONE (0.0.45) Local Folders as shared storage for POP3 accounts, choice at setup and in the account settings, safe move both ways, identical reply behaviour.

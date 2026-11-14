@@ -51,9 +51,11 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.527"
+__version__ = "reader.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The row of files is the header's last part: a frame of its own (readerFiles) in the header's colour with the header's bottom
+#           line under it, so the line lies directly above the message and no band of the window's colour shows between them
 # v4.4.527: calendar_parts: which attachments open as a card, whatever their name (D-310)
 # v4.4.526: linkify moved to linkhint.py, for the card too
 # v4.4.516: Change my answer reaches the reading pane (D-310)
@@ -1059,7 +1061,8 @@ class ReaderWidget(QWidget):
         self._header_area = HeaderArea(self._header, self)
         layout.addWidget(self._header_area)
 
-        self._attachment_line = QWidget(self)  # the row of files, or its empty room: folded, every message's header is as high
+        self._attachment_line = QFrame(self)  # the row of files, or its empty room: folded, every message's header is as high
+        self._attachment_line.setObjectName("readerFiles")  # the header's last part: its colour, and the header's bottom line under it
         attachment_layout = QVBoxLayout(self._attachment_line)
         self._attachment_layout = attachment_layout
         attachment_layout.setContentsMargins(0, 0, 0, 0)
@@ -1419,7 +1422,9 @@ class ReaderWidget(QWidget):
         self._attachments.clear()
         self._attachments.set_folded(True)
         self._attachments.line_height = max(QPushButton.sizeHint(self._chip_probe).height(), self._attachments.link.fontMetrics().height())
-        self._attachment_line.setMinimumHeight(self._attachments.folded_height())
+        self._attachment_line.ensurePolished()  # the header's bottom line (the stylesheet) is known: the room of the files lies above it
+        line = self._attachment_line.contentsMargins()
+        self._attachment_line.setMinimumHeight(self._attachments.folded_height() + line.top() + line.bottom())
         self._chips = QButtonGroup(self._attachments)  # one file selected at a time
         self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
         self.calendar_parts = frozenset(position for position, attachment in enumerate(attachments) if attachment.calendar)

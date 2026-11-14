@@ -18,9 +18,10 @@ from chrono_mail.sync.davitems import CONFLICT, DONE, WAITING, ItemGateway, Outc
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 4.4.602"
+__version__ = "pim_server.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a refused meeting and a clash name Menu > Sync conflicts…, a window, not a page of Settings
 # v4.4.602: put takes what follows a save the server took (a Google calendar tag chosen for the event), so a refused save changes nothing on Google (D-341)
 # v4.4.598: An event the server of a Google calendar took gets its colour tag sent to Google right after it (D-337)
 # v4.4.555: put_organizer_last: a copy saved without its organizer first, so a server that mails whatever it is told stays silent; put: mailed (D-310)
@@ -143,7 +144,7 @@ class ItemWriter:
             gateway.hold(info, item, text, str(error))
             self.engine.report(Change("conflicts_changed", self.account))
             raise UsageError(f"The server of {account_name(self.engine, self.account)} did not take this change. Your meeting is kept here as it was; "
-                             "when the server works again, you can settle it in Settings > Sync conflicts") from None
+                             "when the server works again, you can settle it in Menu > Sync conflicts…") from None
 
     def move(self, source: CollectionInfo, item: str, target: CollectionInfo) -> str:
         gateway = self._server(source)
@@ -160,7 +161,7 @@ class ItemWriter:
             self.engine.notice(f"The server of {account_name(self.engine, self.account)} could not be reached: {counted(self.waiting, 'change')} waiting, sent at the next synchronisation")
             self.engine.report(Change("waiting_changed", self.account))
         if self.conflicts:
-            self.engine.notice(f"{counted(self.conflicts, 'item')} of {account_name(self.engine, self.account)} were changed on the server meanwhile: see Settings > Sync conflicts")
+            self.engine.notice(f"{counted(self.conflicts, 'item')} of {account_name(self.engine, self.account)} were changed on the server meanwhile: see Menu > Sync conflicts…")
             self.engine.report(Change("conflicts_changed", self.account))
 
 

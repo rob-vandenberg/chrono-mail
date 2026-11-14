@@ -1,9 +1,10 @@
 from chrono_mail.ui.columnfit import MINIMUM_ICON, MINIMUM_TEXT, ColumnLayout, drag, fit, layout_from_pixels, read_layout
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnfit.py 0.1.89"
+__version__ = "test_ui_columnfit.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a smallest width given for one text column is kept; the others keep MINIMUM_TEXT; a drag stops at a column's own smallest width
 # v0.1.89: Initial tests of the column fit arithmetic
 
 ORDER = ("status", "flag", "from_to", "subject", "date", "trash")
@@ -25,6 +26,13 @@ def test_a_text_column_is_never_narrower_than_its_smallest_width() -> None:
     assert widths[2] == widths[4] == MINIMUM_TEXT and sum(widths) == 600
 
 
+def test_a_smallest_width_given_for_a_text_column_is_kept_and_the_others_keep_theirs() -> None:
+    layout = ColumnLayout(shares={"from_to": 0.01, "subject": 0.98, "date": 0.01})
+    widths = fit(ORDER, ICON, layout, DEFAULTS, 600, {"date": 80})
+    assert widths[4] == 80 and widths[2] == MINIMUM_TEXT and sum(widths) == 600
+    assert fit(ORDER, ICON, layout, DEFAULTS, 100, {"date": 80})[2:5] == [MINIMUM_TEXT, MINIMUM_TEXT, 80]  # too little room: each at its smallest
+
+
 def test_dragging_changes_the_column_and_the_text_columns_to_its_right_only() -> None:
     widths = [24, 24, 200, 300, 150, 24]
     wider = drag(ICON, widths, 2, 260)  # From / To 60 px wider
@@ -40,6 +48,17 @@ def test_a_drag_stops_at_the_smallest_widths() -> None:
     assert drag(ICON, widths, 0, 5)[0] == MINIMUM_ICON  # an icon column stops at 24 px
     far = drag(ICON, widths, 2, 5000)
     assert far[3] == far[4] == MINIMUM_TEXT and sum(far) == sum(widths)
+
+
+def test_a_drag_cannot_make_a_column_narrower_than_its_own_smallest_width() -> None:
+    widths = [24, 24, 200, 300, 150, 24]
+    assert drag(ICON, widths, 2, 10, ORDER, {"from_to": 120})[2] == 120  # the column dragged itself
+    far = drag(ICON, widths, 2, 5000, ORDER, {"date": 120})
+    assert far[3] == MINIMUM_TEXT and far[4] == 120 and sum(far) == sum(widths)  # a text column to its right that gives way
+    wide_icon = drag(ICON, widths, 4, -1000, ORDER, {"date": 120})  # the line right of Received far left: Delete grows, every text column gives
+    assert wide_icon[4] == 120 and sum(wide_icon) == sum(widths)
+    at_floor = drag(ICON, [24, 24, 131, 196, 67, 24], 1, 24 + 43, ORDER, {"date": 67})  # Flag 43 px wider; Received is already at its smallest
+    assert at_floor[1] == 67 and at_floor[4] == 67 and sum(at_floor) == 24 + 24 + 131 + 196 + 67 + 24  # the rounding never takes from it
 
 
 def test_widening_an_icon_column_takes_from_the_text_columns_to_its_right() -> None:

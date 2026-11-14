@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.572"
+__version__ = "readingpane.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: open_window_of: a message already read is not marked read again (no command, no Undo step)
 # v4.4.572: wire_reader: a reader outside the reading pane gets the calendar card's actions; the message window and the Tag overview use it (D-328)
 # v4.4.558: Decline from the calendar goes as on a card, with no choice of calendar
 # v4.4.556: An answer from the calendar refreshes every open card of that item (D-310)
@@ -422,7 +423,7 @@ class ReadingPane(QObject):
             self.message_windows.append(window)
             window.destroyed.connect(lambda: self.message_windows.remove(window) if window in self.message_windows else None)
             window.show()
-            if self._prefs.read().mark_read != "never":
+            if "seen" not in result.flags and self._prefs.read().mark_read != "never":
                 self._actions.set_flags([(folder, message_id)], {"seen": True}, account)
             self.apply_reader_preferences()
 

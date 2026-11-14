@@ -33,9 +33,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.2.453"
+__version__ = "mailbox.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a deleted folder's files are erased 30 days after the delete (the owner, D-072)
 # v4.2.453: the rules follow a folder renamed or moved and are switched off when it is deleted, before the fact is told; rules_changed
 #           with what they did, and rule_notes for the command's answer; a folder only hidden here changes no rule (D-302)
 # v4.2.430: a row carries the person From / To shows (to_shown, D-295)
@@ -962,7 +963,7 @@ class Mailbox:
 
     def drop_unsynchronised_folder(self, path: tuple[str, ...], gone: bool = False) -> None:
         """The person left an IMAP folder out of the synchronisation: its copy here is no longer shown. Nothing changes on
-        the server, where the mail stays; the files are kept in the store's .deleted directory, not erased. The only change
+        the server, where the mail stays; the files are kept in the store's .deleted directory and erased 30 days later (pim.purge-deleted). The only change
         of folders made here alone: the caller checked that the folder holds nothing the server has not got. gone: the server
         deleted it (a sync conflict settled with the server's side), so the rules that move mail to it are switched off; a folder
         only hidden here changes no rule (OR-20, D-302)."""
@@ -1047,7 +1048,7 @@ class Mailbox:
                     server.refuse_unseen(path)
 
     def delete_folder(self, path: tuple[str, ...], require_empty: bool) -> int:
-        """Take one folder out of the store (its files are kept in .deleted); in an IMAP account it is deleted on the
+        """Take one folder out of the store (its files are kept in .deleted for 30 days); in an IMAP account it is deleted on the
         server first, with its mail, and only while the server can be reached. Returns the messages removed from the index."""
         if not self._on_server(path):
             self.store.delete_folder(path, require_empty=require_empty)

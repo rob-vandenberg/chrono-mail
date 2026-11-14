@@ -1,8 +1,8 @@
 from dataclasses import replace as changed
 
-from PySide6.QtCore import QObject, QPoint, Qt
-from PySide6.QtGui import QAction, QActionGroup, QFont
-from PySide6.QtWidgets import QApplication, QHeaderView, QMenu, QWidget
+from PySide6.QtCore import QObject, QPoint, QSize, Qt
+from PySide6.QtGui import QAction, QActionGroup, QFont, QFontMetrics
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QHeaderView, QMenu, QStyle, QStyleOptionViewItem, QWidget
 
 from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.columnfit import MINIMUM_ICON, ColumnLayout, drag, fit, layout_from_pixels, read_layout
@@ -22,9 +22,12 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 4.2.436"
+__version__ = "messagecolumns.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the Size column is never narrower than its widest text ("1023.9 MB", bold as on an unread row) with the cell's margins,
+#           measured by the style the way the list paints the cell (cell_width); it was cut at the 50 pixels of every text column
+#           and a dragged column line stops there too (drag takes the same smallest widths as fit)
 # v4.2.436: a window with the column list (Message list window, Settings > Message list) tries its changes out on the open folder at
 #           once: ticks, Move up, Move down, Default (the kind's stored setup: columns, order, widths, sort), Reset (the kind's setup
 #           after a fresh install) and Apply to all; nothing is saved before OK, Cancel puts back every setup as it was (D-104, D-228);
@@ -49,6 +52,20 @@ __version__ = "messagecolumns.py 4.2.436"
 #           the size of the list
 
 LAYOUTS: tuple[tuple[str, str], ...] = (("columns", "Columns"), ("cards", "Cards"))
+SIZE_WIDEST: tuple[str, ...] = ("1023.9 KB", "1023.9 MB")  # the widest texts formatting.file_size writes below a gigabyte (from 1024 on it takes the next unit)
+
+
+def cell_width(view: QAbstractItemView, text: str) -> int:
+    """The width a cell of the list needs to show this text whole in bold (an unread row), with the cell's text margins: asked of
+    the style the list paints its cells with."""
+    font = QFont(view.font())
+    font.setBold(True)
+    option = QStyleOptionViewItem()
+    option.initFrom(view)
+    for field, value in (("font", font), ("fontMetrics", QFontMetrics(font)), ("text", text), ("features", QStyleOptionViewItem.ViewItemFeature.HasDisplay),
+                         ("displayAlignment", Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)):
+        setattr(option, field, value)  # setattr: PySide's stubs give the fields of a style option no type
+    return view.style().sizeFromContents(QStyle.ContentsType.CT_ItemViewItem, option, QSize(), view).width()
 
 
 class MessageColumns(QObject):
@@ -395,7 +412,7 @@ class MessageColumns(QObject):
         position = logical.index(section)
         widths = [header.sectionSize(index) for index in logical]
         widths[position] = old
-        self._apply_drag(logical, order, icon, drag(icon, widths, position, new))
+        self._apply_drag(logical, order, icon, drag(icon, widths, position, new, order, self._column_minimums(order)))
 
     def _column_line_dragged(self, section: int, distance: int) -> None:
         """A column line is dragged with the mouse: all widths are worked out from the widths at the press and the whole distance moved."""
@@ -408,7 +425,7 @@ class MessageColumns(QObject):
         icon = [BY_ID[column_id].symbol for column_id in order]
         widths = [start[index] for index in logical]
         position = logical.index(section)
-        self._apply_drag(logical, order, icon, drag(icon, widths, position, widths[position] + distance))
+        self._apply_drag(logical, order, icon, drag(icon, widths, position, widths[position] + distance, order, self._column_minimums(order)))
 
     def _apply_drag(self, logical: list[int], order: list[str], icon: list[bool], result: list[int]) -> None:
         self._set_column_widths(logical, result)
@@ -442,8 +459,13 @@ class MessageColumns(QObject):
         icon = [BY_ID[column_id].symbol for column_id in order]
         if self._column_layout is None:
             self._column_layout = layout_from_pixels(order, icon, [BY_ID[column_id].width for column_id in order])
-        widths = fit(order, icon, self._column_layout, [BY_ID[column_id].width for column_id in order], view.viewport().width())
+        widths = fit(order, icon, self._column_layout, [BY_ID[column_id].width for column_id in order], view.viewport().width(), self._column_minimums(order))
         self._set_column_widths(logical, widths)
+
+    def _column_minimums(self, order: list[str]) -> dict[str, int]:
+        """The smallest widths of the text columns that have one of their own (fit and drag): the Size column's widest text."""
+        view = self._messages.view
+        return {"size": max(cell_width(view, text) for text in SIZE_WIDEST)} if "size" in order else {}
 
     def _set_column_widths(self, logical: list[int], widths: list[int]) -> None:
         header = self._messages.view.header()

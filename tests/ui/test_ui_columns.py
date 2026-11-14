@@ -1,12 +1,17 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
-from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QPoint, QPointF, QSettings, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QPoint, QPointF, QSettings, Qt
+from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QHeaderView, QToolBar
+from PySide6.QtWidgets import QApplication, QDialog, QHeaderView, QStyle, QToolBar
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_mail import MESSAGE_SHOW
+from chrono_mail.engine.commands_many import MESSAGE_FLAG_MANY
+from chrono_mail.engine.registry import TypedCommand
+from chrono_mail.ui.backend import Failure
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, cell_text, date_text, valid_columns
 from chrono_mail.ui.columnsetup import STARTING, read_setups
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
@@ -16,9 +21,11 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 4.4.560"
+__version__ = "test_ui_columns.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a message already read opened in a window of its own is not marked read again (no message.flag-many, no Undo step);
+#           the Size column is never narrower than "1023.9 MB" in bold with the cell's text margins, wide and narrow, also when dragged
 # v4.4.560: a click in the Flag or Unread column toggles that mark of that one message; their cells have no hover text (D-319)
 # v4.2.436: Reset (was Standard columns) is the picker's
 # v4.2.430: the stand-in row has to_shown (the person From / To shows for mail one sent, D-295)
@@ -238,6 +245,33 @@ def test_the_reading_pane_can_be_switched_off_and_a_message_opens_in_a_window(wo
     wait(qtbot, lambda: world.window.reading.shown is not None)  # noqa: SLF001 - the pane shows the selected message again
 
 
+def test_a_message_already_read_opened_in_a_window_is_not_marked_read_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.window.start()
+    settle(qtbot, world, 3)
+    world.window.reading.set_place("off")
+    commands: list[str] = []
+    original = world.backend.ask
+
+    def ask[P, R](command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+                  in_order: bool = False, waiting: bool = False, checking: bool = False) -> int:
+        commands.append(command.id)
+        return original(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(world.backend, "ask", ask)
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(1, 0))
+    world.window.act_open.trigger()  # unread: marked read
+    wait(qtbot, lambda: "seen" in row_of(world.window, 1).flags)
+    assert commands.count(MESSAGE_FLAG_MANY.id) == 1
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    commands.clear()
+    world.window.act_open.trigger()  # read already: nothing to mark
+    wait(qtbot, lambda: len(world.window.reading.message_windows) == 2 and world.backend._pending == {})  # noqa: SLF001
+    assert MESSAGE_SHOW.id in commands and MESSAGE_FLAG_MANY.id not in commands
+    assert world.engine.undo.labels() == ("", "")
+    for window in list(world.window.reading.message_windows):  # noqa: SLF001
+        window.close()
+
+
 def test_a_message_window_can_start_a_reply(world: World, qtbot: QtBot) -> None:
     world.window.start()
     settle(qtbot, world, 3)
@@ -296,6 +330,26 @@ def test_the_columns_fill_the_list_and_the_last_has_no_drag_line(world: World, q
     header.resizeSection(sender, header.sectionSize(sender) + 40)  # as a drag does
     assert sum(header.sectionSize(index) for index in range(header.count())) == view.viewport().width()  # Subject and the others gave the room
     assert '\\"shares\\"' in str(world.window.settings.value("folder_columns")) and header.sectionSize(subject) > 50  # kept for the Inbox only
+
+
+def test_the_size_column_holds_its_widest_text_whole_wide_and_narrow(world: World, qtbot: QtBot) -> None:
+    shown(world, qtbot)
+    view, model = world.window.list_view, world.window.list_model
+    header = view.header()
+    font = QFont(view.font())
+    font.setBold(True)  # an unread row
+    margins = 2 * (view.style().pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, view) + 1)  # Qt's text margin on each side of a cell
+    needed = QFontMetrics(font).horizontalAdvance("1023.9 MB") + margins
+    size = model.columns.index("size")
+    assert header.sectionSize(size) >= needed
+    world.window.resize(500, 600)
+    qtbot.wait(50)
+    assert header.sectionSize(size) >= needed
+    world.window.resize(1200, 600)
+    qtbot.wait(50)
+    header.resizeSection(size, 10)  # as a drag of its right line far to the left does
+    assert header.sectionSize(size) >= needed  # the drag stops at its smallest width
+    assert sum(header.sectionSize(index) for index in range(header.count())) == view.viewport().width()
 
 
 def test_rows_have_the_height_of_the_density(world: World, qtbot: QtBot) -> None:

@@ -26,9 +26,10 @@ from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, w
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 3.6.353"
+__version__ = "local.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the ways out for a missing key name Menu > File > Use a recovery code…
 # v3.6.353: the kept index connections are let go before Local Folders takes its rewritten files (D-266)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; the messages about kept Local
 #           Folders name Start without this mail, the way out when its key is gone; kept Local Folders written with an older key of this
@@ -103,11 +104,11 @@ def _take_kept_local_folders(engine: Engine, directory: Path) -> AppConfig:
         if not usable(engine, str(kept_key)):
             raise CryptoError(
                 f"The mail of Local Folders in {directory} was written with an older key of this computer, which its password store no longer "
-                "has. Use File > Use a recovery code with that key's recovery code, or Start without this mail there (it is not deleted); "
+                "has. Use Menu > File > Use a recovery code… with that key's recovery code, or Start without this mail there (it is not deleted); "
                 "nothing was changed"
             )
         raise CryptoError(  # written again only by its own step (take_back), which the key window runs with a word on the screen
-            "Local Folders was written with an older key of this computer and is taken back first: choose File > Use a recovery code, and "
+            "Local Folders was written with an older key of this computer and is taken back first: choose Menu > File > Use a recovery code…, and "
             "the window does it (no code is needed); nothing was changed"
         )
     try:
@@ -116,8 +117,8 @@ def _take_kept_local_folders(engine: Engine, directory: Path) -> AppConfig:
         raise
     except CryptoError:  # not there, or damaged
         raise CryptoError(
-            f"The mail of Local Folders is still in {directory}, but its key is not in this computer's password store. Use File > Use a "
-            "recovery code to bring the key back (or Start without this mail there, which sets it aside); nothing was changed."
+            f"The mail of Local Folders is still in {directory}, but its key is not in this computer's password store. Use Menu > File > Use a recovery code… "
+            "to bring the key back (or Start without this mail there, which sets it aside); nothing was changed."
         ) from None
     store = Store.open(directory, key, durable=engine.durable)
     for path, role in STANDARD_FOLDERS:

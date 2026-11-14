@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 4.4.612"
+__version__ = "theme.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The header's bottom line is under the row of files (readerFiles), directly above the message; the row has the header's colour
 # v4.4.612: The Mail folder tree has the dark list background (base) of the trees of Calendar, Contacts and Tasks (the owner)
 # v4.4.566: The title of an event edited in place has no border, background or padding: it stands where the title was drawn (D-324)
 # v4.2.473: Menus take the theme's menu colour instead of the window's
@@ -104,7 +105,8 @@ QToolButton#sortButton::menu-indicator {{ image: none; width: 0; }}
 QToolButton#filterButton {{ padding-right: 22px; }}
 QToolButton#filterButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
 QToolButton#filterButton:checked {{ color: palette(highlight); font-weight: bold; background: transparent; border: 0; }}
-QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
+QFrame#readerHeader {{ background: palette(window); border: 0; }}
+QFrame#readerFiles {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}
 QFrame#remoteBanner QPushButton:hover {{ background: {HOVER_STRONG}; }}

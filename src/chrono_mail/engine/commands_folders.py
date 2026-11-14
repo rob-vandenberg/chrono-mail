@@ -17,9 +17,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.4.539"
+__version__ = "commands_folders.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a deleted folder's files are erased 30 days after the delete (the owner, D-072)
 # v4.4.539: the steps after an upgrade are counted from how many there were: the removal of the old rows is one of them (D-314)
 # v4.4.538: folder.rename tells that the folder is being renamed (working), for the status line
 # v4.2.471: the sort indexes of format 19 (each message's id and read mark, D-306) are remade the same way
@@ -120,7 +121,7 @@ class FolderDeleteResult:
 
 def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderDeleteResult:
     """Take the folder (and with include_subfolders everything below it) out of the store.
-    The files are kept in the store's .deleted directory, not erased."""
+    The files are kept in the store's .deleted directory and erased 30 days later."""
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
         targets = [folder]
@@ -438,7 +439,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(FOLDER_LIST.id, "List the folders with their message counts", AccountParameters, folder_list, doing="Reading the folders")
     registry.register(FOLDER_CREATE.id, "Create a folder", FolderParameters, folder_create, doing="Creating a folder")
     registry.register(FOLDER_RENAME.id, "Rename a folder with everything below it", FolderRenameParameters, folder_rename, doing="Renaming a folder")
-    registry.register(FOLDER_DELETE.id, "Delete a folder (its files are kept in .deleted)", FolderDeleteParameters, folder_delete, destructive=True, doing="Deleting a folder")
+    registry.register(FOLDER_DELETE.id, "Delete a folder (its files are kept in .deleted for 30 days)", FolderDeleteParameters, folder_delete, destructive=True, doing="Deleting a folder")
     registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild, doing="Rebuilding the search index", behind=True)
     registry.register(INDEX_CHECK.id, "Tell which indexes must be rebuilt or filled in", NoParameters, index_check, doing="Checking the search indexes")
     registry.register(INDEX_PREPARE.id, "Make an index usable, rebuilding it when it cannot be used", AccountParameters, index_prepare, doing="Rebuilding the search index")

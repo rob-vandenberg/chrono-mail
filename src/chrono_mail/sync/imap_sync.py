@@ -16,9 +16,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.4.592"
+__version__ = "imap_sync.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a refused folder names Menu > Sync conflicts…, a window, not a page of Settings
 # v4.4.592: Gmail's All Mail starts hidden when nothing of it was here before and the person never chose: it holds every message once
 #           more (D-335)
 # v4.4.517: The answer marks of an invitation are keywords: sent and taken over with the flags, here only in a folder that keeps no keywords (D-310)
@@ -503,7 +504,7 @@ def _create_on_server(
             client.subscribe(name)
         except ImapRefused as error:  # a lasting "no": a sync conflict for the person, not a line at every check (D-195)
             if record(store, FOLDER_REFUSED, path, "", "/".join(path), str(error)):
-                notes.append(f"The folder '{_printable(name)}' could not be made on the server: {error} (see Settings > Sync conflicts)")
+                notes.append(f"The folder '{_printable(name)}' could not be made on the server: {error} (see Menu > Sync conflicts…)")
             continue
         created.append(FolderPlan(name, path, folder.role))
         state.set_server_name(path, name)

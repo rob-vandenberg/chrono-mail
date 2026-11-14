@@ -4,7 +4,7 @@ from typing import Literal
 
 from chrono_mail.config import TAG_KINDS, AppConfig, load_tags, save_tags
 from chrono_mail.core.tagnames import BAR, BAR_REFUSED
-from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, chosen_own_name, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError, OWN_COLOUR_ID, chosen_own_name, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
 from chrono_mail.engine.collection_create import create_collection
 from chrono_mail.engine.collection_delete import delete_collection, together
 from chrono_mail.engine.collection_looks import change_look, own_name
@@ -20,9 +20,11 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.4.609"
+__version__ = "commands_pim.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: pim.purge-deleted: what was deleted more than 30 days ago is erased from every account's store (D-072), also the deleted mail
+#           folders of every mail store (counted in PurgeResult.folders), and never while a restore runs
 # v4.4.609: tag.list-shown: every tag, its appointments counted only in the calendars shown (D-347)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.604: CollectionSummary.own_name: a Google calendar's name is one's own name for it (D-343)
@@ -95,6 +97,43 @@ def pim_enable(engine: Engine, parameters: NoParameters) -> tuple[CollectionSumm
     """Make sure there is a calendar, a task list and an address book on this computer (Local Folders), and list all collections."""
     ensure_local_pim(engine)
     return _summaries(engine)
+
+
+PURGE_AFTER_DAYS: float = 30.0  # deleted items and collections are kept this long in their store's .deleted (D-072)
+
+
+@dataclass(frozen=True, slots=True)
+class PurgeResult:
+    erased: int  # files and directories erased
+    failed: tuple[str, ...] = ()  # the accounts whose store could not be purged now (tried again at the next start)
+    folders: int = 0  # the deleted mail folders erased
+
+
+def pim_purge_deleted(engine: Engine, parameters: NoParameters) -> PurgeResult:
+    """Erase from every account's store what was deleted more than 30 days ago (D-072): appointments, tasks, contacts and collections, and
+    the deleted mail folders of every place where mail is kept (each account's own, Local Folders). One account that fails leaves the
+    others alone. Never while a restore sets this computer's data aside: it waits for this, or this is refused while it runs (RV-60)."""
+    erased = 0
+    folders = 0
+    failed: list[str] = []
+    with engine.server_work.running():
+        for account in pim_account_ids(engine):
+            try:
+                with open_pim(engine, account) as store:
+                    erased += store.purge_deleted(PURGE_AFTER_DAYS)
+            except ChronoMailError:
+                failed.append(account_name(engine, account))
+        for place, members in engine.storage_groups().items():
+            try:
+                settings = engine.storage_settings(members[0])
+                if not (engine.store_directory(settings) / "store.json").exists():
+                    continue  # no mail kept here yet: nothing was deleted
+                folders += engine.open_store(settings).purge_deleted_folders(PURGE_AFTER_DAYS)  # it chooses under the store's folder lock and erases after it
+            except ChronoMailError:
+                name = account_name(engine, place)
+                if name not in failed:
+                    failed.append(name)
+    return PurgeResult(erased, tuple(failed), folders)
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,10 +456,12 @@ PIM_ENABLE: TypedCommand[NoParameters, tuple[CollectionSummary, ...]] = TypedCom
 COLLECTION_LIST: TypedCommand[ListParameters, tuple[CollectionSummary, ...]] = TypedCommand("collection.list", ListParameters, tuple)  # every element is a CollectionSummary
 COLLECTION_EDIT: TypedCommand[EditParameters, CollectionSummary] = TypedCommand("collection.edit", EditParameters, CollectionSummary)
 COLLECTION_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("collection.delete", DeleteParameters, DeleteResult)
+PIM_PURGE_DELETED: TypedCommand[NoParameters, PurgeResult] = TypedCommand("pim.purge-deleted", NoParameters, PurgeResult)
 
 
 def register(registry: CommandRegistry) -> None:
     registry.register(PIM_ENABLE.id, "Make sure there is a calendar, a task list and an address book on this computer, and list them", NoParameters, pim_enable, doing="Preparing the calendars, task lists and address books")
+    registry.register(PIM_PURGE_DELETED.id, "Erase the appointments, tasks, contacts, collections and mail folders deleted more than 30 days ago", NoParameters, pim_purge_deleted, doing="Erasing what was deleted over 30 days ago")
     registry.register(COLLECTION_LIST.id, "List the calendars, task lists and address books", ListParameters, collection_list, doing="Reading the calendars, task lists and address books")
     registry.register(COLLECTION_CREATE.id, "Make a calendar, a task list or an address book (in a server's account: on the server first)", CreateParameters, collection_create, doing="Making a calendar, task list or address book")
     registry.register(COLLECTION_ACCOUNTS.id, "List where a calendar, task list or address book can be made", NoParameters, collection_accounts, doing="Reading where calendars and address books can be made")

@@ -1,19 +1,24 @@
 from collections.abc import Callable
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtWidgets import QApplication, QMessageBox
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_mail import MESSAGE_SHOW
+from chrono_mail.engine.registry import TypedCommand
+from chrono_mail.ui.backend import Failure
 from chrono_mail.ui.collectionpanel import ROLE_COLLECTION, collection_items
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS
 from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 1.9.264"
+__version__ = "test_ui_sections.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The delete question of a collection names no store directory or days (OR-18)
+# v4.4.615: A section switch from the folder list opens no message and takes the focus along; Mail's sidebar is mail_side; Contacts ticks its address book (D-334)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.1.236: a new calendar is named in the New calendar window (with its Account)
 # v0.5.170: a section's row of buttons sits in the window's one toolbar
@@ -29,7 +34,7 @@ def test_four_square_buttons_switch_the_sidebar_the_main_area_and_the_toolbar(wo
     started(qtbot, world)
     window = world.window
     assert [name for name, *_ in SECTIONS] == [MAIL, CALENDAR, CONTACTS, TASKS] and list(window.section_bar.buttons) == [MAIL, CALENDAR, CONTACTS, TASKS]
-    assert window.section == MAIL and window.section_bar.buttons[MAIL].isChecked() and window.side_stack.currentWidget() is window.tree and window.toolbar.isVisible()
+    assert window.section == MAIL and window.section_bar.buttons[MAIL].isChecked() and window.side_stack.currentWidget() is window.mail_side and window.toolbar.isVisible()
     for section, key in ((CALENDAR, "Ctrl+2"), (CONTACTS, "Ctrl+3"), (TASKS, "Ctrl+4"), (MAIL, "Ctrl+1")):
         assert window.section_actions[section].shortcut().toString() == key
     window.section_bar.buttons[CALENDAR].click()
@@ -63,7 +68,8 @@ def test_the_sidebar_lists_the_calendars_under_their_account_and_remembers_what_
     window.switch_section(CONTACTS)
     contacts = window.pages[CONTACTS].panel
     wait(qtbot, lambda: len(collection_items(contacts.tree)) == 1)
-    assert contacts.current_id() != "" and contacts.visible_ids() == [contacts.current_id()]  # an address book is chosen, not ticked
+    book = collection_items(contacts.tree)[0]
+    assert book.checkState(0) == Qt.CheckState.Checked and contacts.visible_ids() == [str(book.data(0, ROLE_COLLECTION))]  # the address book is ticked (D-334)
     window.switch_section(TASKS)
     wait(qtbot, lambda: len(collection_items(window.pages[TASKS].panel.tree)) == 1)
 
@@ -129,6 +135,64 @@ def test_new_refresh_and_the_collection_menu_work_in_a_section(world: World, qtb
     window.switch_section(MAIL)
     window.act_refresh.trigger()
     wait(qtbot, lambda: not window.checking.checking)  # noqa: SLF001
+
+
+def test_the_delete_question_of_a_collection_names_no_store_directory(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OR-18: the question names the collection and its items, and for a server one the server; never a store directory or days."""
+    import dataclasses
+
+    from chrono_mail.engine.commands_pim import CollectionSummary
+
+    started(qtbot, world)
+    world.window.switch_section(CALENDAR)
+    panel = world.window.pages[CALENDAR].panel
+    wait(qtbot, lambda: len(collection_items(panel.tree)) == 1)
+    collection = str(collection_items(panel.tree)[0].data(0, ROLE_COLLECTION))
+    asked: list[str] = []
+
+    def question(*arguments: object, **keywords: object) -> QMessageBox.StandardButton:
+        asked.append(str(arguments[2]))
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    panel.delete_collection(collection)
+    found = panel.info
+
+    def on_server(chosen: str) -> CollectionSummary | None:
+        info = found(chosen)
+        return dataclasses.replace(info, server=True) if info is not None else None
+
+    monkeypatch.setattr(panel, "info", on_server)
+    panel.delete_collection(collection)
+    assert len(asked) == 2 and asked[0].startswith("Delete the calendar “Calendar”") and asked[0].endswith("?")
+    assert asked[1].endswith("from the server?\n\nEvery program that synchronises with the server will remove it too.")
+    assert not any(".deleted" in text or "30 days" in text for text in asked)
+
+
+def test_a_section_switch_from_the_folder_list_opens_no_message_and_takes_the_focus_along(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    window = world.window
+    commands: list[str] = []
+    original = world.backend.ask
+
+    def ask[P, R](command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+                  in_order: bool = False, waiting: bool = False, checking: bool = False) -> int:
+        commands.append(command.id)
+        return original(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(world.backend, "ask", ask)
+    window.tree.setFocus()
+    wait(qtbot, lambda: QApplication.focusWidget() is window.tree)
+    assert not window.list_view.currentIndex().isValid() and window.reading.shown is None
+    window.section_actions[CALENDAR].trigger()
+    focused = QApplication.focusWidget()
+    assert focused is not None and window.pages[CALENDAR].side.isAncestorOf(focused)  # the focus went along to the Calendar's sidebar
+    window.section_actions[MAIL].trigger()
+    focused = QApplication.focusWidget()
+    assert focused is not None and window.mail_side.isAncestorOf(focused)  # and back to Mail's folder list
+    qtbot.wait(100)
+    assert not window.list_view.currentIndex().isValid() and window.reading.shown is None  # nobody chose a message: none is opened
+    assert MESSAGE_SHOW.id not in commands and not any(command.startswith("message.flag") for command in commands)
 
 
 def test_the_last_section_is_remembered(world: World, qtbot: QtBot) -> None:

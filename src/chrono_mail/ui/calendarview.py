@@ -54,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.611"
+__version__ = "calendarview.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the delete question of an appointment is plain, and says that one of a server goes there too; no store directory or days (OR-18)
 # v4.4.611: Tab goes left to right through the whole header row, Show declined before Hide past events (the owner)
 # v4.4.610: Today stands in front of the arrows, and Tab goes Today, ‹, › (the owner)
 # v4.4.609: The Tags list holds only the tags of the ticked calendars; a tag filter whose tag goes with an untick goes off (D-347)
@@ -791,7 +792,9 @@ class CalendarPage(PimPage):
     def _delete_confirmed(self, entry: Entry, values: EventDelete) -> None:
         """Asks only when no choice of this occurrence or all occurrences came first."""
         if not entry.row.repeats:
-            text = f"Delete this date of “{entry.summary}”?" if values.occurrence else f"Delete “{entry.summary}”?\n\nThe file is kept in the store's .deleted directory for 30 days."
+            calendar = self.panel.info(entry.row.collection)
+            server = "\n\nIt is also deleted on the server." if calendar is not None and calendar.server else ""
+            text = f"Delete this date of “{entry.summary}”?" if values.occurrence else f"Delete “{entry.summary}”?{server}"
             if QMessageBox.question(self.content, "Delete", text) != QMessageBox.StandardButton.Yes:
                 return
         self._delete(values, "")

@@ -1,7 +1,13 @@
-from PySide6.QtCore import QSettings, Qt
+import time
+from collections.abc import Mapping
+
+import pytest
+from PySide6.QtCore import QObject, QSettings, Qt
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui.backend import Backend
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
+from chrono_mail.engine.pimaccess import open_pim
+from chrono_mail.ui.backend import Backend, Failure, Success
 from chrono_mail.ui.folderpane import FolderPane
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import KIND_ROLE
@@ -11,9 +17,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_startup_view.py 4.4.590"
+__version__ = "test_ui_startup_view.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The start erases once what was deleted from the calendars, address books and task lists over 30 days ago (D-072)
 # v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
 # v4.4.586: Favorites has All messages after All Inboxes (D-334)
 # v4.4.585: A start-up choice or last view that was a tag opens All Inboxes (D-334)
@@ -275,3 +282,29 @@ def test_a_start_up_choice_or_last_view_that_was_a_tag_opens_all_inboxes_and_say
     third = restarted(world, qtbot, startup_view="", last_kind="tagview", last_account="", last_folder="Work")  # the last view was a tag
     wait(qtbot, lambda: third.mail_state.view.combined == "inboxes")
     third.close()
+
+
+def test_the_start_erases_once_what_was_deleted_over_30_days_ago(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    REGISTRY.run(world.engine, "pim.enable", {})
+    with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
+        book = store.collections(CollectionKind.CONTACTS)[0].collection_id
+        item = store.put(book, "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ann Lee\r\nN:Lee;Ann;;;\r\nEND:VCARD\r\n")
+        store.delete(book, item)
+        moved = next((store.root / ".deleted" / book).glob(f"{item}.*"))
+    old = moved.rename(moved.with_name(f"{item}.{int(time.time() * 1000) - 31 * 86_400_000}"))
+    asked: list[str] = []
+    call = world.backend.call
+
+    def recorded(
+        command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        asked.append(command)
+        return call(command, values, on_success, on_error, owner, waiting=waiting, in_order=in_order, checking=checking)
+
+    monkeypatch.setattr(world.backend, "call", recorded)
+    started(qtbot, world)
+    wait(qtbot, lambda: not old.exists())
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert asked.count("pim.purge-deleted") == 1
+    assert "deleted long ago" not in world.window.status_label.text()  # nothing is said when it worked

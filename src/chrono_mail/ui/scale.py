@@ -2,13 +2,18 @@ import re
 from typing import overload, override
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QPalette
-from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleOption, QWidget
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette
+from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleHintReturn, QStyleOption, QWidget
+
+from chrono_mail.ui.icons import bundled_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "scale.py 1.2.253"
+__version__ = "scale.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: The buttons of dialogs and message boxes always have icons, and these (and the icons of message boxes) are the program's own
+#           Breeze copies in the colour of button text, on every computer and in every theme; never the desktop's icon theme (D-087, D-158)
+#           also Yes to all, No to all, Save all, Abort, Retry and Ignore (document-save-all, process-stop and go-next copied from Breeze)
 # v1.2.253: The saved sizes (saved_factor, saved_windows, saved_reading, saved_list, with their conversions of older versions) moved to ui/prefs.py, where every setting is read (R-12)
 # v0.5.144: A size factor of its own for the other windows and dialogs (windows, wpx, saved_windows); icons and tick boxes follow the factor of the window they are in
 # v0.3.108: The size factor of the message list (lpx, saved_list); saved_reading converts the older zoom of messages (percent); it is the size of reading and writing
@@ -25,6 +30,32 @@ ICON_METRICS: frozenset[QStyle.PixelMetric] = frozenset({
     QStyle.PixelMetric.PM_IndicatorWidth, QStyle.PixelMetric.PM_IndicatorHeight,
     QStyle.PixelMetric.PM_ExclusiveIndicatorWidth, QStyle.PixelMetric.PM_ExclusiveIndicatorHeight,
 })
+# The program's own icon for each standard icon of dialog buttons and message boxes: the names the desktop theme would be asked for
+# (Breeze's dialog-ok is a link to dialog-ok-apply).
+STANDARD_ICONS: dict[QStyle.StandardPixmap, str] = {
+    QStyle.StandardPixmap.SP_DialogOkButton: "dialog-ok-apply",
+    QStyle.StandardPixmap.SP_DialogCancelButton: "dialog-cancel",
+    QStyle.StandardPixmap.SP_DialogSaveButton: "document-save",
+    QStyle.StandardPixmap.SP_DialogCloseButton: "window-close",
+    QStyle.StandardPixmap.SP_DialogApplyButton: "dialog-ok-apply",
+    QStyle.StandardPixmap.SP_DialogYesButton: "dialog-ok-apply",
+    QStyle.StandardPixmap.SP_DialogNoButton: "dialog-cancel",
+    QStyle.StandardPixmap.SP_DialogResetButton: "edit-clear",
+    QStyle.StandardPixmap.SP_DialogDiscardButton: "edit-delete",
+    QStyle.StandardPixmap.SP_DialogHelpButton: "help-contents",
+    QStyle.StandardPixmap.SP_DialogOpenButton: "folder-open",
+    # Fusion asks no name for these six (on its own it shows no icon): the nearest Breeze icon, so none reaches the desktop theme (D-087)
+    QStyle.StandardPixmap.SP_DialogYesToAllButton: "dialog-ok-apply",
+    QStyle.StandardPixmap.SP_DialogNoToAllButton: "dialog-cancel",
+    QStyle.StandardPixmap.SP_DialogSaveAllButton: "document-save-all",
+    QStyle.StandardPixmap.SP_DialogAbortButton: "process-stop",
+    QStyle.StandardPixmap.SP_DialogRetryButton: "view-refresh",
+    QStyle.StandardPixmap.SP_DialogIgnoreButton: "go-next",
+    QStyle.StandardPixmap.SP_MessageBoxInformation: "dialog-information",
+    QStyle.StandardPixmap.SP_MessageBoxWarning: "dialog-warning",
+    QStyle.StandardPixmap.SP_MessageBoxCritical: "dialog-error",
+    QStyle.StandardPixmap.SP_MessageBoxQuestion: "dialog-question",
+}
 MAIN_WINDOW_PROPERTY: str = "chronoMainWindow"  # set on the main window: it and its menus follow the factor of the main window
 _PIXELS = re.compile(r"(?<![\w.#-])(\d+(?:\.\d+)?)px")
 
@@ -170,3 +201,15 @@ class ScaledStyle(QProxyStyle):
         if metric not in ICON_METRICS:
             return value
         return max(1, round(value * (self.factor if in_main_window(widget) else self.windows_factor)))
+
+    @override
+    def styleHint(self, hint: QStyle.StyleHint, option: QStyleOption | None = None, widget: QWidget | None = None, returnData: QStyleHintReturn | None = None) -> int:  # noqa: N802, N803 - Qt's names
+        if hint == QStyle.StyleHint.SH_DialogButtonBox_ButtonsHaveIcons:
+            return 1  # the program's own icons on dialog buttons, on every computer (the platform decides it otherwise)
+        return super().styleHint(hint, option, widget, returnData)
+
+    @override
+    def standardIcon(self, standardIcon: QStyle.StandardPixmap, option: QStyleOption | None = None, widget: QWidget | None = None) -> QIcon:  # noqa: N802, N803 - Qt's names
+        name = STANDARD_ICONS.get(standardIcon)
+        icon = bundled_icon(name) if name is not None else QIcon()
+        return icon if not icon.isNull() else super().standardIcon(standardIcon, option, widget)

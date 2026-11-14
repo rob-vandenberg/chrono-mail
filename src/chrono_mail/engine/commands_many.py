@@ -19,9 +19,11 @@ from chrono_mail.engine.undorecord import UndoRecorder, Verdicts
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 4.2.396"
+__version__ = "commands_many.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: message.flag-many leaves out the messages whose marks are already as asked: none left, no server is asked and no Undo step kept;
+#           a group the server refuses fails only the messages that needed the action, those already as asked stay done
 # v4.2.396: message.flag-many leaves: the messages leave the person's list, so one already marked is noted for Undo too (D-282)
 # v3.6.349: deleting many messages of the Outbox or Scheduled for good never waits for or connects to the IMAP server (RV-183, RV-184)
 # v2.2.313: undo: an action given with a number notes each message before and after, so Undo can put it back (B-18)
@@ -103,12 +105,13 @@ def _each(
     engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
     act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], Verdicts] | None = None,
     undo: tuple[int, str] = (0, ""), needs_server: Callable[[Mailbox, tuple[str, ...]], bool] = lambda mailbox, folder: True,
-    unchanged_too: bool = False,
+    unchanged_too: bool = False, already: Callable[[Mailbox, MessageRef], object | None] | None = None,
 ) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
     """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone.
     after: what follows for the ones done, once for the group (the junk filter learns them, and says what it learned).
     undo: the action's number and name: each message is noted before and after, so Undo can put it back (B-18); unchanged_too: also
-    one the action left as it was (D-282)."""
+    one the action left as it was (D-282); already: a message's answer when the action would leave it as it is (None: it needs the action),
+    so it is done without asking anything (no server, no fact); when every message is so, no server session is opened at all."""
     if len(messages) > MAXIMUM_MESSAGES:
         raise UsageError(f"At most {MAXIMUM_MESSAGES:,} messages at once")
     failed: list[NotDone] = []
@@ -123,16 +126,25 @@ def _each(
                 failed.append(_not_done(message, error))
         recorder = UndoRecorder(mailbox, account, undo[0], unchanged_too)
         recorder.before(ref.store_id for ref in refs)
-        with mailbox.together(server=needs_server(mailbox, source)):
-            try:
-                prepare(mailbox, refs)
-            except ChronoMailError as error:  # the server said no for the whole group: nothing was done there or here
-                return ManyResult((), (*failed, *(NotDone(ref.store_id, str(error)) for ref in refs))), []
-            for ref in refs:
+        acting: list[MessageRef] = []
+        for ref in refs:
+            answer = already(mailbox, ref) if already is not None else None
+            if answer is None:
+                acting.append(ref)
+            else:
+                answers.append((ref, answer))
+        if acting or already is None:
+            with mailbox.together(server=needs_server(mailbox, source)):
                 try:
-                    answers.append((ref, act(mailbox, ref)))
-                except ChronoMailError as error:
-                    failed.append(_not_done(ref.store_id, error))
+                    prepare(mailbox, acting)
+                except ChronoMailError as error:  # the server said no for the whole group: nothing was done there or here
+                    failed.extend(NotDone(ref.store_id, str(error)) for ref in acting)  # the ones already as asked stay done
+                    acting = []
+                for ref in acting:
+                    try:
+                        answers.append((ref, act(mailbox, ref)))
+                    except ChronoMailError as error:
+                        failed.append(_not_done(ref.store_id, error))
         verdicts = after(mailbox, answers) if after is not None and answers else {}
         copies = [(ref, answer) for ref, answer in answers if isinstance(answer, MessageRef) and answer.store_id != ref.store_id]  # a copy has an id of its own
         for original, copy in copies:
@@ -202,8 +214,17 @@ def message_flag_many(engine: Engine, parameters: ManyFlagParameters) -> ManyRes
         flags = wanted.get(ref.store_id) or flags_wanted(mailbox.current_flags(ref), parameters.seen, parameters.flagged, parameters.replied)
         return mailbox.set_flags(ref, flags)
 
+    def already(mailbox: Mailbox, ref: MessageRef) -> frozenset[MessageFlag] | None:
+        """Its marks when they are already as asked: nothing to change, here or on the server."""
+        try:
+            current = mailbox.current_flags(ref)
+        except ChronoMailError:
+            return None  # its own step says why
+        return current if flags_wanted(current, parameters.seen, parameters.flagged, parameters.replied) == current else None
+
     result, answers = _each(
         engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, _marks_name(parameters)), unchanged_too=parameters.leaves,
+        already=already,
     )
     marks = tuple((ref.store_id, flag_names(flags)) for ref, flags in answers if isinstance(flags, frozenset))
     return ManyResult(result.done, result.failed, flags=marks)

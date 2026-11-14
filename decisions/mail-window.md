@@ -117,3 +117,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-328]] Everything of one tag in one overview
 - [[D-336]] The Add an account window in tabs
 - [[D-344]] Refresh refreshes everything, in every section
+- [[D-351]] The Size column holds its widest size

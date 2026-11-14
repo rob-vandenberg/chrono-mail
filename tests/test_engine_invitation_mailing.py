@@ -21,9 +21,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.555"
+__version__ = "test_engine_invitation_mailing.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a refused meeting names Menu > Sync conflicts…
 # v4.4.555: An invitation with no organizer: Send gives one mail, Don't send none (also with a later write, a move, a conflict), also on a server that mails whatever it is told and while offline (D-310)
 # v4.4.554: A Decline is one write that stays in the calendar; the waiting delete is tested through Change my answer (D-310)
 # v4.4.526: an answer says it waits for the connection (D-310)
@@ -327,7 +328,7 @@ def test_change_my_answer_refused_twice_keeps_the_meeting_and_a_conflict_until_i
         original_delete(client, href, etag)
 
     monkeypatch.setattr(DavClient, "delete", refused)
-    with pytest.raises(UsageError, match="kept here as it was.*Settings > Sync conflicts"):
+    with pytest.raises(UsageError, match="kept here as it was.*Menu > Sync conflicts…"):
         reopen(setup, message)
     assert calendar_items(setup) == original and "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
     assert drafts(setup) == []  # nobody is told

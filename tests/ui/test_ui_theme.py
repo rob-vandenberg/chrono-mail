@@ -11,16 +11,21 @@ from chrono_mail.ui import theme
 from chrono_mail.ui.colours import selection_grey
 from chrono_mail.ui.colours import theme as theme_in_use
 from chrono_mail.ui.columns import BY_ID, READ_MARK, cell_text
-from chrono_mail.ui.icons import TintedSvgEngine, section_icon
+from chrono_mail.ui.icons import TintedSvgEngine, bundled_icon, section_icon
+from chrono_mail.ui.scale import STANDARD_ICONS
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SECTIONS, TASKS
 from chrono_mail.ui.splitter import PANE_SEPARATOR_WIDTH, PaneHandle, PaneSplitter
 from chrono_mail.ui.toolbar import ToolbarRow
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 4.2.416"
+__version__ = "test_ui_theme.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: every SP_Dialog and SP_MessageBox icon is the program's own Breeze copy, never the desktop theme's (D-087)
+# v4.4.615: the selection colours are read with the current row scrolled into sight (the Tags block leaves the tree less room, D-334)
+# v4.4.615: in the dark theme the header's bottom line lies directly above a message without files (no band of another colour);
+#           dialog buttons have the program's own icons in the colour of button text, in light and dark, whatever the desktop's icon theme
 # v4.2.416: the toolbar order test leaves out More, which may sit after Tag (D-290)
 # v4.2.386: File has Export… below Import…
 # v2.4.323: Backup… is one word (the owner)
@@ -202,6 +207,7 @@ def test_the_selection_is_blue_with_the_focus_and_grey_without(world: World, qtb
     blue = window.palette().color(QPalette.ColorRole.Highlight).name()
 
     def colour(view: QAbstractItemView) -> str:
+        view.scrollTo(view.currentIndex())  # the program does not scroll to the selected folder; below the Tags block the Inbox row can lie out of sight
         qtbot.wait(50)
         rect = view.visualRect(view.currentIndex())
         image = view.viewport().grab().toImage()
@@ -216,6 +222,7 @@ def test_the_selection_is_blue_with_the_focus_and_grey_without(world: World, qtb
         assert view.property("focused") is True and colour(view) == blue
         focus(view, False)
         assert view.property("focused") is False and colour(view) == selection_grey()
+    window.tree.scrollTo(window.tree.currentIndex())
     rect = window.tree.visualRect(window.tree.currentIndex())
     image = window.tree.viewport().grab().toImage()
     darkest = min(image.pixelColor(x, y).lightness() for x in range(rect.right() - 30, rect.right()) for y in range(rect.top(), rect.bottom()))
@@ -256,3 +263,73 @@ def test_sorted_by_is_bold(world: World) -> None:
     window = world.window
     sheet = theme.stylesheet()
     assert window.sort_button.objectName() == "sortButton" and "QToolButton#sortButton { font-weight: bold; color: palette(text); }" in sheet
+
+
+def test_the_header_line_lies_directly_above_the_message_in_the_dark_theme(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_reader import shown
+
+    window = world.window
+    window.settings.setValue("color_scheme", "dark")
+    window.apply_preferences()
+    reader = window.reader
+    reader.show_message(shown(text="A message without files"))
+    body = reader._stack  # noqa: SLF001
+    qtbot.waitUntil(lambda: body.isVisible() and body.height() > 0)
+    top = body.geometry().top()
+    image = reader.grab().toImage()
+    ratio = image.devicePixelRatio()
+    x = round((reader.width() - 4) * ratio)  # the right edge: nothing of the header's text is there
+    palette = QApplication.palette()
+    header, line = palette.color(QPalette.ColorRole.Window).name(), palette.color(QPalette.ColorRole.Mid).name()
+    column = [image.pixelColor(x, round(y * ratio)).name() for y in range(top)]
+    assert column[-1] == line  # the header's bottom line, directly above the message
+    assert set(column[:-1]) == {header}  # above it the header in one colour, files row included: no band of another colour
+    assert image.pixelColor(x, round(top * ratio)).name() not in (header, line)  # the message begins right under the line
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_dialog_buttons_have_the_programs_own_icons_in_the_colour_of_button_text(world: World, monkeypatch: pytest.MonkeyPatch, scheme: str) -> None:
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QDialogButtonBox, QStyle
+
+    window = world.window
+    window.settings.setValue("color_scheme", scheme)
+    window.apply_preferences()
+    style = QApplication.style()
+    assert style.styleHint(QStyle.StyleHint.SH_DialogButtonBox_ButtonsHaveIcons) == 1
+
+    def no_theme(*_: object) -> QIcon:
+        raise AssertionError("the desktop theme was asked")
+
+    monkeypatch.setattr(QIcon, "fromTheme", no_theme)
+    theme_name = QIcon.themeName()
+    QIcon.setThemeName("a-desktop-theme-with-white-icons")
+    try:
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        palette = QApplication.palette()
+        text, button = palette.color(QPalette.ColorRole.ButtonText), palette.color(QPalette.ColorRole.Button)
+        for which in (QDialogButtonBox.StandardButton.Ok, QDialogButtonBox.StandardButton.Cancel):
+            icon = box.button(which).icon()
+            assert not icon.isNull()
+            image = icon.pixmap(QSize(44, 44)).toImage()  # twice the drawn size: its 1 px lines are whole pixels
+            opaque = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+            assert opaque == {text.name()}
+        assert contrast(text, button) >= 3
+        box.deleteLater()
+        for member in (member for member in QStyle.StandardPixmap if member.name.startswith(("SP_Dialog", "SP_MessageBox"))):
+            icon = style.standardIcon(member)  # every button and message box icon: the program's own, never the desktop theme's (D-087)
+            assert not icon.isNull() and member in STANDARD_ICONS, member.name
+            assert icon.pixmap(QSize(22, 22)).toImage() == bundled_icon(STANDARD_ICONS[member]).pixmap(QSize(22, 22)).toImage(), member.name
+    finally:
+        QIcon.setThemeName(theme_name)
+
+
+def contrast(first: QColor, second: QColor) -> float:
+    """The contrast ratio of two colours (WCAG 2)."""
+    def luminance(colour: QColor) -> float:
+        parts = [value / 255 for value in (colour.red(), colour.green(), colour.blue())]
+        linear = [part / 12.92 if part <= 0.03928 else ((part + 0.055) / 1.055) ** 2.4 for part in parts]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)

@@ -1,6 +1,6 @@
 """Three versions of a calendar item or a contact compared field by field (D-194): the one both sides last agreed on, Chrono Mail's and the server's.
 A field changed on one side only is taken from that side; the same field changed on both sides to the same value is no clash; changed differently
-it is a clash, which the person settles (Settings > Sync conflicts). What a field is (the owner, 2026-10-20): each property; each changed occurrence
+it is a clash, which the person settles (the Sync conflicts window, Menu > Sync conflicts…). What a field is (the owner, 2026-10-20): each property; each changed occurrence
 of a repeating event is an item of its own; lists (skipped dates, tags, phone numbers, e-mail addresses, attendees …) are merged entry by entry;
 all alarms of an item together are one field; a text is one field; a property of another program is a field by its name and always kept; the time
 stamps a program sets itself are not compared. Works on the text lines themselves, so nothing a program wrote is lost. Never raises."""
@@ -15,9 +15,10 @@ from chrono_mail.pim.times import zone_named
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.4.537"
+__version__ = "merge.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.4.537: an alarm with ACTION:NONE is no reminder: only such an alarm reads as none, and it is never shown in a clash
 # v4.3.498: a grouped line (item1.EMAIL) is its field, its group label kept on the line; a grouped line no person sees (item1.X-ABLabel)
 #           is tied to its group's entry, goes or stays with it and takes its group; two entries that share a group name in no

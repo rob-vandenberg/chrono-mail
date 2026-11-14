@@ -40,9 +40,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.608"
+__version__ = "collectionpanel.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the delete question of a collection names no store directory or days (OR-18); Sync conflicts is a window, Menu > Sync conflicts…
 # v4.4.608: Rename sends nothing when the name is left as shown: a calendar named only by an address shows a name it does not have (D-346)
 # v4.4.604: Rename of a Google calendar is a name only for you; empty gives Google's name back (D-343)
 # v4.4.587: Contacts has a tick box per address book and the blue plus for new contacts; the last ticked address book stays; a click on a group shows its members (D-334)
@@ -162,7 +163,7 @@ class CollectionPanel(QWidget):
     target_moved = Signal(str)  # the blue plus went to another collection by itself: what the status line says (D-326)
     add_account_requested = Signal()  # Add account…: a calendar server for a mail account, or an account of calendars and contacts only
     infos_changed = Signal()  # what is known of the collections (a calendar's colours) was taken in again: the section redraws in their colours
-    conflicts_requested = Signal()  # the Sync conflicts entry was clicked: Settings > Sync conflicts (D-194)
+    conflicts_requested = Signal()  # the Sync conflicts entry was clicked: the Sync conflicts window (Menu > Sync conflicts…) (D-194)
     contacts_dropped = Signal(str, list)  # contacts were dropped on a group: the group's id, the contacts' ids (R-39)
 
     def __init__(self, backend: Backend, settings: QSettings, kind: str, multiple: bool, parent: QWidget | None = None) -> None:
@@ -523,10 +524,9 @@ class CollectionPanel(QWidget):
             text = (
                 f"{name} from the server?\n\nEvery program that synchronises with the server will remove it too."
                 + "".join(f"\n\nIt also holds “{other}”, which goes with it." for other in others)
-                + "\n\nThe copy here is kept in the store's .deleted directory for 30 days."
             )
         else:
-            text = f"{name}?\n\nThe files are kept in the store's .deleted directory for 30 days."
+            text = f"{name}?"
         if QMessageBox.question(self, "Delete", text) == QMessageBox.StandardButton.Yes:
             self._backend.ask(COLLECTION_DELETE, CollectionDelete(collection_id), lambda result: None, self._failed, owner=self)  # the fact takes the entry away
 

@@ -38,9 +38,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.596"
+__version__ = "folderpane.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the Delete folder question asks only that: no word about the store's .deleted directory, from where nothing brings a folder back
 # v4.4.596: a folder that only holds folders (Gmail's [Gmail]) is never what the list shows: a click opens or closes it, the keyboard moves past it (FolderTree.moveCursor); Show on startup lists it as a heading
 # v4.4.585: No Tags entries in the folder list (D-334): a start-up choice or last view that was a tag opens All Inboxes, said once
 # v4.4.581: Tags lists only the tags some mail carries, each with its number (the owner, D-327); the tag shown stays until it is left, and then goes (D-146)
@@ -846,7 +847,7 @@ class FolderPane(QObject):
         view = self._state.view
         if view.account is None or view.folder is None:
             return
-        answer = QMessageBox.question(self._parent, "Delete folder", f"Delete the folder “{view.folder}”, its subfolders and all the messages in them?\n\nThe files are not erased: they are kept in the store's .deleted directory.")
+        answer = QMessageBox.question(self._parent, "Delete folder", f"Delete the folder “{view.folder}”, its subfolders and all the messages in them?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._backend.ask(FOLDER_DELETE, FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True), lambda result: self._status.show(with_rules("Folder deleted", result.rules)), lambda error: self._status.report("Could not delete the folder", error), owner=self)

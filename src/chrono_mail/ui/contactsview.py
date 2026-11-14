@@ -60,9 +60,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.587"
+__version__ = "contactsview.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: _collection_of: the address book a selected contact is in (Delete says whether it goes to a server by the contact's own book)
 # v4.4.587: A tick box per address book: the list shows the ticked ones together, a group its members; new contacts go to the book with the blue plus (D-334)
 # v4.4.584: The shared Tags block of Calendar and Tasks replaces the own Tags list: no "All contacts", a click turns a tag filter on and off (D-334)
 # v4.4.582: The chosen tag leaving the Tags list chooses All contacts: every contact shows again, as in Calendar and Tasks (D-327)
@@ -266,6 +267,7 @@ class ContactsPage(PimListPage):
     new_icon = "contact-new"
     section_name = "Contacts"
     item_word = "contact"
+    collection_word = "an address book"
 
     compose_requested = Signal(str)
     tag_overview_wanted = Signal(str)  # Show everything tagged… on a tag: its name (D-328)
@@ -499,6 +501,10 @@ class ContactsPage(PimListPage):
 
     def _empty_text(self) -> str:
         return "This group has no members yet" if self.panel.current_group() is not None else "There are no contacts here yet"
+
+    @override
+    def _collection_of(self, item: str) -> str:
+        return next((row.collection for row in self.model.rows if row.item == item), "")
 
     @override
     def _selected_items(self) -> list[str]:

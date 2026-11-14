@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,9 +15,10 @@ from chrono_mail.pimstore import ItemQuery, PimIndex, PimStore
 from chrono_mail.pimstore.extract import Extract, epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pimstore.py 4.4.600"
+__version__ = "test_pimstore.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: Erasing what was deleted over 30 days ago, interrupted at every removal; a live collection keeps its directory in .deleted
 # v4.4.600: An index of format 6 is upgraded in place with the two columns for a tag that comes from the server (D-339)
 # v0.5.130: A failed open of the item index closes its connection
 # v0.0.62: The contacts section
@@ -268,6 +270,57 @@ def test_a_crash_while_deleting_or_moving_loses_nothing_and_repeating_finishes_i
         assert [name for name, _ in where] == ["One", "Two"]  # in both: a copy is never lost
         after.move(one.collection_id, item, two.collection_id)  # again: finds the copy, adds no second one, takes the original away
         assert [name for c in after.collections() for name in [c.name] for _ in after.item_ids(c.collection_id)] == ["Two"]
+
+
+def deleted_long_ago(store: PimStore, collection_id: str, days: int) -> Path:
+    """A contact deleted this many days ago: its file in .deleted carries the moment it was deleted."""
+    item = store.put(collection_id, contact("Lee, Ann"))
+    store.delete(collection_id, item)
+    moved = next((store.root / ".deleted" / collection_id).glob(f"{item}.*"))
+    return moved.rename(moved.with_name(f"{item}.{int(time.time() * 1000) - days * 86_400_000}"))
+
+
+@pytest.mark.parametrize("occurrence", [1, 2, 3, 4])
+def test_a_crash_while_purging_erases_only_what_is_old_and_deleted_and_the_next_run_finishes(tmp_path: Path, occurrence: int) -> None:
+    """AGENTS.md 4.1.4: cut short before any removal, nothing else is touched and the next run erases what was left."""
+    key = generate_data_key()
+    store = PimStore.create(tmp_path / "pim", key, durable=False)
+    book = store.create_collection(CollectionKind.CONTACTS, "People").collection_id
+    gone = store.create_collection(CollectionKind.EVENTS, "Old plans").collection_id
+    live = store.put(book, contact("Reynolds, John"))
+    old = [deleted_long_ago(store, book, days) for days in (31, 40, 90)]
+    recent = deleted_long_ago(store, book, 29)
+    store.delete_collection(gone)
+    taken_away = next((store.root / ".deleted").glob(f"{gone}.*"))
+    old.append(taken_away.rename(taken_away.with_name(f"{gone}.{int(time.time()) - 40 * 86_400}")))
+    store.close()
+    seen = {"count": 0}
+
+    def hook(point: str) -> None:
+        if point == "purge:before-remove":
+            seen["count"] += 1
+            if seen["count"] == occurrence:
+                raise Crash
+
+    crashing = PimStore.open(tmp_path / "pim", key, durable=False, checkpoint=hook)
+    with pytest.raises(Crash):
+        crashing.purge_deleted(30)
+    crashing.close()
+    after = PimStore.open(tmp_path / "pim", key, durable=False)
+    assert sum(path.exists() for path in old) == 5 - occurrence  # each removal is whole: erased, or still there
+    assert recent.exists() and "Reynolds" in after.get(book, live)  # never what is newer, never what was not deleted
+    assert after.purge_deleted(30) == 5 - occurrence
+    assert not any(path.exists() for path in old) and recent.exists() and "Reynolds" in after.get(book, live)
+
+
+def test_a_collection_that_still_exists_keeps_its_directory_in_deleted_when_everything_in_it_is_erased(store: PimStore) -> None:
+    """A delete at the same moment moves its file into that directory: removing it then would make the delete fail."""
+    book = store.create_collection(CollectionKind.CONTACTS, "People").collection_id
+    deleted_long_ago(store, book, 31)
+    assert store.purge_deleted(30) == 1
+    assert (store.root / ".deleted" / book).is_dir() and list((store.root / ".deleted" / book).iterdir()) == []
+    store.delete_collection(book)  # the collection itself goes: its emptied directory goes at the next run
+    assert store.purge_deleted(30) == 0 and not (store.root / ".deleted" / book).exists()
 
 
 def test_several_writers_at_the_same_time_wait_for_each_other(tmp_path: Path) -> None:

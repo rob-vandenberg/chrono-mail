@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,11 @@ from chrono_mail.store import Store
 from chrono_mail.store.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_store.py 0.5.165"
+__version__ = "test_store_store.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: a deleted folder is erased 30 days after its deletion, the moment kept in its name in .deleted; one set aside by an older
+#           version is given the moment of the first purge that sees it
 # v0.5.165: the count of fsync calls outside a batch follows Windows too
 # v0.5.164: a read never finds a name that a change of flags took away; the tests that replace os.sync also run where it does not exist (Windows)
 # v0.5.161: flags: the flags of one message from the name of its file
@@ -407,3 +410,42 @@ def test_written_together_also_makes_safe_what_was_written_before_an_error(tmp_p
         raise RuntimeError("stopped")
     assert calls == ["sync"]
 
+
+
+def deleted_days_ago(store: Store, path: tuple[str, ...], days: int) -> Path:
+    """A folder with a message, deleted this many days ago: its directory in .deleted carries the moment of the deletion."""
+    store.create_folder(path)
+    store.deliver(path, RAW)
+    name = store._folder_directory(path).name  # noqa: SLF001
+    store.delete_folder(path, require_empty=False)
+    [moved] = list((store.root / ".deleted").glob(f"{name}.*"))
+    then = moved.with_name(f"{name}.{int(time.time()) - days * 86_400}")
+    moved.rename(then)
+    return then
+
+
+def test_a_folder_deleted_over_30_days_ago_is_erased_and_a_newer_one_and_a_live_folder_stay(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.create_folder(("Live",))
+    live = store.deliver(("Live",), RAW)
+    old = deleted_days_ago(store, ("Old",), 31)
+    new = deleted_days_ago(store, ("New",), 29)
+    assert store.purge_deleted_folders(30) == 1
+    assert not old.exists() and new.exists()
+    assert store.read(live) == RAW and [folder.path for folder in store.list_folders()] == [INBOX, ("Live",)]
+    assert store.purge_deleted_folders(30) == 0  # a second run finds nothing more
+
+
+def test_a_folder_set_aside_without_its_moment_is_kept_30_days_from_the_first_purge_that_sees_it(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.create_folder(("Old",))
+    store.deliver(("Old",), RAW)
+    directory = store._folder_directory(("Old",))  # noqa: SLF001
+    os.rename(directory, store.root / ".deleted" / directory.name)  # as a delete before 4.4.615 left it: no moment in its name
+    os.utime(store.root / ".deleted" / directory.name, (time.time() - 90 * 86_400,) * 2)  # its times say nothing about when it was deleted
+    before = time.time()
+    assert store.purge_deleted_folders(30) == 0
+    [stamped] = list((store.root / ".deleted").iterdir())
+    assert stamped.name.startswith(directory.name + ".") and int(stamped.name.rsplit(".", 1)[1]) >= int(before)
+    assert (stamped / "cur").is_dir() or (stamped / "new").is_dir()  # nothing of it erased
+    assert store.purge_deleted_folders(30) == 0 and stamped.exists()  # the next start keeps the same moment

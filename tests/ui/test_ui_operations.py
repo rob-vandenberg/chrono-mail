@@ -11,9 +11,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 4.2.449"
+__version__ = "test_ui_operations.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the empty Operations tab shows its line until the first row comes
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.0.375: the text of the empty Errors page is the form's (D-276)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -192,6 +193,17 @@ def test_ignore_all_copy_log_and_clear_log(qtbot: QtBot) -> None:
     assert operations.log.toPlainText() == ""
     operations.tabs.setCurrentIndex(0)
     assert operations.ignore_all.isHidden() and operations.copy_log.isHidden() and operations.clear_log.isHidden()
+
+
+def test_the_operations_tab_says_nothing_has_run_until_a_row_comes(qtbot: QtBot) -> None:
+    operations = OperationsWindow(lambda account_id, direction: f"{account_id} (POP3)")
+    qtbot.addWidget(operations)
+    operations.show()
+    assert operations.no_operations.text() == "Nothing has run yet. Refresh sends and receives your mail."
+    assert operations.no_operations.isVisible() and operations._operations_stack.currentWidget() is operations.no_operations  # noqa: SLF001
+    operations.begin_round()
+    operations.add("a", "receive")
+    assert not operations.no_operations.isVisible() and operations.rows()[("a", "receive")].isVisible()
 
 
 def test_the_tick_box_is_the_setting_of_settings(qtbot: QtBot, world: World) -> None:

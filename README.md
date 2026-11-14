@@ -4,7 +4,7 @@ Chrono Mail is a free e-mail program for your computer. It keeps your mail, your
 
 It works with the mail account you already have: the address and password your provider gave you are all it needs. Your mail is stored safely on your computer, locked so that only you can read it, and Chrono Mail stays quick even with hundreds of thousands of messages.
 
-Chrono Mail is made for Linux first, and it also runs on Windows. The program is in English; dates and times follow the language of your computer.
+Chrono Mail is made for Linux. The program is in English; dates and times follow the language of your computer.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-mail-dark.png">
@@ -103,14 +103,6 @@ sudo zypper install ./chrono-mail_*_x86_64.rpm
 
 If the folder holds more than one Chrono Mail file, type the full name of the newest one instead of the `*`.
 
-### Windows
-
-1. Open the [download page](https://github.com/rob-vandenberg/chrono-mail/releases/latest).
-2. Download the file that ends in **_x64_setup.exe**.
-3. Double-click it and follow the steps. You can install Chrono Mail for everyone on the computer, or only for yourself.
-
-The setup makes an entry in the Start menu (and a desktop icon, if you tick it), and an uninstaller under **Settings > Apps**.
-
 ### Calendar files
 
 Once installed, Chrono Mail is offered as a program to open calendar files (files ending in **.ics**) with: right-click such a file and choose **Open with**. Chrono Mail never makes itself the standard program for these files on its own. See [Calendar files](#calendar-files-1).
@@ -125,8 +117,7 @@ An installed Chrono Mail can update itself.
 2. You can also look yourself: **Menu > Help > About Chrono Mail**, then **Check for updates**.
 3. When a newer version is there, the window **Update available** says which version it is and links to what is new. Choose **Download**, **Skip** (nothing is offered again until an even newer version comes) or **Cancel**.
 4. After the download, Chrono Mail checks that the file is complete and unchanged. The window **Update downloaded** then offers **Install**, or **Close** to install it yourself later from the folder it names.
-5. On Linux, your system asks for its password, the update is installed, and Chrono Mail offers **Restart Chrono Mail** or **Close Chrono Mail**.
-6. On Windows, Chrono Mail closes, the setup runs, and Chrono Mail opens again when it is done.
+5. Your system asks for its password, the update is installed, and Chrono Mail offers **Restart Chrono Mail** or **Close Chrono Mail**.
 
 ### By hand
 
@@ -160,20 +151,14 @@ openSUSE:
 sudo zypper remove chrono-mail
 ```
 
-### Windows
-
-Open **Settings > Apps**, find **Chrono Mail** and choose **Uninstall**.
-
 ### Your mail stays
 
 Uninstalling removes the program only. Your mail, your settings and the key that unlocks your mail stay on your computer, so if you install Chrono Mail again later, everything is there as you left it.
 
-On Linux, your mail and settings are in these two folders in your home folder (they are hidden; press Ctrl+H in the file manager to see them):
+Your mail and settings are in these two folders in your home folder (they are hidden; press Ctrl+H in the file manager to see them):
 
 1. `.local/share/chrono-mail`: your mail, calendars, contacts and tasks.
 2. `.config/chrono-mail`: your settings.
-
-On Windows, both are in the folder `AppData\Local\chrono-mail` in your user folder.
 
 You can also see where your mail is kept in **Settings > Security and storage**, under **Your mail is stored encrypted in:**.
 
@@ -181,7 +166,7 @@ If you want to remove everything, delete those folders. Mail that exists only on
 
 ## The first start
 
-Open your applications menu (or the Start menu on Windows) and choose **Chrono Mail**.
+Open your applications menu and choose **Chrono Mail**.
 
 ### Your first account
 
@@ -226,7 +211,7 @@ If you close the window without the tick, Chrono Mail asks whether you are sure,
 
 ### Why the recovery code matters
 
-Chrono Mail locks your stored mail with a key, and keeps that key in your computer's password store (on KDE: KDE Wallet; on GNOME: Passwords and Keys; on Windows: the Credential Manager). If that password store is ever lost, for example after reinstalling your computer, the recovery code (or the recovery file with its passphrase) is the only way to unlock your mail again.
+Chrono Mail locks your stored mail with a key, and keeps that key in your computer's password store (on KDE: KDE Wallet; on GNOME: Passwords and Keys). If that password store is ever lost, for example after reinstalling your computer, the recovery code (or the recovery file with its passphrase) is the only way to unlock your mail again.
 
 Treat the recovery code like a password: anyone who has it can unlock your mail.
 
@@ -443,7 +428,7 @@ Local Folders can never be removed, because it holds your own data. You can hide
 
 ### Passwords
 
-Your passwords are kept in your computer's password store, never in a plain file. Once a password is stored, Chrono Mail never asks for it again: testing a connection or checking mail takes it from the store. On Linux, every entry of Chrono Mail in the password store (KDE Wallet, GNOME Keyring) has a name you can read, such as "Chrono Mail: Work, anna.clark@example.org (incoming mail server)"; in the Windows Credential Manager that readable name is in each entry's User name.
+Your passwords are kept in your computer's password store, never in a plain file. Once a password is stored, Chrono Mail never asks for it again: testing a connection or checking mail takes it from the store. Every entry of Chrono Mail in the password store has a name you can read, such as "Chrono Mail: Work, anna.clark@example.org (incoming mail server)".
 
 ### Certificates
 
@@ -831,7 +816,7 @@ Nothing else sends or receives by itself: not a restore, not an import, not a ch
 
 Every Send and Receive shows its progress in the **Operations** window: one row per account, with what it is doing and a bar. Open it with **Menu > View > Operations…**.
 
-1. **Operations**: the accounts at work.
+1. **Operations**: the accounts at work. Before the first Send and Receive it says "Nothing has run yet. Refresh sends and receives your mail."
 2. **Errors**: what went wrong, per account, with the time. **Ignore All** clears them.
 3. **Log**: what happened, step by step. **Copy Log** and **Clear Log**. The log never holds the contents of your mail or your passwords.
 
@@ -1061,7 +1046,7 @@ Click **Save**.
 
 ### More you can do
 
-The right-click menu of a contact offers **New contact**, **Edit**, **Write an e-mail**, **Tag**, **Add to group**, **Move to address book** and **Delete**. Delete asks first. Undo (Ctrl+Z) works on mail only, so a deleted contact cannot be brought back from within Chrono Mail.
+The right-click menu of a contact offers **New contact**, **Edit**, **Write an e-mail**, **Tag**, **Add to group**, **Move to address book** and **Delete**. Delete asks first; for an address book on a server it says the contact is also deleted there. Undo (Ctrl+Z) works on mail only, so a deleted contact cannot be brought back from within Chrono Mail. After 30 days Chrono Mail also erases its own copy from the disk.
 
 **Import vCard file…** on the toolbar brings in contacts from a vCard file (.vcf); **Export this address book…** writes the address book to one.
 
@@ -1236,7 +1221,7 @@ First make the exports in eM Client, then in Chrono Mail:
 
 1. Choose **Outlook**.
 2. Under **Data files (.pst)**, choose the data files with **Browse**.
-3. Tick **Mail**, **Calendar**, **Contacts**, **Tasks** and **Tags (categories)**. **Accounts**, **Rules** and **Signatures** can only be read on Windows, on the computer where Outlook itself is; elsewhere they are greyed with an (i) that says so.
+3. Tick **Mail**, **Calendar**, **Contacts**, **Tasks** and **Tags (categories)**. **Accounts**, **Rules** and **Signatures** cannot be read on Linux: they are greyed with an (i) that says so.
 4. Click **Import**.
 
 #### What an import does
@@ -1618,7 +1603,7 @@ If **Delay sending a message by** is ticked in Settings > General, click **Cance
 
 ### I deleted something by mistake
 
-Press Ctrl+Z right away, or look in Trash and move it back. A message deleted for good (Delete permanently, or deleted from Trash) cannot be brought back. Undo works on mail only: a deleted contact, appointment or task cannot be brought back from within Chrono Mail. A backup (see Backup and restore) brings it back as it was then.
+Press Ctrl+Z right away, or look in Trash and move it back. A message deleted for good (Delete permanently, or deleted from Trash) cannot be brought back. Undo works on mail only: a deleted contact, appointment or task, or a deleted folder, cannot be brought back from within Chrono Mail; 30 days later Chrono Mail erases it from the disk. A backup (see Backup and restore) brings it back as it was then.
 
 ### My computer was reinstalled, and Chrono Mail cannot open my mail
 

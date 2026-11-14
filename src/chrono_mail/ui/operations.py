@@ -33,9 +33,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 4.2.466"
+__version__ = "operations.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the Operations tab says "Nothing has run yet. Refresh sends and receives your mail." while it has no rows, like the Errors tab
 # v4.2.466: a moving bar looks like Qt's own again: the style's framed blue bar with light stripes sliding through it, drawn by the
 #           program at 20 steps a second (draw_moving_bar); a window's bar keeps its shape when it starts counting
 # v4.2.465: SteadyProgressBar: the bar of a window that counts as Qt's and, while the end is not known, moves on its own timer at 20 steps a
@@ -403,6 +404,8 @@ class OperationsWindow(QDialog):
         )
         self.pages: QStackedWidget = part(form, QStackedWidget, "pages")
         self._operations_layout: QVBoxLayout = part(form, QVBoxLayout, "operationsRows")
+        self.no_operations: QLabel = part(form, QLabel, "noOperations")
+        self._operations_stack: QStackedWidget = part(form, QStackedWidget, "operations")
         self.no_errors: QLabel = part(form, QLabel, "noErrors")
         self._errors_layout: QVBoxLayout = part(form, QVBoxLayout, "errorsRows")
         self._errors_stack: QStackedWidget = part(form, QStackedWidget, "errors")
@@ -420,6 +423,7 @@ class OperationsWindow(QDialog):
         self.copy_log.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.log.toPlainText()))
         self.clear_log.clicked.connect(self.log.clear)
         self._tab_changed(0)
+        self._show_operations_page()
         self._show_errors_page()
         self.resize(wpx(500), wpx(600))
         if settings is not None:
@@ -436,6 +440,7 @@ class OperationsWindow(QDialog):
             row.deleteLater()
         self._rows.clear()
         self.round_errors = 0
+        self._show_operations_page()
 
     def add(self, account_id: str, direction: str) -> None:
         """An account starts: a row that waits."""
@@ -449,6 +454,7 @@ class OperationsWindow(QDialog):
         row = OperationRow(self._names(account_id, direction), self)
         self._operations_layout.insertWidget(self._operations_layout.count() - 1, row)
         self._rows[key] = row
+        self._show_operations_page()
         self._log(row, WAITING)
 
     def step(self, account_id: str, direction: str, step: str, done: int | None, total: int | None) -> None:
@@ -511,6 +517,9 @@ class OperationsWindow(QDialog):
 
     def _log(self, row: OperationRow, step: str) -> None:
         self.log.appendPlainText(f"{_now()}  {row.name_label.text()} {step}")
+
+    def _show_operations_page(self) -> None:
+        self._operations_stack.setCurrentIndex(1 if self._rows else 0)
 
     def _show_errors_page(self) -> None:
         self._errors_stack.setCurrentIndex(1 if self._errors else 0)

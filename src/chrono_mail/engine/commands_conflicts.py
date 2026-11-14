@@ -1,5 +1,5 @@
 """The sync conflicts of the calendars, task lists and address books, and what waits for their servers (D-194): listed, and settled by the person
-(Chrono Mail's version, the server's, or a choice per field). Settings > Sync conflicts and the command line use these commands."""
+(Chrono Mail's version, the server's, or a choice per field). The Sync conflicts window (Menu > Sync conflicts…) and the command line use these commands."""
 
 from dataclasses import dataclass, field, replace
 from typing import Literal
@@ -60,9 +60,10 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 4.3.498"
+__version__ = "commands_conflicts.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.3.498: Keep both (B-30, B-31, the owner): side both makes Chrono Mail's version an item of its own (on the server first) in every group
 #           of the original, the original takes the server's; a field's choice both keeps the entry of each side; settled another way after
 #           an interrupted Keep both, its copy goes (on the server first, out of its groups) unless the person changed it

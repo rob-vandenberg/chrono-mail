@@ -9,7 +9,7 @@ An account in Chrono Mail is a faithful **copy** of the account on its server (I
 1. Every action on server data is done **on the server first**, and here only when the server confirms it.
 2. Every change on the server shows here at the next synchronisation: new, changed, moved, renamed, deleted; items and whole folders, calendars and address books.
 3. Offline, an action is done here at once, remembered through a restart, and sent when the connection is back.
-4. A lasting refusal of the server is a sync conflict the person settles (Settings > Sync conflicts); a passing failure is tried again.
+4. A lasting refusal of the server is a sync conflict the person settles (the Sync conflicts window: Menu > Sync conflicts…); a passing failure is tried again.
 5. Two computers on the same account end up showing the same.
 6. Exceptions: local data is the truth itself; POP3 only downloads and deletes; data only on this computer only when the owner approved it, case by case.
 

@@ -9,9 +9,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 from tests.test_engine_imap_online import filled, in_step
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_mail_conflicts.py 1.1.237"
+__version__ = "test_engine_mail_conflicts.py 4.4.615"
 
 # --- Version history ----------------------------------------------------
+# v4.4.615: the note of a refused folder names Menu > Sync conflicts…
 # v1.1.237: a folder deleted on the server with changes here: Use Chrono Mail makes it again with its mail, Use Server data deletes it here,
 #           Keep here only when mail exists only here; a folder renamed on the server is told as renamed (R-30)
 # v1.1.228: Retry sync: refused again, the same row comes back once; taken, the change reaches the server
@@ -95,6 +96,17 @@ def test_a_folder_made_offline_and_refused_is_kept_here_only_never_deleted(world
     world.fetch()
     assert mail_conflicts(world) == [] and "Projects" not in world.imap.folders  # kept here only: never made there, never asked again
     assert any(folder.path == "Projects" for folder in call(world.engine, "folder.list", account=world.account))
+
+
+def test_the_note_of_a_refused_folder_names_the_sync_conflicts_window(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sync conflicts is a window (Menu > Sync conflicts…), not a page of Settings."""
+    filled(world, 1)
+    offline(world, monkeypatch)
+    call(world.engine, "folder.create", account=world.account, folder="Projects")
+    monkeypatch.undo()
+    world.imap.refuse_creates = True
+    (note,) = [line for line in world.fetch().failed if "could not be made on the server" in line]
+    assert "Menu > Sync conflicts…" in note and "Settings > Sync conflicts" not in note
 
 
 def test_different_marks_changed_on_each_side_are_both_kept_and_the_same_mark_is_no_conflict(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
