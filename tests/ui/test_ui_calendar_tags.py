@@ -2,6 +2,7 @@ import dataclasses
 from datetime import date
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit
 from pytestqt.qtbot import QtBot
@@ -15,6 +16,7 @@ from chrono_mail.engine.google_colours import CalendarTag, GoogleShown
 from chrono_mail.pimstore import ItemQuery, PimStore
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.calendarwidgets import event_tip
+from chrono_mail.ui.collectionpanel import ROLE_COLLECTION, collection_items
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.tagbox import TagPill
 from chrono_mail.ui.tagname import NoBar, keep_bar_out
@@ -23,9 +25,10 @@ from tests.ui.test_ui_calendar import open_calendar
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar_tags.py 4.4.602"
+__version__ = "test_ui_calendar_tags.py 4.4.609"
 
 # --- Version history ----------------------------------------------------
+# v4.4.609: the Tags list holds only the tags of the ticked calendars; a filter whose tag goes with an untick goes off (D-347)
 # v4.4.602: Initial tests: a Google calendar's tag is shown by its name and the calendar's, never by its identifier; never in Settings > Tags;
 #           no vertical bar in a typed name (D-341)
 
@@ -168,3 +171,39 @@ def test_one_date_of_a_series_opens_with_its_own_google_colour(google_page: Cale
     page.edit_selected()
     wait(qtbot, lambda: bool(opened))
     assert opened[0].tags == (own,) and opened[0].google_tag == own
+
+
+def tick(page: CalendarPage, collection: str, on: bool) -> None:
+    item = next(item for item in collection_items(page.panel.tree) if str(item.data(0, ROLE_COLLECTION)) == collection)
+    item.setCheckState(0, Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+
+
+def tag_lines(page: CalendarPage) -> list[str]:
+    return [page.tag_filter.list.item(row).text() for row in range(page.tag_filter.list.count())]
+
+
+def test_an_unticked_calendars_tags_leave_the_tags_list_and_come_back(google_page: CalendarPage, qtbot: QtBot) -> None:
+    """The owner (D-347): the Tags list holds only the tags in use in the ticked calendars, a Google calendar's own and the person's alike."""
+    page = google_page
+    collection, name = dentist_calendar(page)
+    lunch = next(entry.row.collection for entry in page.entries if entry.summary == "Lunch")
+    assert f"Rood ({name})" in tag_lines(page) and "Food" in tag_lines(page)
+    tick(page, collection, False)
+    wait(qtbot, lambda: f"Rood ({name})" not in tag_lines(page))
+    assert lunch == collection and "Food" not in tag_lines(page)  # the person's own tag of that calendar goes too
+    known = {tag.name for tag in page._tags_known}  # noqa: SLF001 - what the appointment window offers
+    assert {ours(collection, "Blauw"), "Food"} <= known  # a new appointment in that calendar still gets its tags offered (review)
+    for other in page.panel.visible_ids():
+        tick(page, other, False)
+    wait(qtbot, lambda: page.panel.visible_ids() == [] and tag_lines(page) == [])  # nothing ticked: an empty list
+    tick(page, collection, True)
+    wait(qtbot, lambda: f"Rood ({name})" in tag_lines(page))
+
+
+def test_a_filter_whose_tag_goes_with_an_untick_goes_off(google_page: CalendarPage, qtbot: QtBot) -> None:
+    page = google_page
+    collection, name = dentist_calendar(page)
+    page.tag_filter.choose(ours(collection))
+    wait(qtbot, lambda: page.tag_filter.tag() == ours(collection))
+    tick(page, collection, False)
+    wait(qtbot, lambda: page.tag_filter.tag() == "" and f"Rood ({name})" not in tag_lines(page))

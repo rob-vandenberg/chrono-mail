@@ -12,9 +12,10 @@ from chrono_mail.pimstore.schema import (REMINDER_INDEX, SCHEMA_VERSION, STATEME
                                           VERSION_WITH_CANCELLED_REMINDERS, VERSION_WITHOUT_TASK_REMINDERS)
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.600"
+__version__ = "index.py 4.4.609"
 
 # --- Version history ----------------------------------------------------
+# v4.4.609: tags: only the items of some collections, when asked (the Calendar's Tags list follows the ticked calendars, D-347)
 # v4.4.600: Schema 7: other_tags, a tag an item has from its server and not in itself; the tag filter and the counts take them in (D-339)
 # v4.4.550: format 6: formats 3, 4 and 5 are upgraded in place, every event with a due moment to be worked out at the next look, so a cancelled one has none (D-316)
 # v4.4.545: format 5: tasks have a due moment too; formats 3 and 4 are upgraded in place, every task to be worked out at the next look (D-316)
@@ -304,11 +305,20 @@ class PimIndex(IndexDatabase):
                 tags = (wanted,) if wanted else ()
                 self._connection.execute("UPDATE items SET other_tags = ?, other_folded = ? WHERE item_id = ?", (tag_text(tags), tag_text(tags, True), item_id))
 
-    def tags(self, kind: CollectionKind | None = None) -> dict[str, tuple[str, int]]:
-        """Every tag in use, by its lower-case name: as it was first written, and how many items carry it."""
+    def tags(self, kind: CollectionKind | None = None, collections: tuple[str, ...] | None = None) -> dict[str, tuple[str, int]]:
+        """Every tag in use, by its lower-case name: as it was first written, and how many items carry it; collections given: only their items."""
         counts: dict[str, tuple[str, int]] = {}
-        rows = self._connection.execute("SELECT tags, other_tags FROM items WHERE (tags != '' OR other_tags != '')" + (" AND kind = ?" if kind is not None else ""),
-                                        (kind.value,) if kind is not None else ()).fetchall()
+        query = "SELECT tags, other_tags FROM items WHERE (tags != '' OR other_tags != '')"
+        values: list[str] = []
+        if kind is not None:
+            query += " AND kind = ?"
+            values.append(kind.value)
+        if collections is not None:
+            if not collections:
+                return counts
+            query += f" AND collection IN ({', '.join('?' * len(collections))})"
+            values.extend(collections)
+        rows = self._connection.execute(query, values).fetchall()
         for text, other in rows:
             seen: set[str] = set()
             for tag in [*str(text).split("\x1f"), *str(other).split("\x1f")]:

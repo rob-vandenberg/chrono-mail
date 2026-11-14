@@ -24,3 +24,4 @@ See also: [[mail-window]]
 - [[D-340]] Two Google colours of one name are one tag of one colour
 - [[D-341]] A Google colour is a tag of its own calendar
 - [[D-343]] Renaming a Google calendar gives it a name only for you
+- [[D-347]] The Calendar's Tags list holds only the tags of the ticked calendars

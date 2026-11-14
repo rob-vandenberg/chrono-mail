@@ -20,9 +20,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 4.4.608"
+__version__ = "commands_pim.py 4.4.609"
 
 # --- Version history ----------------------------------------------------
+# v4.4.609: tag.list-shown: every tag, its appointments counted only in the calendars shown (D-347)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.604: CollectionSummary.own_name: a Google calendar's name is one's own name for it (D-343)
 # v4.4.602: tag.list also gives the tags of the Google calendars, each with how it is shown ("Rood (Esther)") and its calendar; tag.rename refuses a bar (D-341)
@@ -290,38 +291,61 @@ class TagInfo:
 def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
     """Every tag in use in mail, contacts, events and tasks (and every tag with a colour), with its colour and how many carry it; then the tags
     of the Google calendars (D-341), each known by its name and its calendar, shown with the calendar's name."""
+    return _tags(engine, None)
+
+
+@dataclass(frozen=True, slots=True)
+class ShownCalendars:
+    calendars: tuple[str, ...] = field(default=(), metadata=option("The calendars shown (ticked) (repeat); none: no calendar is shown"))
+
+
+def tag_list_shown(engine: Engine, parameters: ShownCalendars) -> tuple[TagInfo, ...]:
+    """As tag.list, every tag, but the appointments are counted only in the calendars shown: the Calendar's Tags list shows the tags with
+    appointments there, so a calendar's tags go with its tick (the owner, D-347), while the appointment window still offers every tag."""
+    return _tags(engine, frozenset(parameters.calendars))
+
+
+def _tags(engine: Engine, calendars_shown: frozenset[str] | None) -> tuple[TagInfo, ...]:
     try:
         colours = load_tags(engine.directories.tags_file)
     except ConfigurationError as error:
         raise UsageError(str(error)) from None
     counts: dict[str, dict[CollectionKind, int]] = {}
+    shown_events: dict[str, int] = {}  # calendars_shown given: the appointments of those calendars that carry each tag
     written: dict[str, str] = {}
     of_calendars: list[CalendarTag] = []
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
             of_calendars.extend(calendar_tags(engine, engine.config().find(account), store))
             for kind in CollectionKind:
-                for folded, (shown, count) in store.index.tags(kind).items():
-                    written.setdefault(folded, shown)
+                for folded, (written_as, count) in store.index.tags(kind).items():
+                    written.setdefault(folded, written_as)
                     counts.setdefault(folded, {}).setdefault(kind, 0)
                     counts[folded][kind] += count
+            if calendars_shown is not None:
+                for folded, (_, count) in store.index.tags(CollectionKind.EVENTS, tuple(sorted(calendars_shown))).items():
+                    shown_events[folded] = shown_events.get(folded, 0) + count
     mail = mail_tag_counts(engine)
     for folded, (shown, _) in mail.items():
         written.setdefault(folded, shown)
     made = [entry.key for entry in colours.entries]  # the tags the person made, in the person's order; then the others by name
     names = made + sorted(name for name in (set(counts) | set(mail)) - set(made) if BAR not in name)  # a calendar's tag comes with its calendar, below
 
+    def events_of(name: str) -> int:
+        """Every tag stays in the list (the appointment window offers them all); with calendars shown, only their appointments are counted."""
+        return counts.get(name, {}).get(CollectionKind.EVENTS, 0) if calendars_shown is None else shown_events.get(name, 0)
+
     def info(name: str) -> TagInfo:
         entry = colours.entry(name)
         return TagInfo(
             entry.shown if entry is not None else written.get(name, name), colours.colour_of(name), counts.get(name, {}).get(CollectionKind.CONTACTS, 0),
-            counts.get(name, {}).get(CollectionKind.EVENTS, 0), counts.get(name, {}).get(CollectionKind.TASKS, 0), mail.get(name, ("", 0))[1],
+            events_of(name), counts.get(name, {}).get(CollectionKind.TASKS, 0), mail.get(name, ("", 0))[1],
             entry.shortcut if entry is not None else "", entry.kinds if entry is not None else TAG_KINDS,
             entry.shown if entry is not None else written.get(name, name),
         )
 
     def of_calendar(tag: CalendarTag) -> TagInfo:
-        events = counts.get(tag.tag.casefold(), {}).get(CollectionKind.EVENTS, 0)
+        events = events_of(tag.tag.casefold())
         return TagInfo(tag.tag, tag.colour, 0, events, 0, 0, "", ("events",), tag.shown, tag.collection)
 
     return (*(info(name) for name in names), *(of_calendar(tag) for tag in of_calendars))
@@ -382,6 +406,7 @@ def tag_rename(engine: Engine, parameters: RenameParameters) -> RenameResult:
 
 
 TAG_LIST: TypedCommand[NoParameters, tuple[TagInfo, ...]] = TypedCommand("tag.list", NoParameters, tuple)  # every element is a TagInfo
+TAG_LIST_SHOWN: TypedCommand[ShownCalendars, tuple[TagInfo, ...]] = TypedCommand("tag.list-shown", ShownCalendars, tuple)  # every element is a TagInfo
 
 
 TAG_COLOUR: TypedCommand[ColourParameters, tuple[TagInfo, ...]] = TypedCommand("tag.colour", ColourParameters, tuple)  # every element is a TagInfo
@@ -404,5 +429,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(COLLECTION_SET_PALETTE.id, "Keep a calendar's colours: its own, then the others in order", PaletteParameters, collection_set_palette, doing="Saving the event colours")
     registry.register(COLLECTION_DELETE.id, "Take a calendar, task list or address book away with everything in it", DeleteParameters, collection_delete, destructive=True, doing="Deleting a calendar, task list or address book")
     registry.register(TAG_LIST.id, "List the tags in use, with colours and counts", NoParameters, tag_list, doing="Reading the tags")
+    registry.register(TAG_LIST_SHOWN.id, "List the tags in use, the appointments counted only in the calendars shown", ShownCalendars, tag_list_shown,
+                      doing="Reading the tags")
     registry.register(TAG_COLOUR.id, "Give a tag a colour", ColourParameters, tag_colour, doing="Saving a tag's colour")
     registry.register(TAG_RENAME.id, "Give a tag another name everywhere", RenameParameters, quiet_command(tag_rename), doing="Renaming a tag")

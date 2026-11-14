@@ -13,9 +13,10 @@ from tests.test_engine_commands import call
 from tests.test_google_colours import CALENDAR, EVENT, FakeCalendarApi, google_world, item_of, on_both, ours, shown, tag_colour, tags_shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_calendar_tags.py 4.4.602"
+__version__ = "test_calendar_tags.py 4.4.609"
 
 # --- Version history ----------------------------------------------------
+# v4.4.609: tag.list-shown counts the appointments only in the calendars shown (D-347)
 # v4.4.602: Initial tests: a Google colour is a tag of its own calendar, known by name and calendar, shown with the calendar's name (D-341)
 
 __all__ = ["google_world"]  # the fixture, used by name
@@ -316,3 +317,22 @@ def test_google_s_name_back_refused_at_once_keeps_nothing(google_world: tuple[En
     asked = api.own_name_asks
     call(engine, "dav.sync", account=account)
     assert api.own_name_asks == asked  # nothing was kept, so nothing is sent again
+
+
+def test_the_tags_of_the_calendars_shown_count_only_their_appointments(tmp_path: Path) -> None:
+    """The owner (D-347): tag.list-shown counts the appointments only in the calendars shown; none shown, no appointment counts."""
+    engine = make_engine(tmp_path)
+    call(engine, "pim.enable")
+    home = call(engine, "collection.create", kind="events", name="Home").collection
+    work = call(engine, "collection.create", kind="events", name="Work").collection
+    call(engine, "event.add", calendar=home, summary="Dinner", start="2026-11-20T18:00", end="2026-11-20T19:00", tag=("Food",))
+    call(engine, "event.add", calendar=work, summary="Lunch", start="2026-11-20T12:00", end="2026-11-20T13:00", tag=("Food", "Office"))
+
+    def events(calendars: tuple[str, ...]) -> dict[str, int]:
+        return {tag.name: tag.events for tag in call(engine, "tag.list-shown", calendars=calendars) if tag.events}
+
+    assert events((home, work)) == {"Food": 2, "Office": 1}
+    assert events((home,)) == {"Food": 1}
+    assert events(()) == {}
+    assert {"Food", "Office"} <= {tag.name for tag in call(engine, "tag.list-shown", calendars=())}  # every tag stays: the appointment window offers them
+    assert {tag.name: tag.events for tag in call(engine, "tag.list") if tag.events} == {"Food": 2, "Office": 1}  # tag.list counts every calendar

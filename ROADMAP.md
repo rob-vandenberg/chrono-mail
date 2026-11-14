@@ -323,6 +323,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 5.10 | Rename of a Google calendar is a name only for you, kept on Google (calendar list), never the calendar's name for everyone; empty gives Google's name back (D-343). | done (4.4.604) |
 | 5.11 | Refresh is Send and Receive in every section; each calendar account has its row in the Operations window; a Refresh while one runs is ignored (D-344). | done (4.4.605) |
 | 5.12 | Settings > Accounts on two lines (name and address, what it holds); no made-up Shown as name, the person's name on Google read at every synchronisation; a calendar named only by an address shown by a name (D-346). | done (4.4.608) |
+| 5.13 | The Calendar's Tags list holds only the tags of the ticked calendars; a filter whose tag goes with an untick goes off (D-347). | done (4.4.609) |
 
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
 ## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed

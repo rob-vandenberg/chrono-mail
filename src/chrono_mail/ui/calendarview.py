@@ -26,14 +26,13 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import Change
 from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
-from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
 from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_EDIT, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
-from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
+from chrono_mail.engine.commands_pim import TAG_LIST_SHOWN, ShownCalendars, TagInfo
 from chrono_mail.engine.commands_calendar import ListParameters as EventListParameters
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.colours import theme
@@ -55,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.602"
+__version__ = "calendarview.py 4.4.609"
 
 # --- Version history ----------------------------------------------------
+# v4.4.609: The Tags list holds only the tags of the ticked calendars; a tag filter whose tag goes with an untick goes off (D-347)
 # v4.4.602: Each appointment's tags as they are shown (a Google calendar's as "Rood (Esther)"), drawn again when a calendar is renamed (D-341)
 # v4.4.584: The Tags block without "All events": a click turns a tag filter on and off (D-334)
 # v4.4.577: A separator to drag between the calendars and the Tags list, its place remembered for this section (D-330)
@@ -225,6 +225,7 @@ class CalendarPage(PimPage):
         self._pending: dict[tuple[str, str], PendingTitle] = {}  # titles typed in place on their way to the server, shared with the views (D-325)
         self._tags_known: list[TagInfo] = []
         self._tags_asked: int = 0  # requests for the tags: only the answer to the latest counts, an older one may come after it
+        self._ticks_changed: bool = False  # a calendar was ticked or unticked since the tags were last asked (D-347)
         self._scrolled: bool = False
         # sidebar: the calendars, and the small month
         side = QWidget()
@@ -371,6 +372,7 @@ class CalendarPage(PimPage):
     @override
     def selection_changed(self) -> None:
         """A calendar was ticked or unticked, or the calendars were loaded."""
+        self._ticks_changed = True  # the next tags decide whether the tag filtered on still belongs to a ticked calendar (D-347)
         self.reload()
 
     def _search_changed(self, text: str) -> None:
@@ -464,7 +466,7 @@ class CalendarPage(PimPage):
             self.entries = []
             self._day_shown = today
             self._show_data()
-            self._ask_tags()  # the tags still show with no calendar ticked
+            self._ask_tags()  # no calendar ticked: the Tags list is empty (D-347)
             return
 
         self._fetches += 1
@@ -492,21 +494,32 @@ class CalendarPage(PimPage):
         (an older one would bring back old colours or numbers, D-329)."""
         self._tags_asked += 1
         number = self._tags_asked
+        ticks_changed, self._ticks_changed = self._ticks_changed, False
 
         def arrived(result: tuple[TagInfo, ...]) -> None:
             if number == self._tags_asked:
-                self._tags_arrived(result)
+                self._tags_arrived(result, ticks_changed)
+            elif ticks_changed:
+                self._ticks_changed = True  # a later answer decides
 
-        self._backend.ask(TAG_LIST, NoParameters(), arrived, lambda error: None, owner=self)
+        shown = ShownCalendars(tuple(sorted(self.panel.visible_ids())))  # only the tags of the ticked calendars (the owner, D-347)
+        self._backend.ask(TAG_LIST_SHOWN, shown, arrived, lambda error: None, owner=self)
 
-    def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
+    def _tags_arrived(self, result: tuple[TagInfo, ...], ticks_changed: bool = False) -> None:
         tags = list(result)
         before = [(tag.name, tag.colour, tag.shown) for tag in self._tags_known]
         self.colours.update(tags)
         self._tags_known = tags
         if [(tag.name, tag.colour, tag.shown) for tag in tags] != before and self.entries:  # a renamed Google calendar renames its tags (D-341)
             self._recolour()  # a tag's colour is the colour of the appointments it leads (D-329)
-        self.tag_filter.follow([(tag.name, tag.events) for tag in tags if tag.events > 0])
+        in_use = [(tag.name, tag.events) for tag in tags if tag.events > 0]
+        active = self.tag_filter.tag()
+        if ticks_changed and active and not any(name.casefold() == active.casefold() for name, _ in in_use):
+            self.tag_filter.clear_quietly()  # its calendar was unticked: the filter goes off and every appointment shows (D-347)
+            self.tag_filter.follow(in_use)
+            self.reload()
+            return
+        self.tag_filter.follow(in_use)
 
     def _scroll_to_morning(self) -> None:
         self.grid.scroll_to_hour(FIRST_HOUR)
