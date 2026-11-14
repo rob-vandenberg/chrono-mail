@@ -4410,3 +4410,8 @@ Tests: tests/test_account_names_google.py (14 new), tests/test_google_sign_in.py
 
 What landed: the Calendar's Tags list asks `tag.list-shown` with the ticked calendars: the appointments are counted only there (`pimstore/index.tags` with collections), a Google calendar's own tags come only when it is ticked, nothing ticked gives an empty list. A filter whose tag goes with an untick goes off and the appointments are asked again. The other sections, Settings > Tags and the tag overview keep `tag.list`. Review round 1 found that the appointment window, fed by the same list, would no longer offer the tags of an unticked calendar: `tag.list-shown` now gives every tag and counts only the appointments of the ticked calendars; the sidebar shows the tags with appointments there (fixed, with a test). Round 2: nothing real.
 Tests: tests/test_calendar_tags.py (1 new), tests/ui/test_ui_calendar_tags.py (2 new); all three fail on 4.4.608. 740 engine and 232 window tests related pass, the 2 of test_ui_sections fail the same on 4.4.608; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.
+
+## 2026-11-14 4.4.610 Today in front of the arrows in the Calendar's header row
+
+What landed: the owner's wish: the Calendar's header row reads Today, ‹, ›, the title; Show declined and Hide past events stay on the right (`ui/calendarview.py`). Review round 1 found that Tab still went ‹, ›, Today: the Tab order now follows the row (fixed, with a test). Round 2: nothing real.
+Tests: tests/ui/test_ui_calendar.py (1 new, fails on 4.4.609); 36 Calendar window tests pass; Pyrefly 0 errors on the program (Linux and win32); the layer check passes.

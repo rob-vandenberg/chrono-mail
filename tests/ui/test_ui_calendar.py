@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import Dialogs, World, answer_calendar_mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.573"
+__version__ = "test_ui_calendar.py 4.4.610"
 
 # --- Version history ----------------------------------------------------
+# v4.4.610: Today stands in front of the arrows in the header row
 # v4.4.573: Appointments take the colour of their first tag (D-329): the tests of the colour row and Event colours went; the hover text is the appointment's own popup
 # v4.4.558: The menus are in tests/ui/test_ui_event_menus.py; Delete of a declined date asks which, as every repeating event (D-318)
 # v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
@@ -655,3 +656,14 @@ def test_a_cancelled_event_in_the_agenda_is_grey_with_its_hover_text(world: Worl
     wait(qtbot, lambda: any(agenda.item(row).toolTip() != "" for row in range(agenda.count())))
     item = next(agenda.item(row) for row in range(agenda.count()) if "Lunch" in agenda.item(row).text())
     assert is_cancelled_tip(item.toolTip(), calendar) and item.foreground().color().name() == theme().task_grey
+
+
+def test_today_stands_in_front_of_the_arrows(world: World, qtbot: QtBot) -> None:
+    """The owner (4.4.610): the header row reads Today, the arrows, then the title."""
+    page = open_calendar(world, qtbot)
+    header = page.today_button.parentWidget()
+    row = header.layout() if header is not None else None
+    assert row is not None
+    order = [item.widget() for item in (row.itemAt(number) for number in range(row.count())) if item is not None]
+    assert order[:4] == [page.today_button, page.previous_button, page.next_button, page.title]
+    assert page.today_button.nextInFocusChain() is page.previous_button and page.previous_button.nextInFocusChain() is page.next_button  # Tab as it reads

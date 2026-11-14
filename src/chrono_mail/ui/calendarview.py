@@ -54,9 +54,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.609"
+__version__ = "calendarview.py 4.4.610"
 
 # --- Version history ----------------------------------------------------
+# v4.4.610: Today stands in front of the arrows, and Tab goes Today, ‹, › (the owner)
 # v4.4.609: The Tags list holds only the tags of the ticked calendars; a tag filter whose tag goes with an untick goes off (D-347)
 # v4.4.602: Each appointment's tags as they are shown (a Google calendar's as "Rood (Esther)"), drawn again when a calendar is renamed (D-341)
 # v4.4.584: The Tags block without "All events": a click turns a tag filter on and off (D-334)
@@ -261,13 +262,15 @@ class CalendarPage(PimPage):
         self.hidden_button = QPushButton("Show declined", nav)
         self.hidden_button.setCheckable(True)
         self.hidden_button.setChecked(self.show_hidden)
+        nav_layout.addWidget(self.today_button)  # Today first, then the arrows and the title (the owner)
+        QWidget.setTabOrder(self.today_button, self.previous_button)  # Tab goes as the row reads: Today, ‹, ›
+        QWidget.setTabOrder(self.previous_button, self.next_button)
         nav_layout.addWidget(self.previous_button)
         nav_layout.addWidget(self.next_button)
         nav_layout.addWidget(self.title)
         nav_layout.addStretch(1)
         nav_layout.addWidget(self.hidden_button)
         nav_layout.addWidget(self.past_button)
-        nav_layout.addWidget(self.today_button)
         self.grid = TimeGridPanel()
         self.month = MonthView()
         self.agenda = AgendaView()
