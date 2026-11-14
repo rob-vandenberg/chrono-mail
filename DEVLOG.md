@@ -4420,3 +4420,9 @@ Tests: tests/ui/test_ui_calendar.py (1 new, fails on 4.4.609); 36 Calendar windo
 
 What landed: the owner's wish: Tab goes Today, ‹, ›, Show declined, Hide past events, as the row reads; before, it reached Hide past events before Show declined (`ui/calendarview.py`, setTabOrder).
 Tests: tests/ui/test_ui_calendar.py (the header test checks the whole Tab order; fails on 4.4.610); 36 Calendar window tests pass; Pyrefly 0 errors on the program. Review: one Sonnet round, nothing real.
+
+## 2026-11-14 4.4.612 The Mail folder tree has the dark list grey of Calendar, Contacts and Tasks
+
+What landed: the owner's wish: the Mail folder tree was painted in the window grey (`ui/theme.py`, `QTreeView#folderTree`) and filled the space left of a folder with it (`ui/foldertree.FolderTree.drawBranches`); both now use the list grey (palette base) that the trees of Calendar, Contacts and Tasks have.
+Tests: tests/ui/test_ui_window.py::test_the_selection_of_a_folder_starts_at_its_icon checks the indent and the space below the last folder against the list grey and against the Calendar tree; fails on 4.4.611. 117 of 118 related window tests pass, the one of test_ui_theme fails the same on 4.4.611; Pyrefly 0 errors on the program (Linux and win32).
+Review round 1 found that the test read the list grey from the tree's own palette, which the tree's stylesheet sets, so most of its checks compared the tree with itself: it now takes the grey from the application palette (fails on 4.4.611 at the indent). Round 2: nothing real.

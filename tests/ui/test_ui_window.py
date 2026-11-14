@@ -24,9 +24,10 @@ from chrono_mail.ui.textbox import TextBox
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.4.590"
+__version__ = "test_ui_window.py 4.4.612"
 
 # --- Version history ----------------------------------------------------
+# v4.4.612: the Mail folder tree has the dark list grey of the Calendar tree, the indent and the space below the folders too (the owner)
 # v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner); the tests that missed All Messages since 4.4.586 follow
 # v4.4.561: the window opened after a close gets a new backend: the closed one hands out no answers since 4.4.542
 # v4.2.454: F2 in the folder list asks through TextBox.ask (Rename folder opens 360 pixels wide)
@@ -557,9 +558,15 @@ def test_the_selection_of_a_folder_starts_at_its_icon(world: World, qtbot: QtBot
     qtbot.wait(100)
     rect = window.tree.visualRect(sent)
     image = window.tree.viewport().grab().toImage()
-    background = window.tree.palette().color(QPalette.ColorRole.Window).name()
+    background = QApplication.palette().color(QPalette.ColorRole.Base).name()  # the list grey of the trees of Calendar, Contacts and Tasks (the owner); never the tree's own palette, which its stylesheet sets
     assert image.pixelColor(rect.left() - 6, rect.center().y()).name() == background  # the indent: the colour of the list
     assert image.pixelColor(rect.left() + 6, rect.center().y()).name() != background  # the folder itself: selected
+    assert image.pixelColor(4, image.height() - 4).name() == background  # below the last folder: the same grey
+    window.switch_section(CALENDAR)
+    calendar_tree = window.pages[CALENDAR].panel.tree
+    qtbot.wait(100)
+    calendar_image = calendar_tree.viewport().grab().toImage()
+    assert calendar_image.pixelColor(4, calendar_image.height() - 4).name() == background  # Mail's tree and Calendar's tree: one grey
 
 
 def test_a_folder_that_can_take_a_drop_gets_a_bar_across_the_row(world: World, qtbot: QtBot) -> None:

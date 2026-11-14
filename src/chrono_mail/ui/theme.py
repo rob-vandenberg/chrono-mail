@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 4.4.566"
+__version__ = "theme.py 4.4.612"
 
 # --- Version history ----------------------------------------------------
+# v4.4.612: The Mail folder tree has the dark list background (base) of the trees of Calendar, Contacts and Tasks (the owner)
 # v4.4.566: The title of an event edited in place has no border, background or padding: it stands where the title was drawn (D-324)
 # v4.2.473: Menus take the theme's menu colour instead of the window's
 # v4.2.472: The Menu and Send buttons under the pointer take the hover shade of the blue (worked out from the accent), not the link colour (D-164)
@@ -90,7 +91,7 @@ QFrame#searchPill[look="active"] {{ border: 1px solid {SEARCH_ACTIVE}; }}
 QFrame#searchSeparator {{ background: palette(mid); border: 0; margin: 4px 0; }}
 QToolButton#searchEnd {{ border: 0; padding: 0 2px; }}
 QLabel#sideHeading {{ font-size: 20px; font-weight: 600; padding: 12px 14px 6px 14px; }}
-QTreeView#folderTree {{ border: 0; background: palette(window); outline: 0; padding: 2px 6px; }}
+QTreeView#folderTree {{ border: 0; background: palette(base); outline: 0; padding: 2px 6px; }}
 QTreeView#folderTree::item {{ padding: 4px 4px; border-radius: 4px; min-height: 22px; }}
 QTreeView#folderTree::item:hover:!selected {{ background: {HOVER}; }}
 QTreeView#folderTree::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}

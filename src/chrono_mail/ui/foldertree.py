@@ -11,9 +11,10 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FO
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 4.4.596"
+__version__ = "foldertree.py 4.4.612"
 
 # --- Version history ----------------------------------------------------
+# v4.4.612: the indent left of a folder has the dark list background (base), as the rest of the tree (the owner)
 # v4.4.596: an arrow or page key moves past a folder that only holds folders (Gmail's [Gmail]), opening it on the way down; nothing is
 #           dropped on it (D-335)
 # v4.2.415: a drop of a mix is taken when one of its messages may go there; each message is then moved by its own rules (D-287)
@@ -148,7 +149,7 @@ class FolderTree(QTreeView):
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex | QPersistentModelIndex) -> None:
         """The space left of a folder (its indent) keeps the colour of the list: the selection and the hover start just before the icon."""
         if not self._is_drop_row(index):
-            painter.fillRect(rect, self.palette().color(QPalette.ColorRole.Window))
+            painter.fillRect(rect, self.palette().color(QPalette.ColorRole.Base))
         super().drawBranches(painter, rect, index)  # the arrows that open and close a group
 
     def _is_drop_row(self, index: QModelIndex | QPersistentModelIndex) -> bool:
