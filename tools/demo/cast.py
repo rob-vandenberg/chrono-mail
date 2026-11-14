@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 # --- Version ------------------------------------------------------------
-__version__ = "cast.py 2.3.320"
+__version__ = "cast.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: the client folder Northgate Travel (a made-up name that matches no real company)
 # v2.3.320: Initial: the person of the demo and her 14 accounts, with their folders (D-243)
 
 # Everything here is made up. Only the domains example.com, example.org and example.net (and names below them) are used:
@@ -45,7 +46,7 @@ class DemoAccount:
 ACCOUNTS: tuple[DemoAccount, ...] = (
     # IMAP: the mail stays on the server and is kept in step
     DemoAccount("work", "Work", "anna.clark@harbourdesign.example.com", "imap", "mail.harbourdesign.example.com", "mail.harbourdesign.example.com",
-                folders=("Clients", "Clients/Bluebird Bakery", "Clients/Northwind Travel", "Clients/Maple & Oak", "Projects", "Projects/Website relaunch",
+                folders=("Clients", "Clients/Bluebird Bakery", "Clients/Northgate Travel", "Clients/Maple & Oak", "Projects", "Projects/Website relaunch",
                          "Projects/Spring catalogue", "Admin", "Admin/Expenses", "Team"), outgoing_security="tls"),
     DemoAccount("personal", "Personal", "anna.clark@example.org", "imap", "imap.example.org", "smtp.example.org",
                 folders=("Family", "Friends", "Holidays", "Holidays/Portugal 2024", "Holidays/Scotland", "House", "House/Insurance", "Receipts", "Health")),

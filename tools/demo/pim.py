@@ -1,31 +1,39 @@
 import random
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
 from chrono_mail.crypto import DataKey
 from chrono_mail.engine import Engine
-from chrono_mail.engine.commands_pim import ColourParameters, tag_colour
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.pimaccess import open_pim
+from chrono_mail.pim.merge import merge
 from chrono_mail.pimstore import PimStore
-from chrono_mail.sync.davsync import DavState, ItemLink, digest_of
+from chrono_mail.sync.davconflicts import CLASH, keep_base, new_conflict, record
+from chrono_mail.sync.davsync import DavState, ItemLink, digest_of, title_of
 from tools.demo import texts
 from tools.demo.mail import Progress
+from tools.demo.meetings import coming_week, meetings, tasks_with_reminders, workdays
 from tools.demo.people import Person
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim.py 2.3.321"
+__version__ = "pim.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: more calendars (Kids' activities, Deadlines), a Shopping list task list and a Members address book; the coming week from the build
+#           date (meetings.py), the invitations answered and her own meeting in Work; tasks with reminders; tags on every kind of item; health
+#           contacts; where new appointments and tasks go (D-326); two sync conflicts made as a synchronisation makes them (D-194, D-308); the
+#           colleague's calendar is Marcus Elden's; the tags themselves come from tagging.py (D-332)
 # v2.3.321: Initial: the demo's calendars (500 entries, five years back to one ahead), tasks, contacts with groups, tags (D-243)
 
 TOTAL_EVENTS: int = 500
 TOTAL_TASKS: int = 100
 TOTAL_CONTACTS: int = 100
-PIM_TAGS: tuple[tuple[str, str], ...] = (("Important", "#e74c3c"), ("Family", "#2ecc71"), ("Clients", "#3498db"), ("Travel", "#1abc9c"),
-                                          ("Health", "#e67e22"), ("Errands", "#95a5a6"))
+HEALTH: tuple[Person, ...] = (  # the practices the family goes to: in Personal contacts, tagged Health (phones in the drama range)
+    Person("Clare Sutton", "reception@westbrookhealth.example.org", "health", phone="+44 1632 960418", company="Westbrook Health Centre", title="practice manager"),
+    Person("Owen Lyle", "owen.lyle@riverbenddental.example.com", "health", phone="+44 1632 960572", company="Riverbend Dental", title="dentist"),
+)
 DAV_SERVERS: dict[str, str] = {  # the calendar server of the IMAP accounts that have one (none of them exists)
     "work": "https://dav.harbourdesign.example.com/",
     "personal": "https://dav.example.org/",
@@ -35,9 +43,8 @@ HOLIDAYS: tuple[tuple[int, int, str], ...] = ((1, 1, "New Year's Day"), (2, 14, 
                                               (6, 21, "Midsummer"), (10, 31, "Halloween"), (11, 5, "Bonfire Night"), (12, 24, "Christmas Eve"),
                                               (12, 25, "Christmas Day"), (12, 26, "Boxing Day"), (12, 31, "New Year's Eve"))
 ONE_OFF: dict[str, tuple[tuple[str, str, int], ...]] = {  # calendar -> (summary, location, minutes)
-    "Home": (("Dentist", "Riverbend Dental", 45), ("Haircut", "Snip & Style", 60), ("Dinner with the Hughes", "Rosa's", 150),
-             ("Parents' evening", "Westbrook Primary School", 60), ("Car service", "Main Street Garage", 90), ("Yoga", "Community hall", 60),
-             ("Cinema", "Harbour Lights Cinema", 150), ("Lily's swimming lesson", "Leisure centre", 45), ("Sam's football", "Park pitches", 90),
+    "Home": (("Dentist", "Riverbend Dental", 45), ("Haircut", "Snip & Style", 60), ("Dinner with the Heskeths", "Rosa's", 150),
+             ("Parents' evening", "Westbrook Primary School", 60), ("Car service", "Main Street Garage", 90), ("Cinema", "Harbour Lights Cinema", 150),
              ("Coffee with Jenny", "The café on Mill Lane", 60), ("Plumber", "", 120), ("Doctor", "Health centre", 30)),
     "Work": (("Client call: {client}", "Video call", 45), ("Design review", "Studio, meeting room", 60), ("Presentation for {client}", "{client}", 90),
              ("Print check", "Printworks", 120), ("Workshop: {project}", "Studio", 180), ("Lunch with {client}", "Rosa's", 90),
@@ -124,6 +131,18 @@ def _group(uid: str, name: str, members: list[str]) -> str:
     return "\r\n".join(lines) + "\r\nEND:VCARD\r\n"
 
 
+@dataclass(frozen=True, slots=True)
+class Clashing:
+    """An item both sides changed since they last agreed: the version agreed, Chrono Mail's and the server's (D-194)."""
+
+    account: str
+    collection: str
+    kind: CollectionKind
+    agreed: str
+    here: str
+    server: str
+
+
 class PimMaker:
     def __init__(self, engine: Engine, account_ids: dict[str, str], people: list[Person], today: datetime, seed: int = 2027) -> None:
         self.engine: Engine = engine
@@ -134,6 +153,8 @@ class PimMaker:
         self.collections: dict[str, tuple[str, str]] = {}  # name -> (account id, collection id)
         self.links: dict[str, dict[str, list[tuple[str, str]]]] = {}  # account id -> collection id -> (item id, text) of server collections
         self.events: int = 0
+        self.new_items: dict[str, str] = {}  # "events", "tasks" -> the collection new items go to: the blue plus (D-326)
+        self.clashing: list[tuple[Clashing, str]] = []  # with the item's id here
 
     def _uid(self) -> str:
         return str(uuid.UUID(int=self.random.getrandbits(128), version=4))
@@ -178,17 +199,21 @@ class PimMaker:
             calendars["Work"] = (work, self._collection(work_store, work, CollectionKind.EVENTS, "Work", "#2c7be5", "/calendars/anna.clark/work/"))
             calendars["Family"] = (personal, self._collection(personal_store, personal, CollectionKind.EVENTS, "Family", "#27ae60", "/calendars/anna.clark/family/"))
             calendars["Book club"] = (bookclub, self._collection(bookclub_store, bookclub, CollectionKind.EVENTS, "Book club", "#8e44ad", "/calendars/riverside/meetings/"))
-            shared = [(work, self._collection(work_store, work, CollectionKind.EVENTS, "Team holidays (Mark Ellis)", "#7f8c8d", "/calendars/mark.ellis/holidays/", read_only=True)),
-                      (personal, self._collection(personal_store, personal, CollectionKind.EVENTS, "Team holidays (Mark Ellis)", "#7f8c8d", "/calendars/mark.ellis/holidays/", read_only=True))]
+            calendars["Deadlines"] = (work, self._collection(work_store, work, CollectionKind.EVENTS, "Deadlines", "#c0392b", "/calendars/anna.clark/deadlines/"))
+            calendars["Kids' activities"] = (personal, self._collection(personal_store, personal, CollectionKind.EVENTS, "Kids' activities", "#f1c40f",
+                                                                        "/calendars/anna.clark/kids/"))
+            self.new_items["events"] = calendars["Work"][1]
+            shared = [(work, self._collection(work_store, work, CollectionKind.EVENTS, "Team holidays (Marcus Elden)", "#7f8c8d", "/calendars/marcus.elden/holidays/", read_only=True)),
+                      (personal, self._collection(personal_store, personal, CollectionKind.EVENTS, "Team holidays (Marcus Elden)", "#7f8c8d", "/calendars/marcus.elden/holidays/", read_only=True))]
             events = self._events(stores, calendars, shared, progress)
+            events += self._this_week(stores, calendars)
             tasks = self._tasks(local, work_store, work)
-            contacts = self._contacts(local, work_store, work)
+            contacts = self._contacts(local, work_store, work, bookclub_store, bookclub)
         finally:
             for store in stores.values():
                 store.close()
         self._agreed_with_servers()
-        for name, colour in PIM_TAGS:
-            tag_colour(self.engine, ColourParameters(name, colour))
+        self._conflicts()
         return events, tasks, contacts
 
     def _key(self) -> DataKey | None:
@@ -222,14 +247,14 @@ class PimMaker:
         put("Home", _event(self._uid(), "Tennis doubles", thursday.replace(hour=19), thursday.replace(hour=20, minute=30), created, "Riverside Tennis Club",
                            "FREQ=WEEKLY;BYDAY=TH"))
         put("Book club", _event(self._uid(), "Book club", start_day.replace(day=1, hour=19, minute=30), start_day.replace(day=1, hour=21, minute=30), created,
-                                "The library", "FREQ=MONTHLY;BYDAY=2WE", alarm=60))
+                                "The library", "FREQ=MONTHLY;BYDAY=2WE", categories=("Book club",), alarm=60))
         put("Home", _event(self._uid(), "Bins out", start_day.replace(hour=20), start_day.replace(hour=20, minute=15), created, rule="FREQ=WEEKLY;BYDAY=TU",
                            categories=("Errands",)))
         for account_id, collection_id in shared:  # the colleague's holidays, the same calendar under two accounts
             generator = random.Random(77)
             for number in range(8):
                 begin = (self.today - timedelta(days=330) + timedelta(days=number * 55 + generator.randint(0, 20))).date()
-                text = _event(f"mark-ellis-holiday-{number}", "Mark away", begin, begin + timedelta(days=generator.randint(2, 10)), created)
+                text = _event(f"marcus-elden-holiday-{number}", "Marcus away", begin, begin + timedelta(days=generator.randint(2, 10)), created)
                 self._put(stores[account_id], account_id, collection_id, text)
         count += 8
         span = 6 * 365
@@ -241,6 +266,8 @@ class PimMaker:
                 continue
             begin = day.replace(hour=self.random.choice((8, 9, 10, 11, 13, 14, 15, 16, 18, 19)), minute=self.random.choice((0, 15, 30, 45)))
             categories = self.random.choice(((), (), (), ("Important",), ("Clients",) if calendar == "Work" else ("Family",), ("Health",) if summary in ("Dentist", "Doctor") else ()))
+            if calendar == "Book club":
+                categories = ("Book club",)
             put(calendar, _event(self._uid(), texts.fill(summary, self.random), begin, begin + timedelta(minutes=minutes), created,
                                  texts.fill(location, self.random), categories=categories, alarm=self.random.choice((0, 0, 15, 30, 60))))
             if count % 50 == 0:
@@ -252,9 +279,40 @@ class PimMaker:
         progress("Calendar entries", count, count)
         return count
 
+    def _this_week(self, stores: dict[str, PimStore], calendars: dict[str, tuple[str, str]]) -> int:
+        """The coming week from the build date, the copies the Work Inbox's invitations left in Work (accepted, declined, her own meeting), and
+        an appointment changed here and on the server (a sync conflict)."""
+        count = 0
+        work = meetings(self.today, self.people)
+        for calendar, text in (*coming_week(self.today), *(("Work", copy) for copy in work.copies)):
+            account_id, collection_id = calendars[calendar]
+            self._put(stores[account_id], account_id, collection_id, text)
+            count += 1
+        account_id, collection_id = calendars["Work"]
+        start = datetime.combine(workdays(self.today)[2], datetime.min.time(), self.today.tzinfo).replace(hour=9).astimezone(UTC)
+        uid, created = f"photo-shoot-{self.today:%Y%m%d}@harbourdesign.example.com", self.today - timedelta(days=12)
+        agreed = _event(uid, "Photo shoot: Copper Kettle Café", start, start + timedelta(hours=4), created, "Studio", categories=("Clients",), alarm=30)
+        here = _event(uid, "Photo shoot: Copper Kettle Café", start + timedelta(hours=1), start + timedelta(hours=5), created, "Studio", categories=("Clients",), alarm=30)
+        server = _event(uid, "Photo shoot: Copper Kettle Café", start + timedelta(minutes=30), start + timedelta(hours=4, minutes=30), created, "Copper Kettle Café",
+                        categories=("Clients",), alarm=30, description="At the café this time: the light is better there.")
+        self._clash(stores[account_id], Clashing(account_id, collection_id, CollectionKind.EVENTS, agreed, here, server))
+        return count + 1
+
+    def _clash(self, store: PimStore, clashing: Clashing) -> None:
+        """The item as both sides last agreed it, here and on the server; Chrono Mail's and the server's change are made after (_conflicts)."""
+        self.clashing.append((clashing, self._put(store, clashing.account, clashing.collection, clashing.agreed)))
+
     def _tasks(self, local: PimStore, work_store: PimStore, work: str) -> int:
         personal_list = self._collection(local, LOCAL_ACCOUNT_ID, CollectionKind.TASKS, "Personal", "#16a085")
+        shopping_list = self._collection(local, LOCAL_ACCOUNT_ID, CollectionKind.TASKS, "Shopping list", "#d35400")
         studio_list = self._collection(work_store, work, CollectionKind.TASKS, "Studio tasks", "#2c7be5", "/calendars/anna.clark/tasks/")
+        self.new_items["tasks"] = personal_list
+        lists = {"Personal": (local, LOCAL_ACCOUNT_ID, personal_list), "Shopping list": (local, LOCAL_ACCOUNT_ID, shopping_list),
+                 "Studio tasks": (work_store, work, studio_list)}
+        reminded = tasks_with_reminders(self.today)
+        for name, text in reminded:
+            store, account_id, collection_id = lists[name]
+            self._put(store, account_id, collection_id, text)
         for number in range(TOTAL_TASKS):
             summary, where = self.random.choice(TASKS)
             created = self.today - timedelta(days=self.random.randint(1, 700))
@@ -263,39 +321,54 @@ class PimMaker:
             if due < self.today.date() and self.random.random() < 0.8:
                 done = datetime.combine(due, datetime.min.time(), UTC) - timedelta(days=self.random.randint(0, 5))
             percent = 0 if done else self.random.choice((0, 0, 0, 25, 50, 75))
-            categories = self.random.choice(((), (), ("Important",), ("Errands",), ("Clients",) if where == "Studio tasks" else ("Family",)))
+            categories = self.random.choice(((), (), ("Important",), ("Errands",), ("Clients",) if where == "Studio tasks" else ("Family",),
+                                             ("To read",) if where == "Studio tasks" else ("Health",), ("Travel",) if "{destination}" in summary else ("Garden",)))
             text = _task(self._uid(), texts.fill(summary, self.random), due, created, done, self.random.choice((0, 0, 1, 5, 9)), categories, percent)
             if where == "Personal":
                 self._put(local, LOCAL_ACCOUNT_ID, personal_list, text)
             else:
                 self._put(work_store, work, studio_list, text)
             del number
-        return TOTAL_TASKS
+        return TOTAL_TASKS + len(reminded)
 
-    def _contacts(self, local: PimStore, work_store: PimStore, work: str) -> int:
+    def _contacts(self, local: PimStore, work_store: PimStore, work: str, bookclub_store: PimStore, bookclub: str) -> int:
+        """Three address books, each with its tick in Contacts (D-334): Personal contacts here, Studio contacts and the book club's Members on
+        their servers; groups in each; tags on contacts of every circle."""
         personal_book = self._collection(local, LOCAL_ACCOUNT_ID, CollectionKind.CONTACTS, "Personal contacts", "")
         studio_book = self._collection(work_store, work, CollectionKind.CONTACTS, "Studio contacts", "", "/addressbooks/anna.clark/studio/")
-        chosen = [person for person in self.people if person.circle in ("family", "work", "client")]
-        chosen += [person for person in self.people if person.circle not in ("family", "work", "client")]
-        chosen = chosen[:TOTAL_CONTACTS]
-        groups: dict[str, list[str]] = {}
-        for person in chosen:
+        members_book = self._collection(bookclub_store, bookclub, CollectionKind.CONTACTS, "Members", "", "/addressbooks/riverside/members/")
+        first = ("family", "work", "client", "bookclub", "garden")  # each of these circles whole, so each address book and tag has its people
+        chosen = [person for person in self.people if person.circle in first]
+        chosen += [person for person in self.people if person.circle not in first]
+        chosen = [*chosen[:TOTAL_CONTACTS - len(HEALTH)], *HEALTH]
+        books = {"studio": (work_store, work, studio_book), "members": (bookclub_store, bookclub, members_book), "personal": (local, LOCAL_ACCOUNT_ID, personal_book)}
+        groups: dict[str, tuple[str, list[str]]] = {}  # group -> (its address book, its members)
+        tags = {"family": ("Family",), "client": ("Clients",), "health": ("Health",), "bookclub": ("Book club",), "garden": ("Garden",)}
+        for number, person in enumerate(chosen):
             uid = self._uid()
-            categories = ("Family",) if person.circle == "family" else ("Clients",) if person.circle == "client" else ()
+            categories = tags.get(person.circle, ())
+            if person.circle in ("family", "client") and number % 4 == 0:
+                categories = (*categories, "Important")
             street = f"{self.random.randint(1, 120)} {self.random.choice(('Mill Lane', 'Harbour Road', 'Oak Avenue', 'Station Street', 'Church Walk'))}" if person.circle in ("family", "friend") else ""
             text = _card(uid, person, categories, street)
-            if person.circle in ("work", "client"):
-                self._put(work_store, work, studio_book, text)
-                groups.setdefault("Design team" if person.circle == "work" else "Clients", []).append(uid)
-            else:
-                self._put(local, LOCAL_ACCOUNT_ID, personal_book, text)
-                group = {"family": "Family", "bookclub": "Book club", "garden": "Garden volunteers", "tennis": "Tennis"}.get(person.circle)
-                if group:
-                    groups.setdefault(group, []).append(uid)
-        for name, members in groups.items():
-            book, store, account_id = (studio_book, work_store, work) if name in ("Design team", "Clients") else (personal_book, local, LOCAL_ACCOUNT_ID)
-            self._put(store, account_id, book, _group(self._uid(), name, members))
+            book = "studio" if person.circle in ("work", "client") else "members" if person.circle == "bookclub" else "personal"
+            store, account_id, collection_id = books[book]
+            item_id = self._put(store, account_id, collection_id, text)
+            group = {"work": "Design team", "client": "Clients", "family": "Family", "bookclub": "Book club", "garden": "Garden volunteers", "tennis": "Tennis"}.get(person.circle)
+            if group:
+                groups.setdefault(group, (book, []))[1].append(uid)
+            if person.circle == "client" and not any(clashing.kind is CollectionKind.CONTACTS for clashing, _ in self.clashing):
+                self._contact_clash(account_id, collection_id, item_id, uid, person, categories, text)
+        for name, (book, members) in groups.items():
+            store, account_id, collection_id = books[book]
+            self._put(store, account_id, collection_id, _group(self._uid(), name, members))
         return len(chosen)
+
+    def _contact_clash(self, account_id: str, collection_id: str, item_id: str, uid: str, person: Person, categories: tuple[str, ...], agreed: str) -> None:
+        """A client's card whose phone number was changed here and on the server, each to another number; the server also has a new title."""
+        here = _card(uid, replace(person, phone="+44 7700 900461"), categories, "")
+        server = _card(uid, replace(person, phone="+44 1632 960233", title="Managing director"), categories, "")
+        self.clashing.append((Clashing(account_id, collection_id, CollectionKind.CONTACTS, agreed, here, server), item_id))
 
     def _agreed_with_servers(self) -> None:
         """Every item of a server's calendar, task list and address book as agreed with that server at the last synchronisation, so nothing
@@ -311,6 +384,29 @@ class PimMaker:
                 collection.token = f"demo-{collection_id[:8]}"
                 for item_id, text in items:
                     collection.links[f"{href}{item_id}.ics"] = ItemLink(item_id, f'"{self.random.getrandbits(40):010x}"', digest_of(text))
+            state.save()
+
+    def _conflicts(self) -> None:
+        """Each clashing item changed here after the last agreement, and the server's newer version found at a synchronisation: a sync conflict as
+        the synchronisation records it (davsync.weigh): the agreed version kept, the clashes of the visible fields, the server's version and its
+        tag; the item keeps Chrono Mail's version and waits for the person (Settings > Sync conflicts, D-194, D-308)."""
+        for clashing, item_id in self.clashing:
+            href = f"{self._href(clashing.account, clashing.collection)}{item_id}.ics"
+            merged = merge(clashing.agreed, clashing.here, clashing.server)
+            if merged.text is not None or not merged.clashes:
+                raise SystemExit(f"The demo's sync conflict on {href} does not clash: the demo needs it to.")
+            etag = f'"{self.random.getrandbits(40):010x}"'
+            store = PimStore.open(self.engine.directories.pim_directory(clashing.account), self._key(), durable=False)
+            try:
+                keep_base(store, clashing.collection, item_id, clashing.agreed)
+                store.put(clashing.collection, clashing.here, item_id, verify=False)
+                record(store, new_conflict(clashing.collection, href, item_id, clashing.kind.value, CLASH, title_of(clashing.kind, clashing.here), etag,
+                                           clashing.server, merged.clashes))
+            finally:
+                store.close()
+            state = DavState(self.engine.directories.pim_directory(clashing.account) / "dav-state.json", durable=False)
+            collection = state.get(clashing.collection)
+            collection.links[href] = ItemLink(item_id, etag, collection.links[href].digest)
             state.save()
 
     def _href(self, account_id: str, collection_id: str) -> str:

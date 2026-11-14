@@ -1,9 +1,10 @@
 import random
 
 # --- Version ------------------------------------------------------------
-__version__ = "texts.py 2.3.321"
+__version__ = "texts.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: the client Northgate Travel (a made-up name that matches no real company)
 # v2.3.321: Initial: the subjects and texts of the demo's mail, by circle, written to read like real mail (D-243)
 
 # Every subject and sentence may hold {placeholders}, filled from FILL. Nothing here names a real person, company or place.
@@ -13,7 +14,7 @@ FILL: dict[str, tuple[str, ...]] = {
     "time": ("9:30", "10:00", "11:15", "12:30", "14:00", "15:30", "16:00", "19:30"),
     "project": ("the website relaunch", "the spring catalogue", "the new logo", "the menu cards", "the shop window", "the annual report", "the brochure",
                 "the packaging", "the signage", "the social media posts"),
-    "client": ("Bluebird Bakery", "Northwind Travel", "Maple & Oak", "Copper Kettle Café", "Riverbend Dental", "Lumen Opticians", "Fernhill Nurseries",
+    "client": ("Bluebird Bakery", "Northgate Travel", "Maple & Oak", "Copper Kettle Café", "Riverbend Dental", "Lumen Opticians", "Fernhill Nurseries",
                "Harbour Lights Cinema", "Saltmarsh Brewery", "Kestrel Cycles"),
     "thing": ("the colour proofs", "the photos", "the second draft", "the font licences", "the print quote", "the mood board", "the copy", "the sketches"),
     "place": ("the café on Mill Lane", "the studio", "the library", "the community hall", "the park", "Rosa's", "the garden shed", "the clubhouse"),

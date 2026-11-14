@@ -22,6 +22,7 @@ Read before work on how the project is run, documents, versions.
 - [[D-230]] No personal detail in the project
 - [[D-242]] Documentation in three layers
 - [[D-243]] Screenshots come from a demo profile
+- [[D-349]] One README with light and dark screenshots
 - [[D-270]] The owner's rules outrank Claude's
 - [[D-162]] How the decisions are kept
 - [[D-163]] Short STATUS and ARCHITECTURE too

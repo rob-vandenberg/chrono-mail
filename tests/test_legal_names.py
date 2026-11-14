@@ -3,9 +3,10 @@ import subprocess
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_legal_names.py 4.2.386"
+__version__ = "test_legal_names.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: README.md, the documentation, may name both programs in its import and export sections (the owner, OR-10, D-046)
 # v4.2.386: The import and export of the profile, rules and signatures of the second program are part of its import: their files and
 #           module names (outlook_windows, outlook_rules, outlook_settings, outlook_profile) are allowed as its other files
 # v4.2.386: The export to the second program is the mirror of its import: its command, window and tests may name it (OR-10)
@@ -30,6 +31,7 @@ IMPORTER_FILES: frozenset[str] = frozenset({
     "tests/test_" + NAME + "_source.py",
     "tests/test_import_" + NAME + ".py",
     "tests/ui/test_ui_import.py",
+    "README.md",  # its import and export sections (the owner, 2026-11-14)
 })
 # The importer's own names, which other files and the documents may mention: its modules, its test files and its commands
 # (import.<name>, import.<name>-scan, import.<name>-passwords).
@@ -49,6 +51,7 @@ SECOND_FILES: frozenset[str] = frozenset({
     "src/chrono_mail/ui/exportdialog.py",
     "tests/test_export_" + SECOND + ".py",
     "tests/ui/test_ui_export_" + SECOND + ".py",
+    "README.md",  # its import and export sections (the owner, 2026-11-14)
 })
 SECOND_PARTS: tuple[str, ...] = ("src/chrono_mail/pst/", "tests/test_pst_")  # the reader of its data files is part of that import
 SECOND_NAMES = re.compile(r"commands_" + SECOND + r"|" + SECOND + r"_(?:windows|rules|settings|profile)\b|test_(?:ui_)?(?:im|ex)port_" + SECOND + r"|(?:im|ex)port\." + SECOND + r"[a-z-]*")

@@ -15,19 +15,21 @@ from chrono_mail.engine.commands_folders import index_rebuild
 from chrono_mail.engine.commands_mail import SendParameters, mail_send
 from chrono_mail.engine.commands_schedule import SnoozeParameters, message_snooze
 from chrono_mail.engine.commands_sidebar import GroupAddParameters, PinParameters, favorite_pin, group_add
-from chrono_mail.engine.commands_tags import CreateParameters, tag_create
 from chrono_mail.engine.junkfilter import junk_learn_existing
 from chrono_mail.store import Store
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.imap_sync import local_names
 from tools.demo import texts
 from tools.demo.cast import ACCOUNTS, PERSON, DemoAccount
+from tools.demo.meetings import meetings
 from tools.demo.people import SENDERS, Person, Sender
 
 # --- Version ------------------------------------------------------------
-__version__ = "mail.py 2.3.321"
+__version__ = "mail.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: the calendar mail of the Work Inbox (an invitation to answer, one accepted, one declined, an answer to her own meeting, a file of
+#           several items, D-310); mail of the book club tagged Book club; the tags themselves come from tagging.py (one list, D-332)
 # v2.3.321: Initial: the demo's 100,000 messages over five years, spam, marks, tags, archive, snooze, schedule, drafts and Outbox (D-243)
 
 TOTAL_MESSAGES: int = 100_000
@@ -43,8 +45,6 @@ CIRCLES_OF: dict[str, tuple[str, ...]] = {  # the people who write to each accou
     "work": ("work", "client"), "personal": ("friend", "family"), "bookclub": ("bookclub",), "garden": ("garden",), "freelance": ("freelance",),
     "alumni": ("alumni",), "family": ("family",), "school": ("school",), "tennis": ("tennis",), "oldisp": ("friend",),
 }
-TAGS: tuple[tuple[str, str], ...] = (("Important", "#e74c3c"), ("Clients", "#3498db"), ("Family", "#2ecc71"), ("Receipts", "#f39c12"),
-                                      ("To read", "#9b59b6"), ("Travel", "#1abc9c"))
 SIGNATURES: dict[str, str] = {
     "work": "Anna Clark\nSenior designer, Harbour Design Studio\n+44 7700 900123",
     "freelance": "Anna Clark Studio\nDesign for small businesses\nannaclark.example.com",
@@ -217,6 +217,8 @@ class MailMaker:
             return ("Clients",)
         if circle == "family" and roll < 0.12:
             return ("Family",)
+        if circle == "bookclub" and roll < 0.15:
+            return ("Book club",)
         if roll < 0.012:
             return ("Important",)
         return ()
@@ -360,6 +362,10 @@ class MailMaker:
         planned.append(Planned("freelance", ("Outbox",), outbox.as_bytes(), moment, {MessageFlag.SEEN}))
         return planned
 
+    def calendar_mail(self) -> list[Planned]:
+        """The invitations and other calendar mail of the Work Inbox, about the coming days (D-310)."""
+        return [Planned("work", ("Inbox",), mail.raw, mail.moment, set(mail.flags)) for mail in meetings(self.today, self.people).mails]
+
     def _topic_folder(self, account: DemoAccount, item: Planned) -> str:
         folders = list(account.folders)
         leaves = [folder for folder in folders if not any(other.startswith(folder + "/") for other in folders)]
@@ -421,10 +427,8 @@ def record_imap(engine: Engine, account_ids: dict[str, str], stored: dict[str, l
 
 
 def finishing_touches(engine: Engine, account_ids: dict[str, str], stored: dict[str, list[tuple[Planned, str]]], today: datetime) -> None:
-    """What a person does over the years beyond receiving: tags with colours, signatures, a group of accounts, pinned folders, snoozed mail,
-    scheduled and repeating messages."""
-    for name, colour in TAGS:
-        tag_create(engine, CreateParameters(name, colour))
+    """What a person does over the years beyond receiving: signatures, a group of accounts, pinned folders, snoozed mail, scheduled and
+    repeating messages. (The tags: tagging.py.)"""
     for key, signature in SIGNATURES.items():
         account_edit(engine, AccountEditParameters(account_ids[key], signature=signature))
     group_add(engine, GroupAddParameters("Clubs", (account_ids["bookclub"], account_ids["garden"])))
@@ -449,12 +453,13 @@ def finishing_touches(engine: Engine, account_ids: dict[str, str], stored: dict[
 
 def build_mail(engine: Engine, account_ids: dict[str, str], people: list[Person], today: datetime, total: int, progress: Progress) -> int:
     """All of the demo's mail. Returns how many messages came in and were sent over the years (the drafts, the Outbox and the scheduled
-    messages come on top)."""
+    messages, and the calendar mail of the Work Inbox, come on top)."""
     maker = MailMaker(people, today, total)
     planned = maker.plan()
     maker.place(planned)
     received = len(planned)
     planned.extend(maker.unsent())
+    planned.extend(maker.calendar_mail())
     stored = store_mail(engine, account_ids, planned, progress)
     record_imap(engine, account_ids, stored)
     places = list(stored)

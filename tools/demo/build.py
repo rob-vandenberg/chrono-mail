@@ -30,11 +30,14 @@ from tools.demo.cast import ACCOUNTS, PERSON, DemoAccount
 from tools.demo.mail import TOTAL_MESSAGES, build_mail
 from tools.demo.people import make_people
 from tools.demo.pim import PimMaker
+from tools.demo.tagging import make_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "build.py 4.2.459"
+__version__ = "build.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: the tags in one list with their Show in choices (tagging.py, D-332); the blue plus on Work and Personal, where new appointments and
+#           tasks go (D-326)
 # v4.2.459: a demo built before 4.2.459 has its wallet entries moved to its wallet name without "/" first (never built again for it);
 #           --fresh also removes what is left under that former name (D-274)
 # v3.6.370: the demo's passwords and key under its own wallet name; --fresh also removes the demo's entries left under the shared name,
@@ -177,6 +180,15 @@ def _window_settings(directories: AppDirectories) -> None:
     settings.sync()
 
 
+def _new_items_go(directories: AppDirectories, new_items: dict[str, str]) -> None:
+    """The blue plus of Calendar and Tasks: the calendar and task list new items go to (D-326), kept as the window keeps it (CollectionPanel's
+    new_items_<kind>, in the profile's window settings)."""
+    settings = QSettings(str(directories.config_directory / WINDOW_SETTINGS_FILE), QSettings.Format.IniFormat)
+    for kind, collection in new_items.items():
+        settings.setValue(f"new_items_{kind}", collection)
+    settings.sync()
+
+
 def build_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, messages: int = TOTAL_MESSAGES, progress: Callable[[str, int, int], None] = _quiet,
                today: datetime | None = None) -> BuiltDemo:
     """Build the demo profile in an empty or missing folder: its accounts, its mail over five years up to today, its calendars, tasks and
@@ -204,7 +216,10 @@ def build_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, messages:
     people = make_people(random.Random(2025))
     filling = Engine(directories, passwords, keys, durable=False)  # a demo is built again rather than repaired: no wait for the disk per message
     stored = build_mail(filling, account_ids, people, now, messages, progress) if messages else 0
-    events, tasks, contacts = PimMaker(filling, account_ids, people, now).build(progress)
+    pim = PimMaker(filling, account_ids, people, now)
+    events, tasks, contacts = pim.build(progress)
+    make_tags(engine)
+    _new_items_go(directories, pim.new_items)
     return BuiltDemo(folder, account_ids, stored, events, tasks, contacts)
 
 

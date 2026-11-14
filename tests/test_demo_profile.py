@@ -9,7 +9,9 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ConfigurationError
 from chrono_mail.crypto import DataKey, InMemoryKeyStore, KeyNotFoundError, KeyringKeyStore
 from chrono_mail.config import KeyringPasswordStore
 from chrono_mail.engine import Engine
+from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_folders import AccountParameters, folder_list
+from chrono_mail.engine.commands_pim import ListParameters, collection_list, tag_list
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.ui.app import WINDOW_SETTINGS_FILE, credential_stores, directories_and_settings, take_profile
 from chrono_mail.ui.prefs import read_preferences
@@ -17,11 +19,13 @@ from tests.doubles import BrokenBackend, MemoryBackend
 from tools.demo import build
 from tools.demo.build import BuiltDemo, build_demo, remove_demo
 from tools.demo.cast import ACCOUNTS
+from tools.demo.tagging import DEMO_TAGS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_demo_profile.py 4.2.459"
+__version__ = "test_demo_profile.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: the tags and the blue plus come with every demo, also one built without mail (D-326, D-332)
 # v4.2.459: a profile's wallet name holds its folder's name, never a "/" (D-274)
 # v3.6.370: a profile keeps its wallet entries under a name of its own (the window's and the builder's stores, one name per folder); --fresh
 #           also removes the demo's entries left under the shared name, never the person's own; a demo built before is built again
@@ -219,3 +223,14 @@ def test_a_demo_made_before_its_wallet_name_lost_the_slash_is_moved_not_built_ag
     assert build.main(["--folder", str(folder), "--messages", "0"]) == 0
     assert (folder / build.MARKER).stat().st_mtime_ns == built_at  # not built again
     assert {service for service, _ in backend.entries} == {directories.credential_service}
+
+
+def test_the_tags_and_where_new_items_go_come_with_a_demo_without_mail(built: tuple[BuiltDemo, Engine]) -> None:
+    """D-332: the tags in the person's order with their Show in choices; D-326: the blue plus on a calendar and a task list that take new items."""
+    _, engine = built
+    assert [(tag.name, tag.kinds) for tag in tag_list(engine, NoParameters())][:len(DEMO_TAGS)] == [(name, kinds) for name, _, kinds, _ in DEMO_TAGS]
+    settings = QSettings(str(engine.directories.config_directory / WINDOW_SETTINGS_FILE), QSettings.Format.IniFormat)
+    collections = {collection.collection: collection for collection in collection_list(engine, ListParameters())}
+    for key, kind in (("new_items_events", "events"), ("new_items_tasks", "tasks")):
+        chosen = collections[str(settings.value(key, ""))]
+        assert chosen.kind == kind and not chosen.read_only

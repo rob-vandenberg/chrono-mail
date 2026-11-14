@@ -2,9 +2,11 @@ import random
 from dataclasses import dataclass
 
 # --- Version ------------------------------------------------------------
-__version__ = "people.py 2.3.321"
+__version__ = "people.py 4.4.614"
 
 # --- Version history ----------------------------------------------------
+# v4.4.614: (review) a family member has no job title (the relation showed as "Uncle" under Job title)
+# v4.4.614: surnames and two companies changed, so no generated name is that of a well-known real person or company
 # v2.3.321: Initial: the people and companies who write to the demo's person, by circle (D-243)
 
 # Everyone here is made up; every address is on example.com, example.org or example.net (or a name below them).
@@ -38,10 +40,10 @@ FIRST_NAMES: tuple[str, ...] = (
     "Victoria", "Adam", "Charlotte", "Luke", "Holly", "Nathan", "Abigail", "Ryan", "Zoe", "Patrick", "Ruth", "Jonathan", "Maya", "Christopher", "Iris",
 )
 LAST_NAMES: tuple[str, ...] = (
-    "Bennett", "Hughes", "Fletcher", "Morgan", "Turner", "Harper", "Walsh", "Doyle", "Prescott", "Whitaker", "Lambert", "Ashworth", "Kendall", "Barlow",
-    "Sutton", "Hayward", "Pearce", "Rowe", "Gibbs", "Holloway", "Mercer", "Lowe", "Fairfax", "Dunn", "Harlow", "Sheldon", "Quinn", "Radley", "Tanner",
-    "Webb", "Ellison", "Marsh", "Norris", "Oakley", "Pryce", "Sinclair", "Thorne", "Vaughan", "Winslow", "Yardley", "Bramley", "Carver", "Drake",
-    "Ellis", "Forbes", "Garland", "Hale", "Ingram", "Jarvis", "Kirby", "Lyle", "Monroe", "Nash", "Osborne", "Parry", "Rhodes", "Stroud", "Talbot",
+    "Bennett", "Hesketh", "Fenner", "Morgan", "Turner", "Harper", "Walby", "Dorley", "Pellow", "Whitaker", "Lambert", "Ashworth", "Kenmore", "Barlow",
+    "Sutton", "Hayward", "Pearce", "Rowe", "Gibbs", "Holloway", "Mercer", "Lowe", "Fairfax", "Dunmore", "Harlow", "Sheldon", "Quinn", "Radley", "Tanner",
+    "Wray", "Ellison", "Marsh", "Norbury", "Oakley", "Pryce", "Sinclair", "Thorne", "Varley", "Winslow", "Yardley", "Bramley", "Calder", "Drake",
+    "Ellery", "Forbes", "Garland", "Hale", "Ingram", "Jarvis", "Kirby", "Lyle", "Monroe", "Nash", "Orme", "Parry", "Rendle", "Stroud", "Talbot",
 )
 CIRCLES: tuple[tuple[str, int, str], ...] = (  # circle, how many people, the domain their addresses are on
     ("work", 22, "harbourdesign.example.com"),
@@ -55,7 +57,7 @@ CIRCLES: tuple[tuple[str, int, str], ...] = (  # circle, how many people, the do
     ("alumni", 12, "alumni.example.net"),
     ("freelance", 16, "example.com"),
 )
-CLIENT_COMPANIES: tuple[str, ...] = ("Bluebird Bakery", "Northwind Travel", "Maple & Oak", "Copper Kettle Café", "Riverbend Dental", "Lumen Opticians",
+CLIENT_COMPANIES: tuple[str, ...] = ("Bluebird Bakery", "Northgate Travel", "Maple & Oak", "Copper Kettle Café", "Riverbend Dental", "Lumen Opticians",
                                      "Fernhill Nurseries", "Harbour Lights Cinema", "Saltmarsh Brewery", "Kestrel Cycles")
 WORK_TITLES: tuple[str, ...] = ("Art director", "Senior designer", "Designer", "Project manager", "Copywriter", "Studio manager", "Developer",
                                 "Illustrator", "Account manager", "Junior designer")
@@ -66,7 +68,7 @@ FAMILY: tuple[tuple[str, str], ...] = (  # name, relation: the family keeps the 
 )
 
 SENDERS: tuple[Sender, ...] = (
-    Sender("Pinewood Home Store", "orders@pinewood.example.com", "shopping", "receipt"),
+    Sender("Elmwood Home Store", "orders@elmwood.example.com", "shopping", "receipt"),
     Sender("Brightside Books", "hello@brightsidebooks.example.net", "shopping", "receipt"),
     Sender("Greengrocer Direct", "orders@greengrocer.example.org", "shopping", "receipt"),
     Sender("Parcel Express", "tracking@parcelexpress.example.com", "shopping", "update"),
@@ -112,7 +114,7 @@ def make_people(generator: random.Random) -> list[Person]:
     for name, relation in FAMILY:
         year = {"husband": 1981, "daughter": 2012, "son": 2015, "mother": 1953, "father": 1950, "grandmother": 1931}.get(relation, generator.randint(1960, 1995))
         people.append(Person(name, _address(name, "example.org", taken), "family", (year, generator.randint(1, 12), generator.randint(1, 28)),
-                             f"+44 7700 900{generator.randint(100, 999)}", "", relation))
+                             f"+44 7700 900{generator.randint(100, 999)}", "", ""))  # a relation is no job title
     for circle, count, domain in CIRCLES:
         if circle == "family":
             continue
