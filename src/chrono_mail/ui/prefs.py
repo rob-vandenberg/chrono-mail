@@ -12,9 +12,10 @@ from chrono_mail.ui.weekstart import WEEK_STARTS
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.4.616"
+__version__ = "prefs.py 4.4.617"
 
 # --- Version history ----------------------------------------------------
+# v4.4.617: save_startup: Show on startup saved by the program through this module, never by its name elsewhere (D-211)
 # v4.4.616: Settings > Calendar: the days of Upcoming, the weeks of the custom view, week numbers, short events as 30 minutes, past events
 #           less bright, Start week on (D-352)
 # v4.4.585: Comments: tags are a block below the folder list, no entries in it (D-334)
@@ -416,6 +417,11 @@ def _saved_form(name: str, value: object) -> object:
     if name == "shortcuts" and isinstance(value, dict):
         return json.dumps(value)
     return value
+
+
+def save_startup(settings: QSettings, startup: StartupView) -> None:
+    """Show on startup saved by itself, in the form the settings file keeps it (a choice the program changes for the person)."""
+    settings.setValue(_KEY_OF["startup"], _saved_form("startup", startup))
 
 
 def save_preferences(settings: QSettings, chosen: Preferences) -> None:

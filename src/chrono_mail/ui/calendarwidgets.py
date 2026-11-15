@@ -20,9 +20,10 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.616"
+__version__ = "calendarwidgets.py 4.4.617"
 
 # --- Version history ----------------------------------------------------
+# v4.4.617: A past block keeps its own colour and text, both dimmed together: a fresh white text on the darker block did not look dimmed (D-352)
 # v4.4.616: Month draws any number of weeks (the n weeks view, no other month greyed there); week numbers in Month, n weeks and the header
 #           of Day and Week; a short event drawn as long as chosen; a past event less bright in every view (D-352)
 # v4.4.576: Enter on a selected appointment opens it, in Day, Week, Month and Agenda (the owner)
@@ -77,9 +78,10 @@ def event_tip(entry: Entry) -> str:
     return f"<b>{html.escape(entry.summary or '(no title)')}</b><table cellspacing=2>{table}</table>"
 
 
-def paint_tags(painter: QPainter, rect: QRectF, y: float, height: float, entry: Entry, fill: QColor, text_colour: QColor) -> float:
+def paint_tags(painter: QPainter, rect: QRectF, y: float, height: float, entry: Entry, fill: QColor, text_colour: QColor, dim: bool = False) -> float:
     """The tags of an appointment as small tag shapes at the right end of its first line, each in its colour; the one of the appointment's own
-    colour as an outline in the text's colour, so it stays visible (D-329). Returns where they begin, for the room left to the text."""
+    colour as an outline in the text's colour, so it stays visible (D-329). dim: on a past block, each tag less bright with it (D-352).
+    Returns where they begin, for the room left to the text."""
     if not entry.tag_colours:
         return rect.right()
     size = max(6, int(height * 0.7))
@@ -89,7 +91,7 @@ def paint_tags(painter: QPainter, rect: QRectF, y: float, height: float, entry: 
     for _, colour in reversed(entry.tag_colours[:fits]):  # the first tags, the colour tag above all, are the ones that stay
         left = int(right - size)
         shape = tag_path(QRect(left, top + size // 6, size, size - 2 * (size // 6)))
-        own = QColor(colour)
+        own = dimmed(QColor(colour)) if dim else QColor(colour)
         if own.name() == fill.name():
             painter.setPen(QPen(text_colour, 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -105,14 +107,21 @@ PAST_AGENDA_OPACITY: float = 0.55  # a past line of the Agenda: the theme's own 
 PAST_SHARE: float = 0.5  # a past event, when Settings > Calendar dims them: this share of its colour, the rest the views' background (D-352)
 
 
+def dimmed(colour: QColor) -> QColor:
+    """A colour of a past event, less bright: mixed with the views' background, opaque (D-352)."""
+    base = QColor(theme().roles["Base"][0])
+    return QColor(*(round(own * PAST_SHARE + behind * (1 - PAST_SHARE)) for own, behind in
+                    ((colour.red(), base.red()), (colour.green(), base.green()), (colour.blue(), base.blue()))))
+
+
+def own_colour(entry: Entry) -> QColor:
+    return QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(NEW_CALENDAR)
+
+
 def fill_colour(entry: Entry) -> QColor:
-    """An event's colour; a past one mixed with the views' background, opaque, so the text colour is chosen against what is really drawn."""
-    colour = QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(NEW_CALENDAR)
-    if entry.past:
-        base = QColor(theme().roles["Base"][0])
-        colour = QColor(*(round(own * PAST_SHARE + behind * (1 - PAST_SHARE)) for own, behind in
-                          ((colour.red(), base.red()), (colour.green(), base.green()), (colour.blue(), base.blue()))))
-    return colour
+    """An event's colour as a dot or a line shows it; a past one less bright."""
+    colour = own_colour(entry)
+    return dimmed(colour) if entry.past else colour
 
 
 def no_mark(item: str) -> str:
@@ -148,11 +157,14 @@ def first_line(rect: QRectF, font: QFont, mark: str, dot: bool) -> tuple[float, 
 
 def block_colours(entry: Entry, faded: bool = False) -> tuple[QColor, QColor]:
     """A block's colour (lighter for a free event) and its text's: white or black, whichever reads better on it; the dot follows the text (D-297)."""
-    colour = fill_colour(entry)
+    colour = own_colour(entry)
+    text = TagColourBook.text_colour(colour)  # chosen against its own colour, as for an event to come
+    if entry.past:
+        colour, text = dimmed(colour), dimmed(text)  # the block and its text less bright together, as one (the owner, D-352)
     if faded:
         colour = QColor(colour)
         colour.setAlpha(150)
-    return colour, TagColourBook.text_colour(colour)
+    return colour, text
 
 
 def bold_of(font: QFont) -> QFont:
@@ -190,7 +202,7 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
         text_right = rect.right()
         if index == 0:
             paint_mark(painter, int(mark_left), int(y + metrics.height() / 2), mark, size)
-            text_right = paint_tags(painter, rect, y, metrics.height(), entry, colour, text_colour)  # the tag icons at the end of the title (D-329)
+            text_right = paint_tags(painter, rect, y, metrics.height(), entry, colour, text_colour, entry.past)  # the tag icons at the end of the title (D-329)
             painter.setPen(text_colour)
         text_left = first_left if index == 0 else rect.left() + lead + 5
         painter.drawText(QRectF(text_left, y, text_right - 3 - text_left, metrics.height()), Qt.AlignmentFlag.AlignVCenter,

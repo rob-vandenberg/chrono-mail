@@ -30,7 +30,7 @@ from chrono_mail.ui.models import (
     ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
     FolderTreeModel, TreeEntry,
 )
-from chrono_mail.ui.prefs import InUse, Remembered
+from chrono_mail.ui.prefs import InUse, Remembered, StartupView, save_startup
 from chrono_mail.ui.scale import px
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, TASKS
 from chrono_mail.ui.sidebarpage import startup_forces
@@ -38,9 +38,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.615"
+__version__ = "folderpane.py 4.4.617"
 
 # --- Version history ----------------------------------------------------
+# v4.4.617: Show on startup changed to All Inboxes is saved through ui/prefs.py (D-211)
 # v4.4.615: the Delete folder question asks only that: no word about the store's .deleted directory, from where nothing brings a folder back
 # v4.4.596: a folder that only holds folders (Gmail's [Gmail]) is never what the list shows: a click opens or closes it, the keyboard moves past it (FolderTree.moveCursor); Show on startup lists it as a heading
 # v4.4.585: No Tags entries in the folder list (D-334): a start-up choice or last view that was a tag opens All Inboxes, said once
@@ -265,7 +266,7 @@ class FolderPane(QObject):
                 if (startup.kind == "mail" and startup.entry_kind == EntryKind.TAGVIEW) or (startup.kind != "mail" and saved_kind == EntryKind.TAGVIEW):
                     wanted.append(ALL_INBOXES)  # a tag is no entry of the folder list any more, but a filter of the Tags block (D-334)
                     if startup.kind == "mail":
-                        self._prefs.settings.setValue("startup_view", "\t".join(("mail", "", EntryKind.FAVORITE.value, "inboxes")))  # told once: Show on startup is All Inboxes now
+                        save_startup(self._prefs.settings, StartupView("mail", "", EntryKind.FAVORITE.value, "inboxes"))  # told once: Show on startup is All Inboxes now
                     if startup.kind != "section":  # said only when Mail is what opens
                         self._status.show("Tags are now a filter below the folder list: All Inboxes is shown instead of the tag.")
                 elif startup.kind == "mail":
