@@ -4,9 +4,10 @@ from datetime import date, datetime, timedelta, tzinfo
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarlayout.py 4.4.616"
+__version__ = "calendarlayout.py 4.4.618"
 
 # --- Version history ----------------------------------------------------
+# v4.4.618: Upcoming stands between the n weeks view and Agenda (the owner)
 # v4.4.616: The n weeks view (the week of the day shown on top, n rows); Upcoming starts at the day shown and has a chosen number of days;
 #           the arrows move by them; the week number of a row; a short event's length chosen; an entry knows whether it is past (D-352)
 # v4.4.573: An entry knows its tags with their colours, for the tag icons and the hover text (D-329)
@@ -23,7 +24,7 @@ MONTH: str = "month"
 WEEKS: str = "weeks"  # n weeks: the week of the day shown on top and the weeks after it, below (D-352)
 AGENDA: str = "agenda"
 VIEWS: tuple[tuple[str, str], ...] = (
-    (DAY, "Day"), (WORK_WEEK, "Work Week"), (WEEK, "Week"), (UPCOMING, "Upcoming"), (MONTH, "Month"), (WEEKS, "Weeks"), (AGENDA, "Agenda"),
+    (DAY, "Day"), (WORK_WEEK, "Work Week"), (WEEK, "Week"), (MONTH, "Month"), (WEEKS, "Weeks"), (UPCOMING, "Upcoming"), (AGENDA, "Agenda"),
 )
 UPCOMING_DAYS: int = 7  # Settings > Calendar's Number of days in Upcoming: its default and its limits (D-352)
 UPCOMING_LIMITS: tuple[int, int] = (2, 14)
