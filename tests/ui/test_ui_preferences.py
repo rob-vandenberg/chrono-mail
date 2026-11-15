@@ -23,9 +23,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.4.590"
+__version__ = "test_ui_preferences.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: Settings has the Calendar page, after Tags (D-352)
 # v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
 # v4.4.586: Favorites has All messages after All Inboxes (D-334)
 # v4.2.479: the header tests of long lists of names, of a narrower pane and of a sender too wide to wrap unfold the header first (folded,
@@ -103,7 +104,7 @@ def test_every_page_exists_and_the_values_round_trip(world: World, qtbot: QtBot)
     dialog = SettingsDialog(world.backend, settings_of(world), SettingsContext(tray_available=True, shortcut_actions=world.window._shortcut_registry()))  # noqa: SLF001
     qtbot.addWidget(dialog)
     assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == [
-        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Accounts", "Rules", "Tags", "Scheduled messages", "Operations window",
+        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Accounts", "Rules", "Tags", "Calendar", "Scheduled messages", "Operations window",
         "Security and storage", "Keyboard",
     ]
     chosen = dialog.chosen()

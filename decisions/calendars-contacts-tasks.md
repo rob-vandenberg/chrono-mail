@@ -68,3 +68,4 @@ See also: [[sync-conflicts]]
 - [[D-346]] An account and a calendar are named by what the person and Google know
 - [[D-347]] The Calendar's Tags list holds only the tags of the ticked calendars
 - [[D-348]] A server's lasting "no" to an item is said once; a passing failure of Google's colours is said only when it lasts
+- [[D-352]] Settings > Calendar and the n weeks view

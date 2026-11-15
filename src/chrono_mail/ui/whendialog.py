@@ -3,13 +3,15 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QDate, QDateTime, QTime
 from PySide6.QtWidgets import QCheckBox, QDateTimeEdit, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QWidget
 
+from chrono_mail.ui import weekstart
 from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "whendialog.py 4.0.377"
+__version__ = "whendialog.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.0.377: built from its Qt Designer form (ui/forms/send_later.ui, D-276), the quick choices at their place; the Tab order follows the
 #           window from top to bottom (the date came before the quick choices)
 # v1.1.207: show_current: opens on the time, interval and end a scheduled message has now (D-177)
@@ -49,6 +51,7 @@ class WhenDialog(QDialog):
         part(form, QLabel, "question").setText(question)
         self.edit: QDateTimeEdit = part(form, QDateTimeEdit, "edit")
         self.edit.setCalendarPopup(True)
+        weekstart.follow(self.edit)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.edit.setDisplayFormat("yyyy-MM-dd HH:mm")
         tomorrow = presets(moment)[-2][1]
         self.edit.setDateTime(to_qt(tomorrow))
@@ -60,6 +63,7 @@ class WhenDialog(QDialog):
         self.until_box: QCheckBox = part(form, QCheckBox, "untilBox")
         self.until: QDateTimeEdit = part(form, QDateTimeEdit, "until")
         self.until.setCalendarPopup(True)
+        weekstart.follow(self.until)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.until.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.until.setDateTime(to_qt(moment + timedelta(days=30)))
         for spin, maximum in ((self.months, 120), (self.weeks, 520), (self.days, 3650)):

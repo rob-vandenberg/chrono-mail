@@ -3,7 +3,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import override
 
-from PySide6.QtCore import Signal, SignalInstance, QDate, QEvent, QLocale, QPoint, QRect, QSettings, Qt, QTimer
+from PySide6.QtCore import Signal, SignalInstance, QDate, QEvent, QPoint, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFontMetrics, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -50,13 +50,17 @@ from chrono_mail.ui.splitter import SideSplitter
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.toolbar import view_button
+from chrono_mail.ui import weekstart
+from chrono_mail.ui.prefs import Preferences, read_preferences
 from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.615"
+__version__ = "calendarview.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: Settings > Calendar (D-352): the n weeks view (named by its weeks), Upcoming of a chosen number of days from the day shown (the
+#           arrows move by them), week numbers, short events as 30 minutes, past events less bright, Start week on (also the small month)
 # v4.4.615: the delete question of an appointment is plain, and says that one of a server goes there too; no store directory or days (OR-18)
 # v4.4.611: Tab goes left to right through the whole header row, Show declined before Hide past events (the owner)
 # v4.4.610: Today stands in front of the arrows, and Tab goes Today, ‹, › (the owner)
@@ -113,6 +117,7 @@ VIEW_ICONS: dict[str, str] = {
     layout.WEEK: "view-calendar-week",
     layout.UPCOMING: "view-calendar-upcoming-days",
     layout.MONTH: "view-calendar-month",
+    layout.WEEKS: "view-calendar-upcoming-events",
     layout.AGENDA: "view-calendar-agenda",
 }
 CUT_WARNING: str = "not every event of these days is shown (a calendar has more than the program takes in)"
@@ -140,7 +145,7 @@ class RangeCalendar(QCalendarWidget):
         self.setNavigationBarVisible(True)
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames)
-        self.setFirstDayOfWeek(QLocale().firstDayOfWeek())
+        self.setFirstDayOfWeek(weekstart.first_day())  # Settings > Calendar's Start week on (D-352)
         self.setFixedHeight(190)
         self.setMinimumWidth(240)  # its own wish (266) kept the whole sidebar wide, in every section
         self._fit_columns()
@@ -219,7 +224,12 @@ class CalendarPage(PimPage):
         self._day_shown: date = self.anchor  # the today the shown days were asked with; another day after midnight is asked again
         self.entries: list[Entry] = []
         self.selected: Entry | None = None
-        self.first_weekday: int = QLocale().firstDayOfWeek().value - 1
+        self.first_weekday: int = weekstart.first_weekday()  # Settings > Calendar's Start week on (D-352)
+        chosen = read_preferences(settings)
+        self.upcoming_days: int = chosen.calendar_upcoming_days  # the other choices of Settings > Calendar (D-352), taken in by take_in
+        self.weeks: int = chosen.calendar_custom_weeks
+        self.week_numbers: bool = chosen.calendar_week_numbers
+        self.dim_past: bool = chosen.calendar_dim_past
         self.zone = local_zone()  # the named zone (Europe/Amsterdam): events past a daylight-saving change keep their hour (RV-15)
         self.hide_past: bool = str(settings.value("calendar_hide_past", "false")).lower() == "true"
         self.show_hidden: bool = str(settings.value("calendar_show_hidden", "false")).lower() == "true"
@@ -276,6 +286,7 @@ class CalendarPage(PimPage):
         nav_layout.addWidget(self.hidden_button)
         nav_layout.addWidget(self.past_button)
         self.grid = TimeGridPanel()
+        self.grid.canvas.minimum_minutes = layout.SHORT_AS_HALF_HOUR if chosen.calendar_short_as_half_hour else layout.MINIMUM_MINUTES  # D-352
         self.month = MonthView()
         self.agenda = AgendaView()
         self.stack = QStackedWidget()
@@ -295,8 +306,8 @@ class CalendarPage(PimPage):
         group.setExclusive(True)
         self.views_button = view_button()  # the views merged into one, when the toolbar is narrow
         views_menu = QMenu(self.views_button)
-        for name, label in layout.VIEWS:
-            action = QAction(theme_icon(VIEW_ICONS[name]), label, self.toolbar)
+        for name, _ in layout.VIEWS:
+            action = QAction(theme_icon(VIEW_ICONS[name]), self._view_label(name), self.toolbar)
             action.setCheckable(True)
             action.setChecked(name == self.view)
             action.triggered.connect(lambda checked=False, chosen=name: self.set_view(chosen))
@@ -330,7 +341,7 @@ class CalendarPage(PimPage):
         self.today_button.clicked.connect(self._goto_today)
         self.day_watch.looked.connect(self._look)
         self.tag_filter.chosen.connect(self._tag_chosen)
-        self.panel.month_shown = lambda: self.view == layout.MONTH  # the Fill colour tick shows only then (the owner, D-297)
+        self.panel.month_shown = lambda: self.view in (layout.MONTH, layout.WEEKS)  # the Fill colour tick shows only then (the owner, D-297); n weeks is drawn as Month
         self.past_button.toggled.connect(self._past_toggled)
         self.hidden_button.toggled.connect(self._hidden_toggled)
         self.mini.clicked.connect(self._mini_clicked)
@@ -396,9 +407,35 @@ class CalendarPage(PimPage):
         self.reload()
 
     def _tick(self) -> None:
-        """Every minute: the line of the present moment moves."""
+        """Every minute: the line of the present moment moves; with past events less bright, one that has just ended is drawn so (D-352)."""
         self.grid.canvas.now = datetime.now(self.zone)
         self.grid.canvas.update()
+        if self.dim_past and any(entry.past != self._is_past(entry, self.grid.canvas.now) for entry in self.entries):
+            self._recolour()
+
+    def _is_past(self, entry: Entry, now: datetime) -> bool:
+        return self.dim_past and entry.end <= now
+
+    def take_in(self, chosen: Preferences) -> None:
+        """Settings > Calendar's choices taken into use (Settings OK, D-352): the days asked again only when the days shown change."""
+        days_before = (self.first_weekday, self.upcoming_days, self.weeks)
+        self.first_weekday = weekstart.first_weekday()
+        self.mini.setFirstDayOfWeek(weekstart.first_day())
+        self.upcoming_days = chosen.calendar_upcoming_days
+        self.weeks = chosen.calendar_custom_weeks
+        self.week_numbers = chosen.calendar_week_numbers
+        self.dim_past = chosen.calendar_dim_past
+        self.grid.canvas.minimum_minutes = layout.SHORT_AS_HALF_HOUR if chosen.calendar_short_as_half_hour else layout.MINIMUM_MINUTES
+        self.view_actions[layout.WEEKS].setText(self._view_label(layout.WEEKS))
+        self._show_chosen_view()
+        if (self.first_weekday, self.upcoming_days, self.weeks) != days_before:
+            self.reload()
+        else:
+            self._recolour()  # the same days: drawn again with the new look, nothing fetched
+
+    def _view_label(self, name: str) -> str:
+        """A view's name; n weeks is named by its number of weeks ("4 weeks")."""
+        return f"{self.weeks} weeks" if name == layout.WEEKS else dict(layout.VIEWS)[name]
 
     def _today(self) -> date:
         return date.fromisoformat(self.day_watch.day)
@@ -420,6 +457,8 @@ class CalendarPage(PimPage):
 
     def set_view(self, name: str) -> None:
         self.view = name
+        if name in (layout.UPCOMING, layout.WEEKS):
+            self.anchor = self._today()  # they start at today when chosen; the arrows move them from there (D-352)
         self._settings.setValue("calendar_view", name)
         self.view_actions[name].setChecked(True)
         self._show_chosen_view()
@@ -429,11 +468,11 @@ class CalendarPage(PimPage):
 
     def _show_chosen_view(self) -> None:
         """The merged button shows the view that is chosen: its icon and its name."""
-        self.views_button.setText(dict(layout.VIEWS)[self.view])
+        self.views_button.setText(self._view_label(self.view))
         self.views_button.setIcon(theme_icon(VIEW_ICONS[self.view]))
 
     def _apply_view(self) -> None:
-        self.stack.setCurrentIndex({layout.MONTH: 1, layout.AGENDA: 2}.get(self.view, 0))
+        self.stack.setCurrentIndex({layout.MONTH: 1, layout.WEEKS: 1, layout.AGENDA: 2}.get(self.view, 0))  # n weeks is drawn by Month's grid
         self.past_button.setVisible(self.view == layout.AGENDA)
 
     def goto(self, day: date) -> None:
@@ -441,7 +480,7 @@ class CalendarPage(PimPage):
         self.reload()
 
     def step(self, direction: int) -> None:
-        self.anchor = layout.step(self.view, self.anchor, direction)
+        self.anchor = layout.step(self.view, self.anchor, direction, self.upcoming_days, self.weeks)
         self.reload()
 
     def _mini_clicked(self, day: QDate) -> None:
@@ -456,13 +495,13 @@ class CalendarPage(PimPage):
         self.reload()
 
     def days(self) -> list[date]:
-        return layout.days_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
+        return layout.days_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, None, self.upcoming_days, self.weeks)  # Upcoming from the day shown (D-352)
 
     def reload(self, quiet: bool = False) -> None:
         """The days of the view asked again; quiet: a failure says nothing (the look after midnight, tried again at the next look)."""
         visible = set(self.panel.visible_ids())
         today = self._today()
-        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, today)
+        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, None, self.upcoming_days, self.weeks)
         self._generation += 1
         generation = self._generation
         self.title.setText(layout.title_for(self.view, self.anchor, self.days()))
@@ -536,11 +575,13 @@ class CalendarPage(PimPage):
         days = self.days()
         today = self._today()
         now = datetime.now(self.zone)
-        if self.view == layout.MONTH:
-            self.month.set_data(days, self.entries, self.anchor.month, today, self.first_weekday)
+        if self.view in (layout.MONTH, layout.WEEKS):
+            self.month.week_numbers = self.week_numbers
+            self.month.set_data(days, self.entries, self.anchor.month if self.view == layout.MONTH else 0, today, self.first_weekday)
         elif self.view == layout.AGENDA:
             self.agenda.set_data(layout.agenda_groups(self.entries, days, self.hide_past, now), today, keep, self.selected)
         else:
+            self.grid.header.week_number = layout.week_number(days) if self.week_numbers and self.view in (layout.DAY, layout.WORK_WEEK, layout.WEEK) else 0
             self.grid.header.set_data(days, self.entries, today)
             self.grid.canvas.now = now
             self.grid.canvas.set_data(days, self.entries, self.zone, today)
@@ -576,6 +617,7 @@ class CalendarPage(PimPage):
         """The entries in their colours: the colour of their first tag (D-329), else as the calendars' palettes are now (D-191), a cancelled one grey
         (D-316), and whether Month fills their timed ones (D-297)."""
         coloured: list[Entry] = []
+        now = datetime.now(self.zone)
         for entry in entries:
             calendar = self.panel.info(entry.row.collection)
             if entry.row.hidden or entry.row.cancelled:
@@ -585,7 +627,8 @@ class CalendarPage(PimPage):
             else:
                 colour = colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
             tags = tuple((self.colours.shown(name), self.colours.colour(name).name()) for name in entry.row.tags)  # each as it is shown (D-341)
-            coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background, tag_colours=tags))
+            coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background, tag_colours=tags,
+                                                past=self._is_past(entry, now)))  # less bright once ended, when Settings > Calendar asks (D-352)
         return coloured
 
     def _recolour(self) -> None:
@@ -695,7 +738,7 @@ class CalendarPage(PimPage):
             return
         if self._title_waiting(entry):  # its clock shows: the server has not answered the title before (D-146, D-325)
             return
-        for widget in (self.grid.header, self.grid.canvas) if self.view != layout.MONTH else (self.month,):
+        for widget in (self.grid.header, self.grid.canvas) if self.view not in (layout.MONTH, layout.WEEKS) else (self.month,):
             if widget.edit_title(entry):
                 if widget is self.grid.canvas and widget.title_editor is not None:
                     self.grid.area.ensureWidgetVisible(widget.title_editor)  # F2 on an event scrolled out of sight
@@ -885,7 +928,7 @@ class CalendarPage(PimPage):
                 self._show_data(keep=True)
         if kind == "item_removed" or target not in set(self.panel.visible_ids()):
             return
-        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, self._today())
+        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, None, self.upcoming_days, self.weeks)
         generation = self._generation
         self._fetches += 1
         number = self._fetches

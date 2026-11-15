@@ -24,6 +24,7 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_addressbook import CONTACT_ADD, CONTACT_EDIT, ContactInfo
 from chrono_mail.engine.commands_addressbook import AddParameters as ContactAdd
 from chrono_mail.engine.commands_addressbook import EditParameters as ContactEdit
+from chrono_mail.ui import weekstart
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
@@ -33,9 +34,10 @@ from chrono_mail.ui.tagbox import TagBox, TagEditing
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 4.4.581"
+__version__ = "contacteditor.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Contacts,
 #           Remove tag and Delete; no radio buttons, a tag colours no contact (the owner, D-332)
 # v4.0.378: the contact editor, a list of addresses or numbers, one entry of it and one address are built from their Qt Designer forms
@@ -203,6 +205,7 @@ class ContactEditor(QDialog):
         self.has_birthday: QCheckBox = part(form, QCheckBox, "hasBirthday")
         self.birthday: QDateEdit = part(form, QDateEdit, "birthday")
         self.birthday.setCalendarPopup(True)
+        weekstart.follow(self.birthday)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.birthday.setDisplayFormat("yyyy-MM-dd")
         self.birthday.setDate(QDate(1980, 1, 1))
         self.birthday.setEnabled(False)

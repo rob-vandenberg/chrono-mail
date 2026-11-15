@@ -16,7 +16,7 @@ from chrono_mail.engine.commands_updates import interrupt_downloads
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
 from chrono_mail.engine.commands_schedule import ScheduledInfo
-from chrono_mail.ui import appearance, scale, theme
+from chrono_mail.ui import appearance, scale, theme, weekstart
 from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
 from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.certificatequestions import questions_for
@@ -73,9 +73,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.615"
+__version__ = "mainwindow.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: Settings > Calendar's choices taken into use: Start week on for every date field, the rest by the Calendar section (D-352)
 # v4.4.615: A section switch from the folder list takes the focus to the new sidebar itself, so hiding the old one no longer
 #           hands it to the message list, which opened its first message (D-334, OR-16); the recovery docstring names Menu > File
 # v4.4.615: The start erases the appointments, contacts and tasks deleted over 30 days ago (pim.purge-deleted, D-072)
@@ -377,6 +378,7 @@ class MainWindow(QMainWindow):
         self.settings: QSettings = settings
         self.memory: Remembered = Remembered(settings)  # what the window keeps by itself between starts (R-12)
         self.prefs: InUse = InUse(settings)  # the settings the window has in use: Settings OK applies what differs (R-13)
+        weekstart.choose(self.prefs.applied.calendar_week_start)  # before any calendar or date field is made (D-352)
         self.mail_state: MailState = MailState()
         self.setWindowTitle("Chrono Mail")
         self.setWindowIcon(application_icon())
@@ -1323,6 +1325,12 @@ class MainWindow(QMainWindow):
             if not after.show_tags and self.mail_state.view.tag is not None:
                 self.mail_tags.choose("")
             self.mail_tags.setVisible(after.show_tags)
+        calendar_choices = ("calendar_upcoming_days", "calendar_custom_weeks", "calendar_week_numbers", "calendar_short_as_half_hour", "calendar_dim_past",
+                            "calendar_week_start")
+        calendar_page = self.pages[CALENDAR]
+        if differ(*calendar_choices) and isinstance(calendar_page, CalendarPage):  # Settings > Calendar (D-352)
+            weekstart.choose(after.calendar_week_start)
+            calendar_page.take_in(after)
         if differ("show_favorites", "show_local_folders") and self.mail_state.accounts:
             self.folders.lay_out()  # the sections of the folder list follow the settings
 

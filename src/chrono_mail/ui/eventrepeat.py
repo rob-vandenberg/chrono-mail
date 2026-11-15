@@ -5,13 +5,15 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QDateEdit, QDialog, QDialogB
 
 from chrono_mail.pim.repeat import UNITS, WEEKDAYS, CustomRepeat, custom_of, rule_of
 from chrono_mail.pim.times import local_zone
+from chrono_mail.ui import weekstart
 from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventrepeat.py 4.4.535"
+__version__ = "eventrepeat.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.535: Initial version: the Custom repeat of an event (round 4)
 
 MOST_TIMES: int = 9999  # the fields need an end; the rule itself has none
@@ -43,6 +45,7 @@ class RepeatDialog(QDialog):
         self.ends_after: QRadioButton = part(form, QRadioButton, "endsAfter")
         self.end_date: QDateEdit = part(form, QDateEdit, "endDate")
         self.end_date.setCalendarPopup(True)
+        weekstart.follow(self.end_date)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.end_date.setDisplayFormat("yyyy-MM-dd")
         last = custom.until or day
         self.end_date.setDate(QDate(last.year, last.month, last.day))

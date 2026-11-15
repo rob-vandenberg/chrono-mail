@@ -24,13 +24,15 @@ from PySide6.QtWidgets import (
 from chrono_mail.pim.times import in_local_zone
 from chrono_mail.engine.commands_calendar import MOST_REMINDERS, ReminderInfo
 from chrono_mail.core.words import counted
+from chrono_mail.ui import weekstart
 from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventreminders.py 4.4.548"
+__version__ = "eventreminders.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.548: keep_room_for_the_widest_row: a row that is only measured is never in a window, so no row can stay behind in an open task editor; a row ends with its last reference
 # v4.4.547: the task editor uses these rows too: in a task a row can be at a set time, and without a due date the rows counted from it are greyed with a hover text (D-316)
 # v4.4.536: Initial version: the reminders of an event, each Notification or Email, a number and a unit (round 4)
@@ -122,6 +124,7 @@ class ReminderRow(QWidget):
             self.unit.addItem(name, minutes)
         self.date: QDateEdit = part(form, QDateEdit, "date")
         self.date.setCalendarPopup(True)
+        weekstart.follow(self.date)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.date.setDisplayFormat("yyyy-MM-dd")
         self.time: QTimeEdit = part(form, QTimeEdit, "time")
         self.time.setDisplayFormat("HH:mm")

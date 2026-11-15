@@ -4,9 +4,11 @@ from datetime import date, datetime, timedelta, tzinfo
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarlayout.py 4.4.573"
+__version__ = "calendarlayout.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The n weeks view (the week of the day shown on top, n rows); Upcoming starts at the day shown and has a chosen number of days;
+#           the arrows move by them; the week number of a row; a short event's length chosen; an entry knows whether it is past (D-352)
 # v4.4.573: An entry knows its tags with their colours, for the tag icons and the hover text (D-329)
 # v4.2.438: Entry.filled: Month draws a timed event in its colour (UR-02, D-297)
 # v2.0.307: A condition that gave the same last day either way removed (SonarQube Cloud, D-237)
@@ -18,12 +20,18 @@ WORK_WEEK: str = "work_week"
 WEEK: str = "week"
 UPCOMING: str = "upcoming"
 MONTH: str = "month"
+WEEKS: str = "weeks"  # n weeks: the week of the day shown on top and the weeks after it, below (D-352)
 AGENDA: str = "agenda"
 VIEWS: tuple[tuple[str, str], ...] = (
-    (DAY, "Day"), (WORK_WEEK, "Work Week"), (WEEK, "Week"), (UPCOMING, "Upcoming"), (MONTH, "Month"), (AGENDA, "Agenda"),
+    (DAY, "Day"), (WORK_WEEK, "Work Week"), (WEEK, "Week"), (UPCOMING, "Upcoming"), (MONTH, "Month"), (WEEKS, "Weeks"), (AGENDA, "Agenda"),
 )
+UPCOMING_DAYS: int = 7  # Settings > Calendar's Number of days in Upcoming: its default and its limits (D-352)
+UPCOMING_LIMITS: tuple[int, int] = (2, 14)
+CUSTOM_WEEKS: int = 4  # Settings > Calendar's Set custom view: its default and its limits (D-352)
+WEEKS_LIMITS: tuple[int, int] = (2, 6)
 MINUTES: int = 24 * 60
 MINIMUM_MINUTES: int = 25  # a very short event is drawn at least this long, to be seen and clicked
+SHORT_AS_HALF_HOUR: int = 30  # Settings > Calendar's "Display shorter events the same size as 30 minute events" (D-352)
 AGENDA_DAYS: int = 60
 
 
@@ -39,6 +47,7 @@ class Entry:
     colour: str = ""
     filled: bool = False  # Month shows it, timed, in its colour with a dot, as an all-day one; its account's choice (D-297)
     tag_colours: tuple[tuple[str, str], ...] = ()  # its tags with their colours (#rrggbb), the colour tag first (D-329)
+    past: bool = False  # it has ended and Settings > Calendar dims past events: drawn less bright in every view (D-352)
 
     @property
     def first_day(self) -> date:
@@ -87,8 +96,10 @@ def week_start(day: date, first_weekday: int) -> date:
     return day - timedelta(days=(day.weekday() - first_weekday) % 7)
 
 
-def days_of(view: str, anchor: date, first_weekday: int = 0, work_days: tuple[int, ...] = (0, 1, 2, 3, 4), today: date | None = None) -> list[date]:
-    """The days that are shown as columns (day, week views) or in the grid (month: six weeks)."""
+def days_of(view: str, anchor: date, first_weekday: int = 0, work_days: tuple[int, ...] = (0, 1, 2, 3, 4), today: date | None = None,
+            upcoming_days: int = UPCOMING_DAYS, weeks: int = CUSTOM_WEEKS) -> list[date]:
+    """The days that are shown as columns (day, week views) or in the grid (month: six weeks; n weeks: the week of the anchor on top).
+    Upcoming starts at today when it is given, else at the anchor (the window gives the anchor: the arrows move it, D-352)."""
     if view == DAY:
         return [anchor]
     if view in (WEEK, WORK_WEEK):
@@ -97,24 +108,32 @@ def days_of(view: str, anchor: date, first_weekday: int = 0, work_days: tuple[in
         return [day for day in days if day.weekday() in work_days] if view == WORK_WEEK and work_days else days
     if view == UPCOMING:
         start = today or anchor
-        return [start + timedelta(days=offset) for offset in range(7)]
+        return [start + timedelta(days=offset) for offset in range(upcoming_days)]
     if view == MONTH:
         first = week_start(date(anchor.year, anchor.month, 1), first_weekday)
         return [first + timedelta(days=offset) for offset in range(42)]
+    if view == WEEKS:
+        first = week_start(anchor, first_weekday)
+        return [first + timedelta(days=offset) for offset in range(7 * weeks)]
     return [anchor + timedelta(days=offset) for offset in range(AGENDA_DAYS)]
 
 
-def range_of(view: str, anchor: date, first_weekday: int = 0, work_days: tuple[int, ...] = (0, 1, 2, 3, 4), today: date | None = None) -> tuple[date, date]:
+def range_of(view: str, anchor: date, first_weekday: int = 0, work_days: tuple[int, ...] = (0, 1, 2, 3, 4), today: date | None = None,
+             upcoming_days: int = UPCOMING_DAYS, weeks: int = CUSTOM_WEEKS) -> tuple[date, date]:
     """The days to ask the commands for: from the first day, up to (not including) the day after the last."""
-    days = days_of(view, anchor, first_weekday, work_days, today)
+    days = days_of(view, anchor, first_weekday, work_days, today, upcoming_days, weeks)
     return days[0], days[-1] + timedelta(days=1)
 
 
-def step(view: str, anchor: date, direction: int) -> date:
-    """The anchor after pressing next (1) or previous (-1)."""
+def step(view: str, anchor: date, direction: int, upcoming_days: int = UPCOMING_DAYS, weeks: int = CUSTOM_WEEKS) -> date:
+    """The anchor after pressing next (1) or previous (-1): Upcoming moves its number of days, n weeks its weeks (D-352)."""
     if view == DAY:
         return anchor + timedelta(days=direction)
-    if view in (WEEK, WORK_WEEK, UPCOMING):
+    if view == UPCOMING:
+        return anchor + timedelta(days=upcoming_days * direction)
+    if view == WEEKS:
+        return anchor + timedelta(days=7 * weeks * direction)
+    if view in (WEEK, WORK_WEEK):
         return anchor + timedelta(days=7 * direction)
     if view == MONTH:
         month = anchor.month - 1 + direction
@@ -123,6 +142,11 @@ def step(view: str, anchor: date, direction: int) -> date:
         last = (date(year + (month // 12), month % 12 + 1, 1) - timedelta(days=1)).day
         return date(year, month, min(anchor.day, last))
     return anchor + timedelta(days=AGENDA_DAYS * direction)
+
+
+def week_number(days: list[date]) -> int:
+    """The ISO week number of a row of days: that of its Thursday (the day ISO counts a week by), else of its first day (D-352)."""
+    return next((day for day in days if day.weekday() == 3), days[0]).isocalendar().week
 
 
 def title_for(view: str, anchor: date, days: list[date]) -> str:
@@ -157,9 +181,9 @@ class Segment:
     columns: int = 1
 
 
-def day_segments(entries: list[Entry], day: date, zone: tzinfo) -> list[Segment]:
+def day_segments(entries: list[Entry], day: date, zone: tzinfo, minimum: int = MINIMUM_MINUTES) -> list[Segment]:
     """The timed events (not the all-day ones) on a day, each cut to the day, with the column it is drawn in and how many columns its group has, so that
-    events that overlap in time stand side by side."""
+    events that overlap in time stand side by side. A shorter event is drawn `minimum` minutes long (D-352)."""
     begin = datetime(day.year, day.month, day.day, tzinfo=zone)
     finish = begin + timedelta(days=1)
     parts: list[Segment] = []
@@ -172,8 +196,8 @@ def day_segments(entries: list[Entry], day: date, zone: tzinfo) -> list[Segment]
         end = min(entry.end, finish)
         first = int((start - begin).total_seconds() // 60)
         last = int((end - begin).total_seconds() // 60)
-        last = max(last, first + MINIMUM_MINUTES)
-        parts.append(Segment(entry, first, min(last, MINUTES + MINIMUM_MINUTES), entry.start < begin, entry.end > finish))
+        last = max(last, first + minimum)
+        parts.append(Segment(entry, first, min(last, MINUTES + minimum), entry.start < begin, entry.end > finish))
     return pack(parts)
 
 

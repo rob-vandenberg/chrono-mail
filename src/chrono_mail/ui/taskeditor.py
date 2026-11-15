@@ -24,6 +24,7 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_tasklist import TASK_ADD, TASK_EDIT, TaskInfo
 from chrono_mail.engine.commands_tasklist import AddParameters as TaskAdd
 from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
+from chrono_mail.ui import weekstart
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.collectionpanel import grey_read_only
@@ -35,9 +36,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.581"
+__version__ = "taskeditor.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Tasks,
 #           Remove tag and Delete; no radio buttons, a tag colours no task (the owner, D-332)
 # v4.4.569: The List field of a new task greys a read-only task list, with why (D-326)
@@ -74,6 +76,7 @@ class DateField(QWidget):
         self.enabled.setText(label)
         self.stamp: QDateTimeEdit = part(form, QDateTimeEdit, "stamp")
         self.stamp.setCalendarPopup(True)
+        weekstart.follow(self.stamp)  # its weeks start on the day Settings > Calendar chose (D-352)
         self.stamp.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.stamp.setDateTime(QDateTime.currentDateTime())
         self.all_day: QCheckBox = part(form, QCheckBox, "allDay")

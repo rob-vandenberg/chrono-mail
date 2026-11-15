@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsCalendar</class>
+ <widget class="QWidget" name="SettingsCalendar">
+  <layout class="QFormLayout" name="form">
+   <property name="fieldGrowthPolicy">
+    <enum>QFormLayout::FieldsStayAtSizeHint</enum>
+   </property>
+   <item row="0" column="0" colspan="2">
+    <widget class="QCheckBox" name="weekNumbers">
+     <property name="text">
+      <string>Show week numbers</string>
+     </property>
+     <property name="toolTip">
+      <string>The week number at the start of every row in Month and the custom view, and above the days in Day and Week</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QCheckBox" name="shortAsHalfHour">
+     <property name="text">
+      <string>Display shorter events the same size as 30 minute events</string>
+     </property>
+     <property name="toolTip">
+      <string>In Day, Work Week, Week and Upcoming an event shorter than 30 minutes is drawn as tall as one of 30 minutes</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QCheckBox" name="dimPast">
+     <property name="text">
+      <string>Reduce the brightness of past events</string>
+     </property>
+     <property name="toolTip">
+      <string>An event that has ended is drawn less bright in every view</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="weekStartLabel">
+     <property name="text">
+      <string>Start week on:</string>
+     </property>
+     <property name="buddy">
+      <cstring>weekStart</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="QComboBox" name="weekStart">
+     <property name="toolTip">
+      <string>The first day of every week in the calendar and in every date picker; System default follows your computer's language and region</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="customWeeksLabel">
+     <property name="text">
+      <string>Set custom view:</string>
+     </property>
+     <property name="buddy">
+      <cstring>customWeeks</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="QSpinBox" name="customWeeks">
+     <property name="suffix">
+      <string> weeks</string>
+     </property>
+     <property name="toolTip">
+      <string>The weeks the custom view shows: the week of today at the top, the weeks after it below</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0">
+    <widget class="QLabel" name="upcomingDaysLabel">
+     <property name="text">
+      <string>Number of days in Upcoming:</string>
+     </property>
+     <property name="buddy">
+      <cstring>upcomingDays</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="1">
+    <widget class="QSpinBox" name="upcomingDays">
+     <property name="suffix">
+      <string> days</string>
+     </property>
+     <property name="toolTip">
+      <string>The days Upcoming shows side by side, today first</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

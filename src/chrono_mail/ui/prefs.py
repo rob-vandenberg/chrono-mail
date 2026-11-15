@@ -5,14 +5,18 @@ from dataclasses import dataclass, field, fields
 from PySide6.QtCore import QSettings
 
 from chrono_mail.core.colours import accent_value
+from chrono_mail.ui import calendarlayout
 from chrono_mail.ui.columns import valid_columns
 from chrono_mail.ui.scale import STANDARD, clamp
+from chrono_mail.ui.weekstart import WEEK_STARTS
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.4.585"
+__version__ = "prefs.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: Settings > Calendar: the days of Upcoming, the weeks of the custom view, week numbers, short events as 30 minutes, past events
+#           less bright, Start week on (D-352)
 # v4.4.585: Comments: tags are a block below the folder list, no entries in it (D-334)
 # v4.4.562: secondary_sort: messages with the same value by when they were received, newest (the default) or oldest first (D-320)
 # v4.4.510: send_invitation_answers gone: the choice is per account now (D-310)
@@ -107,6 +111,13 @@ DEFAULTS: dict[str, object] = {
     "warn_no_subject": True,
     "startup_view": "",  # Show on startup (StartupView): "" the last selected folder, "mail\taccount\tkind\tpath" or "section\tname"
     "shortcuts": "{}",  # the keys the person chose, JSON: action name -> key sequence text
+    # calendar (D-352)
+    "calendar_upcoming_days": calendarlayout.UPCOMING_DAYS,  # the days Upcoming shows, from left to right
+    "calendar_custom_weeks": calendarlayout.CUSTOM_WEEKS,  # the weeks the n weeks view shows, from top to bottom
+    "calendar_week_numbers": False,  # the week number at each row of Month and n weeks, and above Day and Week
+    "calendar_short_as_half_hour": False,  # an event shorter than 30 minutes drawn as one of 30
+    "calendar_dim_past": False,  # an event that has ended drawn less bright
+    "calendar_week_start": "system",  # Start week on: system (the language and region's), saturday, sunday or monday
 }
 COLOR_SCHEMES: tuple[str, ...] = ("system", "light", "dark")
 LIST_LAYOUTS: tuple[str, ...] = ("columns", "cards")
@@ -311,12 +322,20 @@ class Preferences:
     warn_no_subject: bool = True
     startup: StartupView = field(default_factory=StartupView)
     shortcuts: dict[str, str] = field(default_factory=dict[str, str])  # action name -> key sequence text ("" for none)
+    calendar_upcoming_days: int = calendarlayout.UPCOMING_DAYS
+    calendar_custom_weeks: int = calendarlayout.CUSTOM_WEEKS
+    calendar_week_numbers: bool = False
+    calendar_short_as_half_hour: bool = False
+    calendar_dim_past: bool = False
+    calendar_week_start: str = "system"
 
 
-_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999)}
+_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999),
+                                     "calendar_upcoming_days": calendarlayout.UPCOMING_LIMITS, "calendar_custom_weeks": calendarlayout.WEEKS_LIMITS}
 _CHOICES: dict[str, tuple[str, ...]] = {
     "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES, "secondary_sort": SECONDARY_SORTS,
     "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES, "scheduled_refresh": SCHEDULED_REFRESHES, "start_refresh": SCHEDULED_REFRESHES,
+    "calendar_week_start": WEEK_STARTS,
 }
 _KEY_OF: dict[str, str] = {"startup": "startup_view"}  # the field and its name in the settings file, where they differ
 
@@ -379,6 +398,12 @@ def read_preferences(settings: QSettings) -> Preferences:
         warn_no_subject=get_bool(settings, "warn_no_subject"),
         startup=StartupView.parse(str(settings.value("startup_view", "") or "")),
         shortcuts=shortcuts(settings),
+        calendar_upcoming_days=number("calendar_upcoming_days"),
+        calendar_custom_weeks=number("calendar_custom_weeks"),
+        calendar_week_numbers=get_bool(settings, "calendar_week_numbers"),
+        calendar_short_as_half_hour=get_bool(settings, "calendar_short_as_half_hour"),
+        calendar_dim_past=get_bool(settings, "calendar_dim_past"),
+        calendar_week_start=choice("calendar_week_start"),
     )
 
 

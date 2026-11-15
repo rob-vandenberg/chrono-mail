@@ -13,6 +13,7 @@ from chrono_mail.pim.times import in_local_zone, local_zone
 from chrono_mail.engine.commands_contacts import CONTACT_SUGGEST, Suggestion, SuggestParameters
 from chrono_mail.engine.commands_pim import CollectionSummary, TagInfo
 from chrono_mail.core import ChronoMailError
+from chrono_mail.ui import weekstart
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.engine.commands_calendar import EVENT_ADD, EVENT_EDIT, EventInfo
@@ -34,9 +35,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.602"
+__version__ = "eventeditor.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.602: Add tag… offers the tags of the appointment's Google calendar too, each as "Rood (Esther)"; one added is its colour tag (D-341)
 # v4.4.576: Every appointment opens ready to change; only one of a read-only calendar is just read, with the reason and Close; no Edit button (the owner)
 # v4.4.575: Opens 780 pixels wide in Qt's own units, then at the size it was closed at; a wider window widens the left column and the Tags box alike (D-329)
@@ -119,6 +121,7 @@ class EventEditor(QDialog):
         self.to_label: QLabel = part(form, QLabel, "toLabel")
         for day_field in (self.start_date, self.end_date):
             day_field.setCalendarPopup(True)
+            weekstart.follow(day_field)  # its weeks start on the day Settings > Calendar chose (D-352)
             day_field.setDisplayFormat(DATE_FORMAT)
         for time_field in (self.start_time, self.end_time):
             time_field.setDisplayFormat(TIME_FORMAT)

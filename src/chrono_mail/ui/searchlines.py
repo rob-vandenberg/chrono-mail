@@ -3,12 +3,14 @@ from collections.abc import Sequence
 from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import QComboBox, QDateEdit, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
+from chrono_mail.ui import weekstart
 from chrono_mail.ui.searchform import KINDS, MAXIMUM_TEXT, PARTS, DateChoice, SearchLine, example
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchlines.py 4.2.411"
+__version__ = "searchlines.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.2.411: the lines after the first start with AND or OR, in capitals; their hover texts call them conditions (the owner)
 # v4.2.410: Initial: the search lines of Advanced search (Where / and / or, where in the message, contains, how the words count, the
 #           words, [+] and [−]; the first line has no [−], its place kept so the buttons line up) and a date row (a span or fixed
@@ -165,6 +167,7 @@ class DateRow(QWidget):
         for day in (self.first_day, self.last_day):
             day.setDateRange(QDate(2, 1, 2), QDate(9998, 12, 30))  # every choice of them a day the search can ask for (D-259)
             day.setCalendarPopup(True)
+            weekstart.follow(day)  # its weeks start on the day Settings > Calendar chose (D-352)
             day.setDisplayFormat("yyyy-MM-dd")
             day.setDate(today)
             day.dateChanged.connect(self.changed)

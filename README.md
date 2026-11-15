@@ -861,11 +861,21 @@ The buttons at the top choose the view:
 1. **Day**: one day, hour by hour.
 2. **Work Week**: your working days.
 3. **Week**: seven days.
-4. **Upcoming**: the coming seven days, starting today.
+4. **Upcoming**: the coming days side by side, starting today; seven unless you choose another number.
 5. **Month**: the whole month.
-6. **Agenda**: a list of the coming 60 days. **Hide past events** hides what is over.
+6. **4 weeks** (named by its number of weeks): the week of today in the top row and the weeks after it below, so today is never at the bottom as it can be in Month.
+7. **Agenda**: a list of the coming 60 days. **Hide past events** hides what is over.
 
-Above the view, **Today** goes to today, and **‹** and **›** go back and forward. **Show declined** shows the invitations you declined, greyed (see [Invitations and meetings](#invitations-and-meetings)).
+Above the view, **Today** goes to today, and **‹** and **›** go back and forward (in Upcoming and the weeks view by their number of days or weeks).
+
+**Settings > Calendar** chooses how the views look:
+
+1. **Show week numbers**: the week number at each row of Month and the weeks view, and above the days in Day and Week.
+2. **Display shorter events the same size as 30 minute events**: a short event is drawn as tall as one of half an hour.
+3. **Reduce the brightness of past events**: what is over is drawn less bright, in every view.
+4. **Start week on**: System default (your computer's language and region), Saturday, Sunday or Monday; also for every date picker of Chrono Mail.
+5. **Set custom view**: the number of weeks of the weeks view, 2 to 6.
+6. **Number of days in Upcoming**: 2 to 14. **Show declined** shows the invitations you declined, greyed (see [Invitations and meetings](#invitations-and-meetings)).
 
 The mouse wheel goes through the months in Month, and through the periods when you point at the day names. Over the hours it scrolls; Ctrl and the wheel make the hours taller or shorter. After midnight every view follows the new day by itself.
 

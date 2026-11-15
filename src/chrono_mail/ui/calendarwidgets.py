@@ -20,9 +20,11 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.576"
+__version__ = "calendarwidgets.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: Month draws any number of weeks (the n weeks view, no other month greyed there); week numbers in Month, n weeks and the header
+#           of Day and Week; a short event drawn as long as chosen; a past event less bright in every view (D-352)
 # v4.4.576: Enter on a selected appointment opens it, in Day, Week, Month and Agenda (the owner)
 # v4.4.573: Every tag of an appointment as a small tag in its colour at the end of its title; hovering shows its title, from, to, calendar and tags (D-329)
 # v4.4.567: An event is known by its item and date, so it stays selected after a change; a title typed in place shows at once, with the clock until the server answers (D-325)
@@ -99,8 +101,18 @@ def paint_tags(painter: QPainter, rect: QRectF, y: float, height: float, entry: 
     return right
 
 
+PAST_AGENDA_OPACITY: float = 0.55  # a past line of the Agenda: the theme's own text colour, this opaque (D-352)
+PAST_SHARE: float = 0.5  # a past event, when Settings > Calendar dims them: this share of its colour, the rest the views' background (D-352)
+
+
 def fill_colour(entry: Entry) -> QColor:
-    return QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(NEW_CALENDAR)
+    """An event's colour; a past one mixed with the views' background, opaque, so the text colour is chosen against what is really drawn."""
+    colour = QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(NEW_CALENDAR)
+    if entry.past:
+        base = QColor(theme().roles["Base"][0])
+        colour = QColor(*(round(own * PAST_SHARE + behind * (1 - PAST_SHARE)) for own, behind in
+                          ((colour.red(), base.red()), (colour.green(), base.green()), (colour.blue(), base.blue()))))
+    return colour
 
 
 def no_mark(item: str) -> str:
@@ -538,12 +550,13 @@ class GridCanvas(EntryHits):
         self.today: date = date.today()
         self.now: datetime | None = None
         self.work_hours: tuple[int, int] = (8, 18)
+        self.minimum_minutes: int = layout.MINIMUM_MINUTES  # a shorter event is drawn this long (Settings > Calendar, D-352)
 
     def set_data(self, days: list[date], entries: list[Entry], zone: tzinfo, today: date) -> None:
         self.days = days
         self.zone = zone
         self.today = today
-        self.segments = {day: layout.day_segments(entries, day, zone) for day in days}
+        self.segments = {day: layout.day_segments(entries, day, zone, self.minimum_minutes) for day in days}
         self.selected = followed(self.selected, entries)
         self.setFixedHeight(24 * self.hour_height)
         self.update()
@@ -665,6 +678,7 @@ class DayHeader(EntryHits):
         self.days: list[date] = []
         self.bars: list[Bar] = []
         self.today: date = date.today()
+        self.week_number: int = 0  # the week number shown above "All day" (Settings > Calendar, D-352); 0: none
         self.setMinimumHeight(DAY_ROW + BAR_HEIGHT)
 
     def set_data(self, days: list[date], entries: list[Entry], today: date) -> None:
@@ -727,6 +741,8 @@ class DayHeader(EntryHits):
         label.setAlpha(150)
         painter.setPen(label)
         painter.drawText(QRect(0, DAY_ROW + 2, GUTTER - 6, BAR_HEIGHT), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "All day")
+        if self.week_number:
+            painter.drawText(QRect(0, 0, GUTTER - 6, DAY_ROW), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"Week {self.week_number}")
         self.hits = []
         self.mark_hits = []
         self.titles = []
@@ -744,7 +760,7 @@ class DayHeader(EntryHits):
 
 
 class MonthView(EntryHits):
-    """Six weeks of days as a grid; each day lists its events."""
+    """Weeks of days as a grid, one row per week (Month: six; n weeks: n); each day lists its events."""
 
     day_activated = Signal(object)
 
@@ -759,9 +775,11 @@ class MonthView(EntryHits):
         self.month: int = date.today().month
         self.today: date = date.today()
         self.first_weekday: int = 0
+        self.week_numbers: bool = False  # each row starts with its week number (Settings > Calendar, D-352)
         self.more: list[tuple[QRectF, date]] = []
 
     def set_data(self, days: list[date], entries: list[Entry], month: int, today: date, first_weekday: int) -> None:
+        """month: the month whose days are drawn as its own, the others quieter; 0 (n weeks): every day as its own."""
         self.days = days
         self.entries = entries
         self.month = month
@@ -770,15 +788,22 @@ class MonthView(EntryHits):
         self.selected = followed(self.selected, entries)
         self.update()
 
+    def _weeks(self) -> int:
+        return len(self.days) // 7
+
     def _cell_size(self) -> tuple[float, float]:
-        return self.width() / 7, max(40.0, (self.height() - 22) / 6)
+        return self.width() / 7, max(40.0, (self.height() - 22) / max(1, self._weeks()))
+
+    def _own(self, day: date) -> bool:
+        """A day of the month shown (n weeks: every day)."""
+        return not self.month or day.month == self.month
 
     @override
     def slot_at(self, position: QPointF) -> tuple[date, int] | None:
-        if len(self.days) < 42 or position.y() < 22:
+        if self._weeks() < 1 or position.y() < 22:
             return None
         width, height = self._cell_size()
-        column, row = min(6, int(position.x() // width)), min(5, int((position.y() - 22) // height))
+        column, row = min(6, int(position.x() // width)), min(self._weeks() - 1, int((position.y() - 22) // height))
         return self.days[row * 7 + column], -1
 
     @override
@@ -814,12 +839,12 @@ class MonthView(EntryHits):
         self.mark_hits = []
         self.titles = []
         self.more = []
-        if len(self.days) < 42:
+        if self._weeks() < 1:
             self.follow_title()
             painter.end()
             return
         line_height = QFontMetrics(small).height() + 2
-        for week in range(6):
+        for week in range(self._weeks()):
             week_days = self.days[week * 7 : week * 7 + 7]
             top = 22 + week * height
             week_bars = layout.bars(self.entries, week_days, include_timed_spanning=True)
@@ -832,7 +857,7 @@ class MonthView(EntryHits):
                     tint = QColor(palette.color(QPalette.ColorRole.Highlight))
                     tint.setAlpha(22)
                     painter.fillRect(cell, tint)
-                elif day.month != self.month:
+                elif not self._own(day):
                     dim = QColor(text)
                     dim.setAlpha(12)
                     painter.fillRect(cell, dim)
@@ -846,8 +871,11 @@ class MonthView(EntryHits):
                     painter.drawEllipse(QRectF(left + width - 24, top + 2, 20, 18))
                     painter.setPen(palette.color(QPalette.ColorRole.HighlightedText))
                 else:
-                    painter.setPen(text if day.month == self.month else quiet)
+                    painter.setPen(text if self._own(day) else quiet)
                 painter.drawText(QRectF(left, top + 2, width - 6, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(day.day) if day.day != 1 else f"{day.strftime('%b')} 1")
+                if column == 0 and self.week_numbers:
+                    painter.setPen(quiet)
+                    painter.drawText(QRectF(left + 5, top + 2, width / 2, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"Week {layout.week_number(week_days)}")
             room = int((height - 22) // line_height)
             for bar in week_bars:
                 if bar.row >= room:
@@ -886,7 +914,7 @@ class MonthView(EntryHits):
                     if selected:
                         painter.setBrush(QColor(palette.color(QPalette.ColorRole.Highlight)))
                         painter.drawRoundedRect(rect, 3, 3)
-                    line_colour = palette.color(QPalette.ColorRole.HighlightedText) if selected else text
+                    line_colour = palette.color(QPalette.ColorRole.HighlightedText) if selected else (quiet if entry.past else text)  # a past one less bright (D-352)
                     painter.setPen(line_colour)
                     mark_size = min(MARK_SIZE, line_height - 3)
                     mark_state = self.mark_for(entry)
@@ -929,6 +957,13 @@ class AgendaTags(QStyledItemDelegate):
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
         entry = index.data(Qt.ItemDataRole.UserRole)
+        painter.save()
+        if isinstance(entry, Entry) and entry.past and not _is_selected(option):
+            painter.setOpacity(PAST_AGENDA_OPACITY)  # a past line in the theme's text colour, less bright, drawn now: it follows the theme (D-352)
+        self._paint_line(painter, option, index, entry)
+        painter.restore()
+
+    def _paint_line(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex, entry: object) -> None:
         line = QStyleOptionViewItem(option)
         if isinstance(entry, Entry) and entry.tag_colours:  # the text stops before the tags (D-329)
             whole = QStyleOptionViewItem(option)
@@ -1006,7 +1041,10 @@ class AgendaView(QListWidget):
                 title = pending.title if pending is not None else entry.summary
                 item = QListWidgetItem(f"   {layout.time_text(entry):<14}{title}" + (f"   ·  {place}" if place else "") + f"   ({entry.row.calendar})")
                 item.setData(Qt.ItemDataRole.UserRole, entry)
-                item.setForeground(fill_colour(entry))
+                if entry.row.cancelled or entry.row.hidden:
+                    item.setForeground(QColor(entry.colour))  # its grey says cancelled or declined, also when past (then drawn less bright)
+                elif not entry.past:  # a past line keeps the theme's text colour, drawn less bright by AgendaTags (D-352)
+                    item.setForeground(fill_colour(entry))
                 self._mark_line(item, entry)
                 self.addItem(item)
         if not groups:

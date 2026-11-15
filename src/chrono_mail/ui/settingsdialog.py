@@ -45,6 +45,8 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.keyfield import KeyField
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
 from chrono_mail.ui.scale import wpx
+from chrono_mail.ui.calendarlayout import UPCOMING_LIMITS, WEEKS_LIMITS
+from chrono_mail.ui.weekstart import WEEK_START_NAMES
 from chrono_mail.ui.accountrows import SECOND_LINE_ROLE, TwoLineRows
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
@@ -62,9 +64,11 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.608"
+__version__ = "settingsdialog.py 4.4.616"
 
 # --- Version history ----------------------------------------------------
+# v4.4.616: the Calendar page again: week numbers, short events as 30 minutes, past events less bright, Start week on, the weeks of the
+#           custom view, the days of Upcoming (D-352)
 # v4.4.608: Settings > Accounts shows each account on two lines: its name and address, below it smaller and grey what it holds (D-346)
 # v4.4.581: Settings > Keyboard: each key field has a ✕ that clears it; Backspace and Delete clear it too (the owner)
 # v4.4.578: Settings > Sidebar's Contacts tab gets the address books and its Tags tick (D-331)
@@ -361,6 +365,7 @@ class SettingsDialog(QDialog):
         self.tags_panel = TagsPanel(backend, known.tags, self, settings)
         self._add_page("Tags", self.tags_panel)
         self.tags_saved: bool = False  # OK sent changed tags (the window then loads them again)
+        self._add_page("Calendar", self._calendar_page())
         self.scheduled_panel = ScheduledPanel(backend, self)
         self._add_page("Scheduled messages", self.scheduled_panel)
         self._add_page("Operations window", self._operations_page())
@@ -469,6 +474,24 @@ class SettingsDialog(QDialog):
         box.setEnabled(tick.isChecked())
         tick.toggled.connect(box.setEnabled)
         return box
+
+    def _calendar_page(self) -> QWidget:
+        """How the Calendar section shows its days and events (D-352)."""
+        page = forms.load("settings_calendar", self)
+        self.week_numbers = part(page, QCheckBox, "weekNumbers")
+        self.week_numbers.setChecked(self._chosen.calendar_week_numbers)
+        self.short_as_half_hour = part(page, QCheckBox, "shortAsHalfHour")
+        self.short_as_half_hour.setChecked(self._chosen.calendar_short_as_half_hour)
+        self.dim_past = part(page, QCheckBox, "dimPast")
+        self.dim_past.setChecked(self._chosen.calendar_dim_past)
+        self.week_start = _fill_combo(part(page, QComboBox, "weekStart"), tuple(WEEK_START_NAMES.items()), self._chosen.calendar_week_start)
+        self.custom_weeks = part(page, QSpinBox, "customWeeks")
+        self.custom_weeks.setRange(*WEEKS_LIMITS)
+        self.custom_weeks.setValue(self._chosen.calendar_custom_weeks)
+        self.upcoming_days = part(page, QSpinBox, "upcomingDays")
+        self.upcoming_days.setRange(*UPCOMING_LIMITS)
+        self.upcoming_days.setValue(self._chosen.calendar_upcoming_days)
+        return page
 
     def _operations_page(self) -> QWidget:
         """When the Operations window (the progress of every send and receive) shows itself and hides again."""
@@ -991,6 +1014,9 @@ class SettingsDialog(QDialog):
             reply_quote=str(self.reply_quote_box.currentData()), autosave_seconds=self.autosave.value(), warn_no_subject=self.warn_no_subject.isChecked(),
             startup=StartupView.parse(str(self.startup_box.currentData() or "")),
             shortcuts={action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]},
+            calendar_upcoming_days=self.upcoming_days.value(), calendar_custom_weeks=self.custom_weeks.value(),
+            calendar_week_numbers=self.week_numbers.isChecked(), calendar_short_as_half_hour=self.short_as_half_hour.isChecked(),
+            calendar_dim_past=self.dim_past.isChecked(), calendar_week_start=str(self.week_start.currentData()),
         )
 
     def save(self) -> None:
