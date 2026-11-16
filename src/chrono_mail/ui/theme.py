@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 4.4.615"
+__version__ = "theme.py 4.4.619"
 
 # --- Version history ----------------------------------------------------
+# v4.4.619: the New message window's drop-down shows the row under the mouse in the theme's selection colours (was white on white in the light theme)
 # v4.4.615: The header's bottom line is under the row of files (readerFiles), directly above the message; the row has the header's colour
 # v4.4.612: The Mail folder tree has the dark list background (base) of the trees of Calendar, Contacts and Tasks (the owner)
 # v4.4.566: The title of an event edited in place has no border, background or padding: it stands where the title was drawn (D-324)
@@ -110,7 +111,7 @@ QFrame#readerFiles {{ background: palette(window); border: 0; border-bottom: 1px
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}
 QFrame#remoteBanner QPushButton:hover {{ background: {HOVER_STRONG}; }}
-QMainWindow#composeWindow QLineEdit, QMainWindow#composeWindow QComboBox {{ border: 1px solid palette(mid); border-radius: 4px; padding: 5px 8px; background: palette(base); }}
+QMainWindow#composeWindow QLineEdit, QMainWindow#composeWindow QComboBox {{ border: 1px solid palette(mid); border-radius: 4px; padding: 5px 8px; background: palette(base); selection-background-color: palette(highlight); selection-color: palette(highlighted-text); }}
 QMainWindow#composeWindow QLineEdit:focus {{ border: 1px solid palette(highlight); }}
 QMainWindow#composeWindow QFormLayout QLabel {{ color: palette(placeholder-text); }}
 QMainWindow#composeWindow QTextEdit, QMainWindow#composeWindow QPlainTextEdit {{ border: 0; }}
