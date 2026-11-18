@@ -42,9 +42,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.5.629"
+__version__ = "importdialog.py 4.6.630"
 
 # --- Version history ----------------------------------------------------
+# v4.6.630: the tick Templates and signatures after Rules; the scan's line counts them (D-359)
 # v4.5.629: the report counts the signatures and templates added and already there, and the accounts' choices given; an export with
 #           "Sent from eM Client" on ticks "Sent from Chrono Mail" through on_sent_from (D-359)
 # v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
@@ -180,6 +181,8 @@ def scan_summary(scan: ScanResult) -> str:
         lines.append(f"Passwords that cannot be read (you type them later): {_listed(scan.passwords_missing)}.")
     if scan.rules or scan.rules_not_imported:
         lines.append(f"Rules: {scan.rules}" + (f"; not imported: {_listed(scan.rules_not_imported)}" if scan.rules_not_imported else "") + ".")
+    if scan.texts:
+        lines.append(f"Templates and signatures: {scan.texts}.")
     if scan.messages:
         line = f"Mail: {counted(scan.messages, 'message')} in {counted(scan.folders, 'folder')}"
         if scan.messages_done:
@@ -451,11 +454,12 @@ class ImportDialog(QDialog):
         forms.part(form, QLabel, "dataFileTitle").setText(f"Import data from {DATA_FILE_SOURCE_NAME}")
         self.accounts: QCheckBox = forms.part(form, QCheckBox, "accounts")
         self.rules: QCheckBox = forms.part(form, QCheckBox, "rules")
+        self.texts: QCheckBox = forms.part(form, QCheckBox, "texts")
         self.mail: QCheckBox = forms.part(form, QCheckBox, "mail")
         self.contacts: QCheckBox = forms.part(form, QCheckBox, "contacts")
         self.calendars: QCheckBox = forms.part(form, QCheckBox, "calendars")
         self.tags: QCheckBox = forms.part(form, QCheckBox, "tags")
-        for box in (self.accounts, self.rules, self.mail, self.contacts, self.calendars, self.tags):
+        for box in (self.accounts, self.rules, self.texts, self.mail, self.contacts, self.calendars, self.tags):
             box.setChecked(True)
         self.mail_info: InfoMark = forms.part(form, InfoMark, "mailInfo")
         self._mail_reason = ""  # why Mail is greyed: the chosen folder holds nothing to import ("": it may be chosen)
@@ -719,7 +723,8 @@ class ImportDialog(QDialog):
         """The parts of the exports this import goes through (as the engine names them, commands_emclient.PARTS)."""
         sources = self._sources()
         chosen = (
-            (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.mail, sources.mail_folder and not self._mail_reason),
+            (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.texts, sources.settings_file),
+            (self.mail, sources.mail_folder and not self._mail_reason),
             (self.contacts, sources.backup_file), (self.calendars, sources.backup_file), (self.tags, "tags come from any export"),
         )
         return frozenset(part for part, (box, export) in zip(PARTS, chosen, strict=True) if box.isChecked() and export)
@@ -737,7 +742,7 @@ class ImportDialog(QDialog):
     def _inputs(self) -> tuple[QWidget, ...]:
         """What is off while an import runs."""
         return (
-            self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.mail, self.contacts, self.calendars, self.tags, self.settings_file, self.mail_folder,
+            self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.texts, self.mail, self.contacts, self.calendars, self.tags, self.settings_file, self.mail_folder,
             self.backup_file, *self._data_file_types(), self.data_files, *self.data_file_later,
         )
 
@@ -760,7 +765,7 @@ class ImportDialog(QDialog):
             return
         sources = self._sources()
         parameters = ImportParameters(
-            sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked() and not self._mail_reason,
+            sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), texts=self.texts.isChecked(), mail=self.mail.isChecked() and not self._mail_reason,
             contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), calendars=self.calendars.isChecked(), batch=BATCH, again=self._again,
         )
         self._again = False  # the first batch starts over; the next ones continue

@@ -69,6 +69,13 @@
             </widget>
            </item>
            <item>
+            <widget class="QCheckBox" name="texts">
+             <property name="text">
+              <string>Templates and signatures</string>
+             </property>
+            </widget>
+           </item>
+           <item>
             <layout class="QHBoxLayout" name="mailRow" stretch="0,0,1">
              <item>
               <widget class="QCheckBox" name="mail">

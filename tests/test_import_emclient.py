@@ -26,9 +26,10 @@ from tests.test_emclient_source import (
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.5.629"
+__version__ = "test_import_emclient.py 4.6.630"
 
 # --- Version history ----------------------------------------------------
+# v4.6.630: Templates and signatures is a choice of its own: unticked nothing, ticked alone everything; the scan counts them (D-359)
 # v4.5.629: signatures and templates come into the library and become the accounts' choices; a name already there is skipped and its
 #           text left as it is; a choice already made stays; a second import adds nothing (D-359)
 # v4.2.461: a POP3 account's store in the backup gives its mail its marks and tags, in its own folders and in Local Folders > its name; an
@@ -1287,3 +1288,52 @@ def test_a_choice_the_account_already_has_stays(tmp_path: Path) -> None:
     texts = engine.config().find(existing.account_id).texts
     assert texts.signature_new == own.item_id and texts.signature_reply == library(engine)["Short"][0]
     assert any("keep" in note and "a1@example.com" in note for note in result.notes)
+
+
+def test_templates_and_signatures_are_a_choice_of_their_own(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = text_exports(tmp_path)
+    left_out: Any = call(engine, "import.emclient", **only_settings(exports, texts=False))
+    assert library(engine) == {} and (left_out.texts_added, left_out.sent_from_line) == (0, False)
+    alone: Any = call(engine, "import.emclient", **only_settings(exports, accounts=False, rules=False, again=True))
+    assert list(library(engine)) == ["Greeting", "Short", "Logo", "Weekly report", "Answer"] and alone.texts_added == 5
+    assert by_address(engine)["a1@example.com"].texts.signature_new == library(engine)["Greeting"][0]  # the accounts made by the first run
+
+
+def test_without_a_settings_export_templates_and_signatures_bring_nothing(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = text_exports(tmp_path)
+    result: Any = call(engine, "import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False, calendars=False)
+    assert result.messages_imported == 7 and result.texts_added == 0 and library(engine) == {}
+
+
+def test_the_scan_counts_the_templates_and_signatures(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = text_exports(tmp_path)
+    found: Any = call(engine, "import.emclient-scan", settings_file=str(exports.settings))
+    assert found.texts == 5
+
+
+def test_the_sent_from_tick_comes_along_also_without_any_text(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    with_texts(exports.settings, "<general-settings><AttachEmSignature>true</AttachEmSignature></general-settings>")
+    result: Any = call(engine, "import.emclient", **only_settings(exports))
+    assert result.sent_from_line and result.texts_added == 0
+
+
+def test_accounts_imported_after_the_texts_still_get_their_choices(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = text_exports(tmp_path)
+    call(engine, "import.emclient", **only_settings(exports, accounts=False, rules=False))
+    result: Any = call(engine, "import.emclient", **only_settings(exports))
+    assert by_address(engine)["a1@example.com"].texts.signature_new == library(engine)["Greeting"][0]
+    assert (result.texts_added, result.texts_existing) == (0, 5)
+
+
+def test_texts_that_cannot_be_read_are_named_also_when_none_can(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    with_texts(exports.settings, '<signatures><signature name="  "><content>a</content></signature></signatures>')
+    result: Any = call(engine, "import.emclient", **only_settings(exports))
+    assert "A signature without a name was not imported" in result.notes and library(engine) == {}

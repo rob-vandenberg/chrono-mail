@@ -52,9 +52,10 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.5.629"
+__version__ = "commands_emclient.py 4.6.630"
 
 # --- Version history ----------------------------------------------------
+# v4.6.630: Templates and signatures is a choice and a part of its own (texts): also without Accounts and Rules; the scan counts them (D-359)
 # v4.5.629: the signatures and templates of the settings export into the library, each account's choices from them, and the "Sent from"
 #           tick; a name already in the library is skipped and its text left as it is (D-359)
 # v4.2.461: a POP3 account's store in the backup gives its mail its read, flagged and replied marks and its tags, wherever the import puts
@@ -98,7 +99,7 @@ JOURNAL_FILE: str = "import-emclient.log"
 _Journal = Journal  # the journal, the fingerprint and the check of a copy on disk are shared by every importer (import_common)
 _still_here = still_here
 FINISHED: str = "finished:"  # journal phase: a part (PARTS) an import of these exports went through to the end
-PARTS: tuple[str, ...] = ("accounts", "rules", "mail", "contacts", "calendars", "tags")
+PARTS: tuple[str, ...] = ("accounts", "rules", "texts", "mail", "contacts", "calendars", "tags")
 
 
 # --- parameters and results -----------------------------------------------------------------------
@@ -118,6 +119,7 @@ class ImportParameters:
     backup_file: str | None = field(default=None, metadata=option("The backup (.zip): read, flagged and replied marks and the contacts"))
     accounts: bool = field(default=True, metadata=option("Import the accounts and their passwords (needs the settings export)"))
     rules: bool = field(default=True, metadata=option("Import the rules (needs the settings export)"))
+    texts: bool = field(default=True, metadata=option("Import the templates and signatures, and the accounts' choice of them (from the settings export; without it nothing)"))
     mail: bool = field(default=True, metadata=option("Import the mail into Local Folders (needs the mail export)"))
     contacts: bool = field(default=True, metadata=option("Import the contacts (needs the backup)"))
     tags: bool = field(default=True, metadata=option("Import the categories as tags, and the tags of the mail (the settings export and the backup)"))
@@ -164,6 +166,7 @@ class ScanResult:
     top_folders: tuple[str, ...] = ()  # layout "none": the folders that go into Local Folders (at most MAXIMUM_REPORTED)
     eml_files: int = 0  # every .eml file found, also those of IMAP accounts that are not imported
     without_settings: bool = False  # no settings export: the stores next to Local Folders cannot be told apart from IMAP accounts
+    texts: int = 0  # templates and signatures in the settings export (D-359)
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +411,7 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
         tuple(part for part in PARTS if journal is not None and FINISHED + part in journal.phases),
         sum(1 for account in mail if account.kind == "imap"), len(servers), len(backup.events), len(backup.tasks), backup.notes,
         "/".join(layout.local) if layout is not None and layout.local is not None else "", shape, stores, top, eml_files, settings_path is None,
+        len(export.texts),
     )
 
 
@@ -1026,7 +1030,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         raise UsageError("The contacts come from the backup: choose it, or leave them out")
     if parameters.calendars and backup_path is None:
         raise UsageError("The calendars and tasks come from the backup: choose it, or leave them out")
-    if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.calendars or parameters.tags):  # tags without their exports: nothing to do
+    if not (parameters.accounts or parameters.rules or parameters.texts or parameters.mail or parameters.contacts or parameters.calendars or parameters.tags):  # tags without their exports: nothing to do
         raise UsageError("Choose what to import")
     journal_path = engine.directories.data_directory / JOURNAL_FILE
     if parameters.again:  # start over: everything is gone through again (the duplicate checks keep what is here from being added twice)
@@ -1038,6 +1042,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     result = ImportResult()
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
     layout = _cached_layout(engine, settings_path, mail_path, backup_path) or _layout(mail_path, export)  # read once per import, not per batch
+    settings_new = "settings" not in journal.phases  # the settings export not gone through yet by this import
     if (parameters.accounts or parameters.rules) and "settings" not in journal.phases:
         before = len(notes)
         own_stores = frozenset(  # a POP3 store whose mail an earlier batch of these exports put into Local Folders keeps it there: its account too
@@ -1049,10 +1054,16 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         if parameters.rules:
             rules_added, rules_existing, not_imported = _import_rules(engine, export, accounts, notes)
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
-        texts_added, texts_existing, texts_given = _import_texts(engine, export, notes)  # with the accounts made just now (D-359)
-        result = replace(result, texts_added=texts_added, texts_existing=texts_existing, texts_given=texts_given, sent_from_line=export.sent_from_line)
         if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
             journal.phase("settings")
+    if parameters.texts and export.sent_from_line and "texts" not in journal.phases and (export.texts or settings_new):
+        result = replace(result, sent_from_line=True)  # the export's "Sent from" tick, also without any text: once per import, with its settings
+    if parameters.texts and (export.texts or export.texts_not_imported) and ("texts" not in journal.phases or (settings_new and parameters.accounts)):
+        # after the accounts made just now, so they get their choices; again when accounts are made by a later run (D-359)
+        texts_added, texts_existing, texts_given = _import_texts(engine, export, notes)
+        result = replace(result, texts_added=texts_added, texts_existing=texts_existing, texts_given=texts_given)
+        if "settings" in journal.phases or not (parameters.accounts or parameters.rules):  # an account not made yet: its choices come with the next run
+            journal.phase("texts")
     pop3 = _pop3_in(layout)
     run = _run_for(engine, layout, backup_path, source, _places(engine, settings_path, mail_path, backup_path), pop3) if layout is not None else None
     backup = run.backup if run is not None else (read_backup(backup_path, engine.directories.data_directory, pop3) if backup_path is not None else None)
@@ -1100,11 +1111,11 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             notes.append(f"Tags: {tags_later} messages are here; their tags come with the next import")
     if result.messages_left == 0:  # the parts chosen went through to the end (an account not made yet is tried again: not finished)
         chosen = {
-            "accounts": parameters.accounts, "rules": parameters.rules, "mail": parameters.mail, "contacts": parameters.contacts, "calendars": parameters.calendars,
+            "accounts": parameters.accounts, "rules": parameters.rules, "texts": parameters.texts, "mail": parameters.mail, "contacts": parameters.contacts, "calendars": parameters.calendars,
             "tags": parameters.tags,
         }
         for part in PARTS:
-            if chosen[part] and (part not in ("accounts", "rules") or "settings" in journal.phases) and FINISHED + part not in journal.phases:
+            if chosen[part] and (part not in ("accounts", "rules") or "settings" in journal.phases) and (part != "texts" or "texts" in journal.phases or not export.texts) and FINISHED + part not in journal.phases:
                 journal.phase(FINISHED + part)
     if tell_stores:
         journal.remember(STORES_TOLD, "yes")  # said once per import, also over failed batches and a restart: only now the report is given

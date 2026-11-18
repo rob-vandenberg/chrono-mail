@@ -16,13 +16,15 @@ from chrono_mail.ui.backend import Backend, Failure, Success
 from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.importdialog import MENU_TEXT, ImportDialog, import_summary, merge, scan_summary
 from tests.enginefactory import make_engine
+from tests.test_emclient_source import texts_xml, with_texts
 from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import RecoveryCodes, World, record_recovery_codes, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.463"
+__version__ = "test_ui_import.py 4.6.630"
 
 # --- Version history ----------------------------------------------------
+# v4.6.630: the tick Templates and signatures stands between Rules and Mail, on at the start; unticked the import brings no text (D-359)
 # v4.2.463: an import that made this computer's key shows its recovery code when it ends, done, stopped or failed, until it is stored, over
 #           the main window when the Import window was closed, never over another question (UR-08)
 # v4.2.458: the summary says where Local Folders was found and what each store becomes; Mail greyed with its (i) when nothing is to import
@@ -564,3 +566,23 @@ def test_the_code_waits_while_another_question_is_open(qtbot: QtBot, setup: Setu
     open_question[0] = None  # the question was answered
     dialog.import_button.click()
     wait(qtbot, lambda: setup.codes.shown == 1)
+
+
+def test_templates_and_signatures_stand_between_rules_and_mail_and_unticked_bring_nothing(qtbot: QtBot, setup: Setup) -> None:
+    with_texts(setup.exports.settings, texts_xml())
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    assert dialog.texts.text() == "Templates and signatures" and dialog.texts.isChecked() and dialog.texts.isEnabled()
+    holder = dialog.rules.parentWidget()
+    assert holder is not None
+    layout = holder.layout()
+    assert layout is not None
+    places = [layout.indexOf(widget) for widget in (dialog.rules, dialog.texts)]
+    assert places[1] == places[0] + 1 and layout.indexOf(dialog.mail) == -1  # Mail is in the next row of its own, with its (i)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.summary.text().startswith("Accounts"))
+    assert "Templates and signatures: 5." in dialog.summary.text()
+    dialog.texts.setChecked(False)
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    assert setup.backend.engine.directories.signatures_directory.joinpath("items.json").exists() is False

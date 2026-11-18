@@ -151,7 +151,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | I.3 | The mail export as the reference client writes it: one folder per store, Local Folders found by its place (the chosen folder is it or holds it, its parent is it, or further down); IMAP stores left out, a POP3 store into its own account, any other into Local Folders by its name; the window says what was found. | done (4.2.459); the full import of the owner's export to check |
 | I.4 | Every POP3 account's mail gets its read, flagged and replied marks and its tags from its own store in the backup, as Local Folders' mail does (UR-09). | done (4.2.461) |
 | I.5 | When an import ends (done, stopped or failed), the recovery code of this computer's key is shown while it was never confirmed as stored, as after Add account (UR-08). | done (4.2.463); the owner's import after a factory reset to check |
-| I.6 | Signatures and templates of the settings export into the library of Settings > Templates and Signatures, each account's choices and the signature's place, a template's pictures inside its text, the "Sent from" tick (D-359). | done (4.5.629); the owner's own import to try |
+| I.6 | Signatures and templates of the settings export into the library of Settings > Templates and Signatures, each account's choices and the signature's place, a template's pictures inside its text, the "Sent from" tick (D-359); a tick of its own in the import window, after Rules (4.6.630). | done (4.5.629, 4.6.630); the owner's own import to try |
 
 ## Import from and export to the office suite's mail program (from 4.2.385, D-278)
 
