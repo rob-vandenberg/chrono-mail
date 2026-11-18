@@ -4480,3 +4480,7 @@ Tests: tests/test_engine_dav_names.py (7, the fake server got MOVE) and tests/li
 
 ## 2026-11-18, documents only (version stays 4.4.624): a private handover between chats (D-357)
 HANDOVER.md (private, git-ignored) carries the next work to the next chat; PROMPT-NEW-SESSION.md, OR-12 and AGENTS.md name it. Found at the end of the chat: 4.4.624's rename gives a second computer false sync conflicts (the first next job in HANDOVER.md).
+
+## 2026-11-18, 4.4.625: another computer follows the rename without a sync conflict (D-356)
+The owner's report: after 4.4.624 renamed the items on one computer, another computer showed 10 "Deleted on the server, changed here" conflicts. Cause: it linked each new name to the same item by its UID, then treated the vanished old name as a delete. Now a vanished name whose item is linked under another name is a rename followed (no delete, no conflict), and such conflicts already recorded go by themselves at the next synchronisation. A real delete on the server with a change here stays a conflict.
+Tests: 3 new in tests/test_engine_dav_names.py (two computers; a recorded conflict goes; a real one stays), two failing on 4.4.624; 156 related CalDAV tests, the live test and the isolation proof pass. Reviews: one round, two Sonnet reviewers: nothing real. Pyrefly: src 0 on Linux and win32; lint-imports clean.

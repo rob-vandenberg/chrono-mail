@@ -55,9 +55,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.624"
+__version__ = "davsync.py 4.4.625"
 
 # --- Version history ----------------------------------------------------
+# v4.4.625: A rename made by another computer is followed: no delete, no conflict; such conflicts recorded by 4.4.624 go by themselves (D-356)
 # v4.4.624: A new item is never named with an @ on the server; an own item an older version named so is renamed once, on the server first (D-356)
 # v4.4.613: an item the server lists but refuses for good is remembered with its version tag (withheld), said once, and asked for again only when
 #           it changes on the server or once at a new start of Chrono Mail; the listing is then remembered again (D-348)
@@ -561,9 +562,19 @@ def _sync_collection(client: DavClient, store: PimStore, local: CollectionInfo, 
     if push and not remote.read_only and not collection_state.no_rename:
         _rename_own_names(client, remote, collection_state, state)
     _pull(client, store, local, remote, collection_state, report, remove_here=push)
+    _forget_followed_renames(store, local, collection_state)
     state.save()
     if push and not remote.read_only:
         _push(client, store, local, remote, collection_state, report)
+
+
+def _forget_followed_renames(store: PimStore, local: CollectionInfo, collection_state: CollectionState) -> None:
+    """A "deleted on the server, changed here" conflict whose item is on the server under another name was a rename another computer made
+    (4.4.624, D-356), never a delete: it goes by itself, and nothing is deleted or sent."""
+    linked = {link.item_id: href for href, link in collection_state.links.items()}
+    for conflict in load_conflicts(store):
+        if conflict.collection == local.collection_id and conflict.reason == DELETED_ON_SERVER and conflict.item and linked.get(conflict.item, conflict.href) != conflict.href:
+            forget_conflict(store, conflict.conflict_id)
 
 
 def _rename_own_names(client: DavClient, remote: RemoteCollection, collection_state: CollectionState, state: DavState) -> None:
@@ -687,6 +698,8 @@ def _pull(
         link = links.pop(href, None)
         if link is None:
             continue
+        if any(other.item_id == link.item_id for other in links.values()):
+            continue  # the same item under another name on the server: renamed (another computer, D-356); nothing is deleted
         try:
             current = store.get(local.collection_id, link.item_id)
         except StorageError:

@@ -8,9 +8,10 @@ from tests.test_engine_dav import linked, shown
 from tests.test_sync_dav import event
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_dav_names.py 4.4.624"
+__version__ = "test_engine_dav_names.py 4.4.625"
 
 # --- Version history ----------------------------------------------------
+# v4.4.625: A second computer follows a rename without a conflict; a conflict of such a rename goes by itself; a real one stays
 # v4.4.624: Initial tests (also: a taken name skips only its item; a change made elsewhere still arrives): a server name never has an @; Chrono Mail's own names with one are renamed once, on the server first (D-356)
 
 OLD = "11111111-2222-3333-4444-555555555555@chrono-mail"  # an appointment an older Chrono Mail made: its server name has the @
@@ -106,3 +107,60 @@ def test_a_change_made_elsewhere_before_the_rename_still_arrives(tmp_path: Path)
         server.collections["events"].items[f"{OLD}.ics"] = ("changed-elsewhere", event(OLD, "Pedicure at 18:00"))  # another computer changed it
         assert call(engine, "dav.sync", account=account)[0].errors == ()
         assert [row.summary for row in call(engine, "event.list", from_date="2026-10-01", to_date="2026-11-01").events] == ["Pedicure at 18:00"]
+
+
+def test_a_second_computer_follows_the_rename_of_the_first_without_a_conflict_or_a_delete(tmp_path: Path) -> None:
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.sync.davconflicts import load_conflicts
+    from tests.test_sync_dav import Setup
+
+    with FakeDav() as server:
+        server.add("events", f"{OLD}.ics", event(OLD, "Pedicure"))
+        first, second = Setup(tmp_path / "first", server), Setup(tmp_path / "second", server)
+        server.moves_refused = True  # both take it in under its old name, as before 4.4.624
+        first.sync(), second.sync()
+        server.moves_refused = False
+        assert first.sync().errors == [] and names(server) == ["11111111-2222-3333-4444-555555555555.ics"]  # the first computer renames
+        report = second.sync()  # the second sees the old name gone and the same appointment under the new name
+        assert report.errors == [] and report.conflicts == 0 and report.deleted_here == 0
+        assert second.titles(CollectionKind.EVENTS) == ["Pedicure"] and load_conflicts(second.store) == []
+        assert names(server) == ["11111111-2222-3333-4444-555555555555.ics"]  # nothing deleted or copied on the server
+
+
+def test_a_deleted_on_the_server_conflict_of_a_rename_goes_by_itself_and_deletes_nothing(tmp_path: Path) -> None:
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.sync.davconflicts import DELETED_ON_SERVER, load_conflicts, new_conflict, record
+    from tests.test_sync_dav import Setup
+
+    with FakeDav() as server:
+        server.add("events", "11111111-2222-3333-4444-555555555555.ics", event(OLD, "Pedicure"))  # already renamed by another computer
+        here = Setup(tmp_path / "here", server)
+        here.sync()
+        calendar = here.collection(CollectionKind.EVENTS)
+        found = here.store.index.find_uid(calendar, OLD)
+        assert found is not None
+        old_href = "/dav/calendars/ann/events/" + OLD + ".ics"
+        record(here.store, new_conflict(calendar, old_href, found.item_id, "events", DELETED_ON_SERVER, "Pedicure", "", ""))  # as 4.4.624 left it
+        assert len(load_conflicts(here.store)) == 1
+        assert here.sync().errors == [] and load_conflicts(here.store) == []
+        assert here.titles(CollectionKind.EVENTS) == ["Pedicure"] and names(server) == ["11111111-2222-3333-4444-555555555555.ics"]
+
+
+def test_a_real_delete_on_the_server_with_a_change_here_stays_a_conflict(tmp_path: Path) -> None:
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.sync.davconflicts import DELETED_ON_SERVER, load_conflicts
+    from tests.test_sync_dav import Setup
+
+    with FakeDav() as server:
+        here = Setup(tmp_path / "here", server)
+        server.add("events", "dentist.ics", event("dentist", "Dentist"))
+        here.sync()
+        calendar = here.collection(CollectionKind.EVENTS)
+        found = here.store.index.find_uid(calendar, "dentist")
+        assert found is not None
+        here.store.put(calendar, event("dentist", "Dentist at 10:00"), found.item_id)  # changed here, not sent yet
+        server.remove("events", "dentist.ics")  # really deleted on the server
+        here.sync()
+        assert [conflict.reason for conflict in load_conflicts(here.store)] == [DELETED_ON_SERVER]  # still the person's choice
+        here.sync()
+        assert [conflict.reason for conflict in load_conflicts(here.store)] == [DELETED_ON_SERVER]  # and it stays
