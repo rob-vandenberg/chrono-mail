@@ -20,9 +20,10 @@ from chrono_mail.engine.commands_signatures import SnippetText
 from chrono_mail.ui.richeditor import PICTURE_MARK, RichEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "composertexts.py 4.5.626"
+__version__ = "composertexts.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: A swap replaces only the signature: in plain text it lies between marks Qt moves along as the person types
 # v4.5.626: Initial version: the account's template and signature when a message opens, the keys, the From swap (B-24, D-358)
 
 SIGNATURE_MARK: str = "-- \n"  # the usual separator of a plain-text signature: two dashes and a space on a line of their own
@@ -30,6 +31,21 @@ SIGNATURE_PROPERTY: int = QTextFormat.Property.UserProperty + 58  # marks the fr
 ANCHOR: str = "chrono-signature"  # an invisible anchor at its start: it stays when a draft is saved and opened again (the mark above does not)
 KEYED: int = 7
 SENT_FROM: str = "Sent from Chrono Mail"
+
+
+def qt_position(text: str, index: int) -> int:
+    """A place in a Python string as Qt counts it (an emoji is one character in Python and two in Qt)."""
+    return len(text[:index].encode("utf-16-le")) // 2
+
+
+def text_index(text: str, position: int) -> int:
+    """A place Qt gives, as a place in the Python string."""
+    units = 0
+    for index, character in enumerate(text):
+        if units >= position:
+            return index
+        units += 2 if ord(character) > 0xFFFF else 1
+    return len(text)
 
 
 def signature_block(text: str) -> str:
@@ -53,7 +69,7 @@ def plain_of(html: str) -> str:
     """A text of the library as plain text (its pictures left out)."""
     document = QTextDocument()
     document.setHtml(html)
-    return document.toPlainText().replace(PICTURE_MARK, "").strip("\n")
+    return document.toPlainText().replace(PICTURE_MARK, "").replace("\u2028", "\n").strip("\n")  # a line break in a paragraph is a new line
 
 
 def kind_of_message(kind: str) -> str:
@@ -86,6 +102,7 @@ class TextsInMessage:
     signature_below: bool = False  # where it stands in a reply or forward
     plain_signature: str = ""  # plain text: the block as it was put in, to find it again
     resumed: bool = False  # a draft taken up again: a "-- " block in it is its signature
+    marks: tuple[QTextCursor, QTextCursor] | None = None  # plain text: the signature's start and end, moved along by Qt as the person types
 
     def text(self, item_id: str) -> SnippetText | None:
         return next((entry for entry in self.library if entry.item_id == item_id), None)
@@ -144,8 +161,10 @@ class TextsInMessage:
         else:
             body = self.body.toPlainText()
             found = self._plain_range(body)
-            if found is not None:
-                self.body.setPlainText((body[:found[0]] + body[found[1]:]).replace("\n\n\n\n", "\n\n"))
+            if found is not None:  # only the signature goes, with the empty line before it
+                start = found[0] - 2 if body[:found[0]].endswith("\n\n") else found[0]
+                self._select(body, start, found[1]).removeSelectedText()
+            self.marks = None
         self.signature_id, self.by_key, self.plain_signature = "", False, ""
 
     def account_changed(self, texts: AccountTexts) -> None:
@@ -184,9 +203,15 @@ class TextsInMessage:
         return self.kind != "new" and not self.signature_below
 
     def _plain_range(self, body: str) -> tuple[int, int] | None:
-        """Where the signature block stands in plain text: only one this window put in, or the one of a draft taken up again (never the
-        signature of a forwarded or quoted mail). From its "-- " line: to the end when it stands last; else as many lines as it was put in
-        with, or to the next empty line."""
+        """Where the signature stands in plain text, as places in the Python string body: between its marks, which Qt moves along as the
+        person types (text typed above or below stays outside them, a change inside the signature stays inside). Without marks (a draft
+        taken up again, a switch of plain and rich text) the "-- " block is looked for and marked: only one this window put in or a
+        draft's own, never the signature of a forwarded or quoted mail; the first before the quoted text, the last at the end."""
+        if self.marks is not None:
+            start, end = text_index(body, self.marks[0].position()), text_index(body, self.marks[1].position())
+            if end > start and body.startswith("--", start):
+                return start, end
+            self.marks = None
         if not self.plain_signature and not self.resumed:
             return None
         starts = [0] if body.startswith(SIGNATURE_MARK) else []
@@ -198,15 +223,28 @@ class TextsInMessage:
             return None
         start = starts[0] if self._first_signature_wins() else starts[-1]
         if not self._first_signature_wins():
-            return start, len(body.rstrip("\n"))
-        if self.plain_signature:
-            end = start
-            for _ in range(self.plain_signature.count("\n") + 1):
-                found = body.find("\n", end + 1 if end > start else end)
-                end = len(body.rstrip("\n")) if found < 0 else found
-            return start, end
-        end = body.find("\n\n", start)
-        return start, len(body.rstrip("\n")) if end < 0 else end
+            end = len(body.rstrip("\n"))
+        else:
+            found = body.find("\n\n", start)
+            end = len(body.rstrip("\n")) if found < 0 else found
+        self._mark(body, start, end)
+        return start, end
+
+    def _select(self, body: str, start: int, end: int) -> QTextCursor:
+        """A cursor over these places of the Python string body, in Qt's count."""
+        cursor = QTextCursor(self.body.document())
+        cursor.setPosition(qt_position(body, start))
+        cursor.setPosition(qt_position(body, end), QTextCursor.MoveMode.KeepAnchor)
+        return cursor
+
+    def _mark(self, body: str, start: int, end: int) -> None:
+        """Marks at the signature's start and end (places in the Python string body). Text typed at its end or its start stays outside."""
+        document = self.body.document()
+        first, last = QTextCursor(document), QTextCursor(document)
+        first.setPosition(qt_position(body, start))
+        last.setPosition(qt_position(body, end))
+        last.setKeepPositionOnInsert(True)
+        self.marks = (first, last)
 
     # --- a switch between plain and rich text ------------------------------------------------------------
 
@@ -238,6 +276,7 @@ class TextsInMessage:
                 block = signature_block(text)
                 self.body.setPlainText(body[:place] + block + body[place + len(text):])
                 self.plain_signature = block
+                self._mark(self.body.toPlainText(), place, place + len(block))
             return
         document = self.rich.edit.document()
         marks = []
@@ -289,11 +328,16 @@ class TextsInMessage:
         block = signature_block(plain_of(entry.html))
         body = self.body.toPlainText()
         found = self._plain_range(body)
-        if found is not None:  # replaced where it stands, also after the person changed it
-            self.body.setPlainText(body[:found[0]] + block + body[found[1]:])
+        if found is not None:  # replaced where it stands, and only the signature: what the person typed around it stays
+            self._select(body, found[0], found[1]).insertText(block)
+            self._mark(self.body.toPlainText(), found[0], found[0] + len(block))
         else:
             below = self.kind == "new" or self.signature_below  # a new message: at the end, after what is written
             self.body.setPlainText(with_signature(body, plain_of(entry.html), below=below))
+            shown = self.body.toPlainText()  # as the window holds it
+            start = shown.rfind(block) if below else shown.find(block)
+            if start >= 0:
+                self._mark(shown, start, start + len(block))
         self.plain_signature = block
 
 

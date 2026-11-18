@@ -14,9 +14,10 @@ from tests.ui.test_ui_settings import open_settings
 from tests.ui.world import Dialogs, World, add_window, answer_open_file, answer_save_file, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_signatures.py 4.5.627"
+__version__ = "test_ui_signatures.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: a swap replaces only the signature; a text that cannot be read is left out and named (D-358)
 # v4.5.627: the account block as the owner drew it: the fields' heading, the first field level with the account list, the tick under it
 # v4.5.626: Initial tests: Settings > Templates and Signatures (the library and the accounts' choices, kept at OK), the window of one
 #           text, the New message window's templates, signatures and keys, New's menu (B-24, D-358)
@@ -460,3 +461,51 @@ def test_a_choice_made_in_settings_is_used_at_once_after_ok(world: World, qtbot:
     ok(dialog, qtbot)
     world.window._settings_closed(dialog, True)  # noqa: SLF001 - what the main window does after Settings OK
     wait(qtbot, lambda: any(account.texts.signature_new == item for account in world.window.mail_state.mail_accounts()))
+
+
+def test_a_swap_replaces_only_the_signature_never_text_typed_around_it(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtGui import QTextCursor
+
+    keep(world, ("Formal", "<p>Kind regards<br>Rob</p>"), ("Short", "<p>Cheers</p>"))
+    window = composer(world, qtbot)
+    window.body.setPlainText("Hello Ann,")
+    window._signature_by_key(0)  # noqa: SLF001
+    cursor = window.body.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    cursor.insertText("\n\nP.S. see you Monday")  # typed below the signature
+    text = window.body.toPlainText()
+    cursor.setPosition(text.index("Kind") + 4)
+    cursor.insertText(" and warm")  # a change inside the signature
+    window._signature_by_key(1)  # noqa: SLF001
+    text = window.body.toPlainText()
+    assert text.startswith("Hello Ann,") and "P.S. see you Monday" in text and "Cheers" in text
+    assert "Kind" not in text and "warm" not in text and text.count("-- \n") == 1, text
+    close(window)
+
+
+def test_a_text_that_cannot_be_read_is_left_out_and_named(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.config.signatures import MAXIMUM_HTML_BYTES
+
+    big, _ = keep(world, ("Huge", "<p>h</p>"), ("Work", "<p>Kind regards</p>"))
+    (world.engine.directories.signatures_directory / f"{big}.html").write_bytes(b"x" * (MAXIMUM_HTML_BYTES + 1))
+    dialog, panel = open_page(world, qtbot)
+    assert panel.status.isVisibleTo(panel) and "Huge" in panel.status.text() and panel.new_button.isEnabled()
+    ok(dialog, qtbot)
+    assert (world.engine.directories.signatures_directory / f"{big}.html").stat().st_size == MAXIMUM_HTML_BYTES + 1  # its file left alone
+    window = composer(world, qtbot)
+    assert [action.text().split("\t")[0] for action in window.signature_button.menu().actions()] == ["Work"]  # type: ignore[union-attr]
+    close(window)
+
+
+def test_emoji_above_the_signature_never_shift_what_a_swap_or_a_removal_cuts(world: World, qtbot: QtBot) -> None:
+    from tests.test_engine_commands import add_account
+
+    second = add_account(world.engine, world.pop, world.smtp, email="second@example.com")
+    give_signature(world, world.account_id, "Kind regards")
+    window = composer(world, qtbot)
+    window.body.setPlainText("Hi 😀😀 Ann" + window.body.toPlainText())
+    window.texts.marks = None  # found again from its "-- " line, as after a switch
+    window.texts.plain_signature = "-- \nKind regards"
+    window.from_box.setCurrentIndex(window.from_box.findData(second))  # the second account has none: the default goes
+    assert window.body.toPlainText() == "Hi 😀😀 Ann\n"
+    close(window)

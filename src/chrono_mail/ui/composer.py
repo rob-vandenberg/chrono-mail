@@ -52,9 +52,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.5.626"
+__version__ = "composer.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: A text that cannot be read is left out of the keys and the Signature button (D-358)
 # v4.5.626: Templates and signatures from the library: the account's template and signature when a message opens, Ctrl+1 to
 #           Ctrl+7, the Signature button, a default signature follows From; "Sent from Chrono Mail" when Settings asks for it (B-24, D-358)
 # v4.4.623: The rich text is written in Settings > Writing > Default font, which the message carries (D-354)
@@ -420,7 +421,7 @@ class ComposeWindow(QMainWindow):
     def _library_arrived(self, found: tuple[SnippetText, ...], fresh: bool, template: str) -> None:
         """The library: the Signature button's list and the keys; a new message gets the account's template and signature (a draft
         taken up again keeps what it has). A window nobody changed meanwhile still counts as unchanged."""
-        self.texts.library = found
+        self.texts.library = tuple(entry for entry in found if not entry.problem)  # one that could not be read is left out
         self._fill_signature_menu()
         if not fresh:
             self.texts.resumed = True  # a draft taken up again: its "-- " block is its signature

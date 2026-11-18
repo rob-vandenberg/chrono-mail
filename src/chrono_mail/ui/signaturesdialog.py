@@ -66,9 +66,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "signaturesdialog.py 4.5.627"
+__version__ = "signaturesdialog.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: A text that cannot be read is named on the page (D-358)
 # v4.5.627: The account block as the owner drew it: a heading above the fields, the first field level with the account list, the tick under
 #           the account list, a larger gap above the block
 # v4.5.626: Initial version: the library of templates and signatures on Settings > Templates and Signatures, kept at OK, and the
@@ -242,6 +243,9 @@ class SignaturesPanel(QWidget):
         self._backend.ask(SNIPPET_ALL, NoParameters(), self._arrived, self._not_read, owner=self)
 
     def _arrived(self, found: tuple[SnippetText, ...]) -> None:
+        unreadable = [entry.name for entry in found if entry.problem]
+        if unreadable:  # left out of every message; the person can delete it or give it a new text with Edit
+            self._say("Could not be read, so left out of your messages: " + ", ".join(unreadable))
         self._loaded = True
         self._kept = found
         self.entries = list(found)

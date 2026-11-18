@@ -27,9 +27,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.5.626"
+__version__ = "composing.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: A text that cannot be read is left out of New's menu (D-358)
 # v4.5.626: New's menu lists the templates and signatures to start a new message from; "Sent from Chrono Mail" passed on (B-24, D-358)
 # v4.4.623: The composer writes in Settings > Writing > Default font and sends it with the message (D-354)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
@@ -83,7 +84,7 @@ class Composing(QObject):
         """The templates and signatures again (at the start and after Settings), for New's menu."""
 
         def arrived(found: tuple[SnippetText, ...]) -> None:
-            self.library = found
+            self.library = tuple(entry for entry in found if not entry.problem)  # one that could not be read is left out
 
         def failed(error: ChronoMailError) -> None:
             self.library = ()

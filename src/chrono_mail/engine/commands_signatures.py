@@ -36,9 +36,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_signatures.py 4.5.626"
+__version__ = "commands_signatures.py 4.5.628"
 
 # --- Version history ----------------------------------------------------
+# v4.5.628: A text that cannot be read is given with its reason and never written over; the others still load (D-358)
 # v4.5.626: Initial version: snippet.all, .save-all, .open, .save-as, .import, .export, .account-texts, .set-account-texts,
 #           .take-old-signatures (B-24, D-358)
 
@@ -56,6 +57,7 @@ class SnippetText:
     item_id: str
     name: str
     html: str
+    problem: str = ""  # why its text could not be read ("" it could): it is left out of every message, its file left alone
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +97,16 @@ def snippet_all(engine: Engine, parameters: NoParameters) -> tuple[SnippetText, 
     """Every text of the library with its HTML, in the person's order."""
     directory = _directory(engine)
     try:
-        return tuple(SnippetText(entry.item_id, entry.name, read_html(directory, entry.item_id)) for entry in load_items(directory).entries)
+        listed = load_items(directory).entries
     except ConfigurationError as error:
         raise UsageError(str(error)) from None
+    found: list[SnippetText] = []
+    for entry in listed:  # one text that cannot be read (too large, damaged) never blocks the others
+        try:
+            found.append(SnippetText(entry.item_id, entry.name, read_html(directory, entry.item_id)))
+        except ConfigurationError as error:
+            found.append(SnippetText(entry.item_id, entry.name, "", str(error)))
+    return tuple(found)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +131,7 @@ def snippet_save_all(engine: Engine, parameters: SaveAllParameters) -> tuple[Sni
                 item_id = _new_id(before, wanted)
             wanted = wanted.with_new(Item(item_id, name))
         for entry, text in zip(wanted.entries, parameters.htmls, strict=True):
-            if before.find(entry.item_id) is None or read_html(directory, entry.item_id) != text:
+            if before.find(entry.item_id) is None or _changed(directory, entry.item_id, text):
                 write_html(directory, entry.item_id, text)
         if wanted != before:
             save_items(directory, wanted)
@@ -134,6 +143,14 @@ def snippet_save_all(engine: Engine, parameters: SaveAllParameters) -> tuple[Sni
     for item_id in gone:
         remove_html(directory, item_id)
     return tuple(SnippetSummary(entry.item_id, entry.name) for entry in wanted.entries)
+
+
+def _changed(directory: Path, item_id: str, text: str) -> bool:
+    """Whether a kept text differs from this; one that could not be read and comes back empty is left alone (never written over)."""
+    try:
+        return read_html(directory, item_id) != text
+    except ConfigurationError:
+        return text != ""
 
 
 def _without_texts(config: AppConfig, gone: set[str]) -> AppConfig:
