@@ -11,3 +11,4 @@ Read before work on tests, type checks, the push checks.
 - [[D-237]] SonarQube Cloud is an outside review
 - [[D-223]] Every test is unambiguous
 - [[D-020]] Live protocol tests on test servers
+- [[D-355]] A reviewer brief per project

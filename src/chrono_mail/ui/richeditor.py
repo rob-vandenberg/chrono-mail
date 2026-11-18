@@ -13,9 +13,10 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QTextEdit,
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.4.622"
+__version__ = "richeditor.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: The HTML sent carries the default font and its size (D-354)
 # v4.4.622: pictures_in_text gives each picture with its address, so the quoted ones can be told apart (D-353)
 # v4.4.621: Pictures in the text: dragged in, pasted or chosen with Picture…, shown no wider than the text, sent unaltered as embedded
 #           pictures; a dropped file that is not a picture is attached, never its path typed (D-353)
@@ -122,6 +123,7 @@ class RichEditor(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.pictures: dict[str, Picture] = {}  # the pictures of the text by their address in it (cid:picture-…@chrono-mail)
+        self.sent_font: tuple[str, int] | None = None  # the font and size in points the message carries (D-354)
         self._images: dict[str, QImage] = {}  # each picture as read, so the copy shown follows the width of the text
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -214,7 +216,12 @@ class RichEditor(QWidget):
         def embedded(match: "re.Match[str]") -> str:
             picture = self.pictures.get(match.group(2))
             return match.group(0) if picture is None else f"{match.group(1)}{data_address(picture.content_type, picture.name, picture.data)}{match.group(3)}"
-        return clean_html(_OWN_PICTURE.sub(embedded, self.edit.toHtml()))
+        cleaned = clean_html(_OWN_PICTURE.sub(embedded, self.edit.toHtml()))
+        if self.sent_font is None:
+            return cleaned
+        family, points = self.sent_font  # the receiver sees the font it was written in, not the serif default of a reader (D-354)
+        quoted = family.replace("\\", "").replace("'", "").replace('"', "").replace(";", "").replace("<", "").replace(">", "")
+        return cleaned.replace("<body>", f"<body style=\"font-family:'{quoted}', sans-serif; font-size:{points}pt;\">", 1)
 
     # --- pictures -----------------------------------------------------------------------------------------
 

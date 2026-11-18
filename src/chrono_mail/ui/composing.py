@@ -26,9 +26,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.4.532"
+__version__ = "composing.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: The composer writes in Settings > Writing > Default font and sends it with the message (D-354)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.520: open_draft: tells when the draft was sent (D-310)
 # v4.4.505: open_draft: a draft made by the engine (the answer to an invitation) opens in the composer (D-310)
@@ -259,14 +260,17 @@ class Composing(QObject):
     # --- the size of the text and the look ---------------------------------------------------------------------------
 
     def writing_points(self, factor: float | None = None) -> float:
-        """The text size of the composer: the system's size times the size of the text of messages (reading and writing are one size)."""
+        """The text size shown in the composer: the size of Settings > Writing > Default font times the size of the text of messages
+        (reading and writing are one size; the slider only enlarges what is shown, never what is sent)."""
         app = QApplication.instance()
         system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
-        return round(system * (factor if factor is not None else prefs.saved_reading(self._prefs.settings)), 2)
+        base = appearance.compose_points(self._prefs.read().compose_font_points) if system > 0 else system  # Settings > Writing > Default font (D-354)
+        return round(base * (factor if factor is not None else prefs.saved_reading(self._prefs.settings)), 2)
 
     def compose_options(self) -> ComposeOptions:
         chosen = self._prefs.read()
-        return ComposeOptions(chosen.autosave_seconds, chosen.warn_no_subject, self.writing_points(), chosen.reply_quote == "below")
+        return ComposeOptions(chosen.autosave_seconds, chosen.warn_no_subject, self.writing_points(), chosen.reply_quote == "below",
+                              appearance.compose_family(chosen.compose_font_family), appearance.compose_points(chosen.compose_font_points))
 
     def set_text_size(self, factor: float | None = None) -> None:
         """The text of the open windows at this size factor (tried out from Settings), or at the saved one."""

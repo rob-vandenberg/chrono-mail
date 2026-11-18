@@ -49,9 +49,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.4.622"
+__version__ = "composer.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: The rich text is written in Settings > Writing > Default font, which the message carries (D-354)
 # v4.4.622: A reply or forward in rich text quotes the original with its formatting and pictures; a forward in plain text carries them as
 #           attachments; a reply switched to plain text leaves the quoted pictures out (D-353)
 # v4.4.621: A file that is not a picture dragged onto the text is attached; going to plain text makes the pictures attachments (D-353)
@@ -150,8 +151,10 @@ class ComposeOptions:
 
     autosave_seconds: int = AUTOSAVE_SECONDS
     warn_no_subject: bool = True
-    font_size: float = 0.0  # points
+    font_size: float = 0.0  # points, as shown (the size slider included)
     reply_below: bool = False
+    font_family: str = ""  # Settings > Writing > Default font: written in and sent with an HTML message (D-354); "" Qt's own
+    font_points: int = 0  # its size in points as sent; 0: none sent
 
 
 def _paragraphs_of(text: str) -> str:
@@ -348,6 +351,11 @@ class ComposeWindow(QMainWindow):
             self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature, below=options.reply_below and self._kind in ("reply", "reply_all")))
         self.body.moveCursor(self.body.textCursor().MoveOperation.End if options.reply_below and self._kind in ("reply", "reply_all") and resume is None else self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
+        if options.font_family:
+            written = self.rich.edit.font()
+            written.setFamily(options.font_family)
+            self.rich.edit.setFont(written)
+        self.rich.sent_font = (options.font_family, options.font_points) if options.font_family and options.font_points > 0 else None
         if options.font_size > 0:
             self.set_text_size(options.font_size)
         stored_html = draft.html if isinstance(draft, DraftOpenResult) else None

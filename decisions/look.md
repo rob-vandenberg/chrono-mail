@@ -36,3 +36,4 @@ See also: [[mail-window]]
 - [[D-345]] Accounts shown alike are told apart by their sign-in name
 - [[D-346]] An account and a calendar are named by what the person and Google know
 - [[D-352]] Settings > Calendar and the n weeks view
+- [[D-354]] The default font of new messages

@@ -12,9 +12,10 @@ from chrono_mail.ui.weekstart import WEEK_STARTS
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.4.617"
+__version__ = "prefs.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: Settings > Writing > Default font: compose_font_family and compose_font_points (D-354)
 # v4.4.617: save_startup: Show on startup saved by the program through this module, never by its name elsewhere (D-211)
 # v4.4.616: Settings > Calendar: the days of Upcoming, the weeks of the custom view, week numbers, short events as 30 minutes, past events
 #           less bright, Start week on (D-352)
@@ -110,6 +111,8 @@ DEFAULTS: dict[str, object] = {
     "reply_quote": "above",  # above: my text above the quote, below: under it, none: no quote
     "autosave_seconds": 30,
     "warn_no_subject": True,
+    "compose_font_family": "",  # Settings > Writing > Default font: "" the program's own font (D-354)
+    "compose_font_points": 0,  # its size in points, sent with every HTML message; 0 the system's size
     "startup_view": "",  # Show on startup (StartupView): "" the last selected folder, "mail\taccount\tkind\tpath" or "section\tname"
     "shortcuts": "{}",  # the keys the person chose, JSON: action name -> key sequence text
     # calendar (D-352)
@@ -321,6 +324,8 @@ class Preferences:
     reply_quote: str = "above"
     autosave_seconds: int = 30
     warn_no_subject: bool = True
+    compose_font_family: str = ""
+    compose_font_points: int = 0
     startup: StartupView = field(default_factory=StartupView)
     shortcuts: dict[str, str] = field(default_factory=dict[str, str])  # action name -> key sequence text ("" for none)
     calendar_upcoming_days: int = calendarlayout.UPCOMING_DAYS
@@ -331,7 +336,7 @@ class Preferences:
     calendar_week_start: str = "system"
 
 
-_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999),
+_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999), "compose_font_points": (0, 72),
                                      "calendar_upcoming_days": calendarlayout.UPCOMING_LIMITS, "calendar_custom_weeks": calendarlayout.WEEKS_LIMITS}
 _CHOICES: dict[str, tuple[str, ...]] = {
     "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES, "secondary_sort": SECONDARY_SORTS,
@@ -397,6 +402,8 @@ def read_preferences(settings: QSettings) -> Preferences:
         reply_quote=choice("reply_quote"),
         autosave_seconds=number("autosave_seconds"),
         warn_no_subject=get_bool(settings, "warn_no_subject"),
+        compose_font_family=str(settings.value("compose_font_family", "") or "")[:200],
+        compose_font_points=number("compose_font_points"),
         startup=StartupView.parse(str(settings.value("startup_view", "") or "")),
         shortcuts=shortcuts(settings),
         calendar_upcoming_days=number("calendar_upcoming_days"),

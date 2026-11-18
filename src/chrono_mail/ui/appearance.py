@@ -11,9 +11,10 @@ from chrono_mail.ui.prefs import COLOR_SCHEMES, read_preferences
 from chrono_mail.ui.colours import menu_palette_of, palette_of, set_accents, theme_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 1.2.253"
+__version__ = "appearance.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: compose_family and compose_points: the default font of new messages, chosen or the program's own (D-354)
 # v1.2.253: The colour scheme and the accents come from the one settings object (R-12)
 # v1.1.182: The accent colour of each theme comes from the settings (accent_dark, accent_light, D-164)
 # v1.1.172: Every colour is the theme's (core/colours.py): "System" only picks the dark or the light theme; Fusion on every platform; the style is no longer a setting (D-158)
@@ -60,6 +61,24 @@ def system_font_size(app: QApplication) -> int:
         _state.system_font = QFont(app.font())
     points = _state.system_font.pointSizeF()
     return max(MINIMUM_FONT_POINTS, min(MAXIMUM_FONT_POINTS, round(points) if points > 0 else FALLBACK_FONT_POINTS))
+
+
+def compose_family(chosen: str) -> str:
+    """The font new messages are written and sent in (Settings > Writing > Default font): the one chosen, else the program's own font."""
+    if chosen.strip():
+        return chosen.strip()
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        system_font_size(app)  # remembers the font the platform gave
+    return _state.system_font.family() if _state.system_font is not None else "Sans Serif"
+
+
+def compose_points(chosen: int) -> int:
+    """Its size in points: the one chosen, else the system's size."""
+    if chosen > 0:
+        return chosen
+    app = QApplication.instance()
+    return system_font_size(app) if isinstance(app, QApplication) else FALLBACK_FONT_POINTS
 
 
 def _colour_the_menus(app: QApplication, dark: bool) -> None:

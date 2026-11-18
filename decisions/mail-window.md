@@ -105,6 +105,7 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-141]] Own Operations bars
 - [[D-045]] Rich text subset
 - [[D-353]] Pictures inside mail
+- [[D-354]] The default font of new messages
 - [[D-085]] New messages are rich text
 - [[D-105]] Way of writing drop-down
 - [[D-303]] One action per message

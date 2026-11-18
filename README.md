@@ -589,7 +589,17 @@ The message window has:
 
 #### Rich text or plain text
 
-A button at the bottom shows how you are writing: **Rich text** or **Plain text**; click it to switch. Rich text gives you a small row of buttons: **B** (bold, Ctrl+B), **I** (italic, Ctrl+I), **U** (underline, Ctrl+U), **• List**, **1. List**, **Link…** (Ctrl+K) and **Clear**. A rich text message is sent as text and as HTML, so every reader can read it.
+A button at the bottom shows how you are writing: **Rich text** or **Plain text**; click it to switch. Rich text gives you a small row of buttons: **B** (bold, Ctrl+B), **I** (italic, Ctrl+I), **U** (underline, Ctrl+U), **• List**, **1. List**, **Link…** (Ctrl+K), **Picture…** and **Clear**. A rich text message is sent as text and as HTML, so every reader can read it.
+
+#### Pictures
+
+In rich text you can put pictures in the text: drag a picture file onto it, paste a picture (a screenshot, or a picture copied from a web page), or click **Picture…** and choose one. Each picture is sent exactly as you put it in, at its own size; in the window it is shown no wider than the text. A file that is not a picture, dragged onto the text, is attached. When you switch to **Plain text**, the pictures become attachments.
+
+A reply or forward in rich text quotes the original with its formatting and its pictures. In plain text a reply quotes only the text; a forward lists the original's pictures as attachments.
+
+#### The font
+
+New messages are written in the font of **Settings > Writing > Default font**, and the people you write to see that font and size too. The size slider of **Settings > Appearance** only makes the text larger or smaller on your own screen.
 
 New messages are written in rich text, unless you choose **Plain text** in **Settings > Writing > New messages are written in**.
 
@@ -1439,6 +1449,7 @@ What **Show on startup** chose is always shown.
 3. **Replies**: **My answer above the quoted text**, **My answer below the quoted text** or **Do not quote the original**.
 4. **Save a draft every** so many seconds.
 5. **Ask before sending a message without a subject**.
+6. **Default font**: the font and the size new messages are written in; the people you write to see them too.
 
 The signature of each account is set under Accounts.
 

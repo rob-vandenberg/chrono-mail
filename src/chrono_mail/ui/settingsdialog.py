@@ -7,6 +7,7 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings,
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
+    QFontComboBox,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -41,6 +42,7 @@ from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, KEY_STATUS, AccountParameters, AccountRemoveResult, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
 from chrono_mail.ui import appearance, forms, prefs, scale
+from chrono_mail.ui.appearance import compose_family, compose_points
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.keyfield import KeyField
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
@@ -64,9 +66,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.616"
+__version__ = "settingsdialog.py 4.4.623"
 
 # --- Version history ----------------------------------------------------
+# v4.4.623: Settings > Writing: Default font, a font and a size (D-354)
 # v4.4.616: the Calendar page again: week numbers, short events as 30 minutes, past events less bright, Start week on, the weeks of the
 #           custom view, the days of Upcoming (D-352)
 # v4.4.608: Settings > Accounts shows each account on two lines: its name and address, below it smaller and grey what it holds (D-346)
@@ -748,7 +751,24 @@ class SettingsDialog(QDialog):
         self.autosave.setValue(self._chosen.autosave_seconds)
         self.warn_no_subject = part(page, QCheckBox, "warnNoSubject")
         self.warn_no_subject.setChecked(self._chosen.warn_no_subject)
+        self.compose_font = part(page, QFontComboBox, "composeFont")  # what new messages are written and sent in (D-354)
+        self.compose_font.setCurrentFont(QFont(compose_family(self._chosen.compose_font_family)))
+        self.compose_font.setToolTip("The font new messages are written in; the receiver sees it too")
+        self.compose_font_points = part(page, QSpinBox, "composeFontPoints")
+        self.compose_font_points.setRange(6, 72)
+        self.compose_font_points.setValue(compose_points(self._chosen.compose_font_points))
+        self.compose_font_points.setToolTip("The size of that font; the receiver sees it too. The size slider only enlarges what you see")
         return page
+
+    def _chosen_font_family(self) -> str:
+        """The font chosen; "" while the field still shows the program's own, so that it keeps following the system (D-354)."""
+        family = self.compose_font.currentFont().family()
+        return "" if not self._chosen.compose_font_family and family == compose_family("") else family
+
+    def _chosen_font_points(self) -> int:
+        """The size chosen; 0 while the field still shows the system's size, so that it keeps following it."""
+        points = self.compose_font_points.value()
+        return 0 if not self._chosen.compose_font_points and points == compose_points(0) else points
 
     def _accounts_page(self) -> QWidget:
         page = forms.load("settings_accounts", self)
@@ -1012,6 +1032,7 @@ class SettingsDialog(QDialog):
             reading_pane_fits_message=self.fits_message.isChecked(),
             default_account=str(self.default_account.currentData() or ""), compose_html=bool(self.compose_html.currentData()),
             reply_quote=str(self.reply_quote_box.currentData()), autosave_seconds=self.autosave.value(), warn_no_subject=self.warn_no_subject.isChecked(),
+            compose_font_family=self._chosen_font_family(), compose_font_points=self._chosen_font_points(),
             startup=StartupView.parse(str(self.startup_box.currentData() or "")),
             shortcuts={action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]},
             calendar_upcoming_days=self.upcoming_days.value(), calendar_custom_weeks=self.custom_weeks.value(),
