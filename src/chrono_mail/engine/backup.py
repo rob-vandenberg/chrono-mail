@@ -12,7 +12,8 @@ from typing import Protocol, cast
 import pyzipper
 
 from chrono_mail.config import AccountSettings, AppConfig, ServerRole, config_to_text
-from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, CryptoError
+from chrono_mail.config.signatures import LIST_FILE as SIGNATURE_LIST_FILE, items_to_text, load_items, read_html
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, ConfigurationError, CryptoError
 from chrono_mail.core.appinfo import program_version
 from chrono_mail.crypto import DataKey, decrypt_message
 from chrono_mail.crypto.cipher import MAGIC
@@ -23,9 +24,10 @@ from chrono_mail.store.layout import parse_name
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "backup.py 3.6.351"
+__version__ = "backup.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the settings part holds the templates and signatures, config/templates-and-signatures/ (B-24, D-358)
 # v3.6.351: a message that moved while the backup ran is found: each folder that changed since its last search is searched again (a
 #           few calls per folder tell it; what it held is searched afresh), never the whole mailbox for each deleted message (RV-69); a
 #           file renamed again during the search is looked for once more
@@ -476,6 +478,7 @@ def _config_entries(engine: Engine, config: AppConfig, choice: BackupChoice, cho
         for path in (directories.sidebar_file, directories.tags_file):
             if path.is_file():
                 yield f"config/{path.name}", path.read_text("utf-8")
+        yield from _signature_entries(directories.signatures_directory)
         if choice.window_settings:
             yield "config/window.json", choice.window_settings
     if choice.passwords and choice.password is not None:
@@ -487,6 +490,22 @@ def _config_entries(engine: Engine, config: AppConfig, choice: BackupChoice, cho
             if kept:
                 passwords[account_id] = kept
         yield "config/passwords.json", json.dumps(passwords, indent=2)
+
+
+def _signature_entries(folder: Path) -> Iterator[tuple[str, str]]:
+    """The templates and signatures (B-24, D-358): their list and the HTML of each item it names; a file that is gone is left out."""
+    try:
+        listed = load_items(folder)
+    except ConfigurationError:
+        return  # a damaged list is said where they are shown; the backup goes on without them
+    if not listed.entries:
+        return
+    yield f"config/{folder.name}/{SIGNATURE_LIST_FILE}", items_to_text(listed)
+    for entry in listed.entries:
+        try:
+            yield f"config/{folder.name}/{entry.item_id}.html", read_html(folder, entry.item_id)
+        except ConfigurationError:
+            continue
 
 
 def _manifest(engine: Engine, choice: BackupChoice, chosen: list[_Chosen], sealed: list[str], unreadable: list[str], counts: dict[str, int]) -> str:

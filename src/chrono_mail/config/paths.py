@@ -8,9 +8,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import SERVICE_NAME, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 4.4.536"
+__version__ = "paths.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: signatures_directory: the templates and signatures, on this computer only (B-24, D-358)
 # v4.4.536: reminders_file (D-313)
 # v4.2.459: a profile's wallet name holds no "/" (its folder's name and a code of its place): KDE's wallet garbles an entry of a name with
 #           "/" when its label changes; former_credential_service: the name it had, its entries move from there (D-274)
@@ -54,6 +55,11 @@ class AppDirectories:
     @property
     def tags_file(self) -> Path:
         return self.config_directory / "tags.json"
+
+    @property
+    def signatures_directory(self) -> Path:
+        """The templates and signatures: their list and one HTML file each, on this computer only (B-24, D-358)."""
+        return self.config_directory / "templates-and-signatures"
 
     def pim_directory(self, account_id: str) -> Path:
         """Where the calendars, task lists and address books of an account are kept."""

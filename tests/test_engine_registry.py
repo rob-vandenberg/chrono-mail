@@ -13,9 +13,10 @@ from chrono_mail.engine.registry import option
 from tests.enginefactory import make_engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_registry.py 3.6.350"
+__version__ = "test_engine_registry.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: snippet.save-all is destructive: it deletes the templates and signatures it is not given (B-24, D-358)
 # v3.6.350: key.start-without-kept-mail asks first on the command line (it sets Local Folders aside)
 # v2.1.311: every command says what it is doing (doing): required, never empty, written for people
 # v2.0.287: contact-group.delete is destructive; the path as the system writes it (the Windows computer's report)
@@ -136,7 +137,7 @@ def test_secrets_are_marked_on_the_real_commands() -> None:
 
 def test_destructive_commands_are_marked() -> None:
     registry = build_registry()
-    assert {command.id for command in registry.commands() if command.destructive} == {"account.remove", "collection.delete", "contact-group.delete", "contact.delete", "dav.link", "event.delete", "folder.delete", "folder.empty", "key.start-without-kept-mail", "mail.repeat-cancel", "mail.settle", "message.delete", "rule.remove", "tag.delete", "task.delete"}
+    assert {command.id for command in registry.commands() if command.destructive} == {"account.remove", "collection.delete", "contact-group.delete", "contact.delete", "dav.link", "event.delete", "folder.delete", "folder.empty", "key.start-without-kept-mail", "mail.repeat-cancel", "mail.settle", "message.delete", "rule.remove", "snippet.save-all", "tag.delete", "task.delete"}
 
 
 class Colour(Enum):

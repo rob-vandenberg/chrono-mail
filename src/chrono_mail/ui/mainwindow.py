@@ -65,6 +65,7 @@ from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown_key
 from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
 from chrono_mail.engine.commands_pim import PIM_PURGE_DELETED, PurgeResult
+from chrono_mail.engine.commands_signatures import SNIPPET_TAKE_OLD, TakeOldParameters, TakenSignatures
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
@@ -73,10 +74,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.616"
+__version__ = "mainwindow.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
 # v4.4.616: Settings > Calendar's choices taken into use: Start week on for every date field, the rest by the Calendar section (D-352)
+# v4.5.626: The start moves each account's old plain-text signature into the list of signatures, once (B-24, D-358)
 # v4.4.615: A section switch from the folder list takes the focus to the new sidebar itself, so hiding the old one no longer
 #           hands it to the message list, which opened its first message (D-334, OR-16); the recovery docstring names Menu > File
 # v4.4.615: The start erases the appointments, contacts and tasks deleted over 30 days ago (pim.purge-deleted, D-072)
@@ -673,7 +675,9 @@ class MainWindow(QMainWindow):
         self.addToolBar(self.window_toolbar)
         self.toolbar = ToolbarRow(self)  # Mail's row
         self.window_toolbar.add_row(self.toolbar)
-        self.toolbar.add_left(self.act_new)
+        new_button = self.toolbar.add_left(self.act_new)
+        new_button.setMenu(self.composing.template_menu)  # the button's arrow lists the texts to start from; File > New stays one click (B-24, D-358)
+        new_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.toolbar.add_left(self.act_refresh)
         self.refresh_menu = QMenu(self)
         self.refresh_menu.aboutToShow.connect(self._fill_refresh_menu)
@@ -1203,6 +1207,9 @@ class MainWindow(QMainWindow):
             self.report.finished("Rules applied")  # its "mailbox changed" fetches the list and the numbers again
         elif dialog.scheduled_panel.changed:
             self.report.finished("Scheduled messages changed")  # each action told its facts: the rows already follow (D-146)
+        self.composing.load_library()  # New's menu follows Settings > Templates and Signatures (B-24, D-358)
+        if dialog.signatures_panel.accounts_saved:
+            self.reload_accounts()  # a new message uses the accounts' new choices at once
         if dialog.tags_saved:
             self.tags.load()  # the rows follow the "mailbox changed" of renaming or deleting a tag (D-146)
             for page in (self.pages[TASKS], self.pages[CALENDAR]):
@@ -1471,6 +1478,7 @@ class MainWindow(QMainWindow):
             self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
             self._colours_to_tags()  # once per account: appointment colours become tags (D-329)
             self._purge_deleted()  # what was deleted over 30 days ago is erased (D-072)
+            self._take_old_signatures()  # once: each account's old signature joins the library (B-24, D-358)
             self._started = True
             for path in self._files_waiting:
                 self.open_calendar_file(path)
@@ -1487,6 +1495,23 @@ class MainWindow(QMainWindow):
                 self.report.show(f"The colours of {counted(result.appointments, 'appointment')} are now tags")
 
         self.backend.ask(EVENT_COLOURS_TO_TAGS, NoParameters(), done, lambda error: None, owner=self)
+
+    def _take_old_signatures(self) -> None:
+        """Each account's old plain-text signature becomes a text of Settings > Templates and Signatures and that account's signature for
+        new mail, replies and forwards, before or after the quoted text as Settings > Writing placed replies (B-24, D-358). A word only
+        when it happened."""
+
+        def done(result: TakenSignatures) -> None:
+            self.composing.load_library()  # New's menu, with the signatures just moved
+            if result.names:
+                self.report.show(f"Your signatures are now in Settings > Templates and Signatures: {', '.join(result.names)}")
+
+        def failed(error: ChronoMailError) -> None:
+            self.composing.load_library()
+            self.report.show(f"The signatures of the accounts could not be moved yet: {error}; it is tried again at the next start")
+
+        below = self.prefs.read().reply_quote == "below"
+        self.backend.ask(SNIPPET_TAKE_OLD, TakeOldParameters(below), done, failed, owner=self)
 
     def _purge_deleted(self) -> None:
         """Erase the appointments, contacts and tasks deleted more than 30 days ago (D-072), in the background; a word only when it could not."""

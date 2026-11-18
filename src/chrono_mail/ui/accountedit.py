@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -47,9 +46,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.603"
+__version__ = "accountedit.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: The old signature field is gone: templates and signatures are chosen per account on Settings > Templates and Signatures (B-24, D-358)
 # v4.4.603: Shown as, Sign-in name; a calendar account shows its sign-in on the General tab, read-only; a Google account says whom it signed in as, without sign-in name and password fields (D-342)
 # v4.4.593: a Google account: its server, user name and password greyed; Find becomes Sign in with Google, for when Google ends the sign-in (D-335)
 # v4.4.536: Send reminder emails via Chrono Mail or Server, per account on this computer (D-313)
@@ -88,7 +88,6 @@ __version__ = "accountedit.py 4.4.603"
 # v0.0.31: IMAP accounts have no server copies tab
 # v0.0.20: Initial dialog for changing an account
 
-MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
 
 
 def differing[T](wanted: T, stored: object) -> T | None:
@@ -97,7 +96,7 @@ def differing[T](wanted: T, stored: object) -> T | None:
 
 
 class AccountEditDialog(QDialog):
-    """Changes an account: name, address, signature, servers, new passwords and what happens to mail on the server.
+    """Changes an account: name, address, servers, new passwords and what happens to mail on the server.
     The stored mail is not touched. A password field left empty keeps the stored password."""
 
     def __init__(self, backend: Backend, account: AccountSummary, parent: QWidget | None = None) -> None:
@@ -119,10 +118,6 @@ class AccountEditDialog(QDialog):
         self.name.setText(account.display_name)
         self.email: QLineEdit = part(form, QLineEdit, "email")
         self.email.setText(account.email_address)
-        self.signature: QPlainTextEdit = part(form, QPlainTextEdit, "signature")
-        self.signature.setPlainText(account.signature)
-        self.signature.setMinimumHeight(110)
-        self.signature_count: QLabel = part(form, QLabel, "signatureCount")
         self.in_send_receive: QCheckBox = part(form, QCheckBox, "inSendReceive")
         self.in_send_receive.setChecked(account.in_send_receive)
         self.junk_filter: QCheckBox = part(form, QCheckBox, "junkFilter")
@@ -130,7 +125,7 @@ class AccountEditDialog(QDialog):
         sign_in = account.dav_username or account.incoming_username  # what this calendar account signs in with
         self.sign_in_name: QLineEdit | None = None
         if calendars_only:  # the mail fields keep their stored values (nothing about them is sent) and are never shown
-            for field in (self.name, self.email, self.signature, self.signature_count, self.junk_filter):
+            for field in (self.name, self.email, self.junk_filter):
                 general.setRowVisible(field, False)
             self.sign_in_name = QLineEdit(sign_in)  # the account itself, read-only: changed with its password, or by signing in again (D-342)
             self.sign_in_name.setReadOnly(True)
@@ -255,12 +250,10 @@ class AccountEditDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
-        self.signature.textChanged.connect(self._count_signature)
         self.test_button.clicked.connect(self._test)
         self.forget_certificates_button.clicked.connect(self._forget_certificates)
         self.policy.currentIndexChanged.connect(self._policy_changed)
         self._policy_changed()
-        self._count_signature()
 
     def _server_fields(self, parent: QWidget) -> QWidget:
         """The incoming and outgoing server boxes (shared with Add account), made at their place in the form."""
@@ -361,12 +354,6 @@ class AccountEditDialog(QDialog):
 
     # --- layout -------------------------------------------------------------------------------------------
 
-    def _count_signature(self) -> None:
-        count = len(self.signature.toPlainText())
-        self.signature_count.setText(f"{count} of {MAXIMUM_SIGNATURE_CHARACTERS} characters")
-        self.signature_count.setStyleSheet(red_style() if count > MAXIMUM_SIGNATURE_CHARACTERS else "")
-        self.save_button.setEnabled(count <= MAXIMUM_SIGNATURE_CHARACTERS)
-
     def _policy_changed(self) -> None:
         self.days.setEnabled(str(self.policy.currentData()) == "delete_after_days")
 
@@ -432,7 +419,6 @@ class AccountEditDialog(QDialog):
             display_name=differing(self.name.text().strip(), account.display_name),
             account_name=differing(self.account_name.text().strip(), account.account_name),
             email_address=differing(self.email.text().strip(), account.email_address),
-            signature=differing(self.signature.toPlainText(), account.signature),
             username=differing(self.username.text().strip(), account.incoming_username),
             password=self.password.text() or None,
             incoming_host=differing(self.incoming_host.text().strip(), account.incoming_host),
@@ -631,3 +617,4 @@ class AccountEditDialog(QDialog):
             self._backend.ask(ACCOUNT_EDIT, values, lambda _result: done(), failed, owner=self)
         else:
             done()
+

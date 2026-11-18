@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.608"
+__version__ = "model.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: AccountSettings.texts: the account's templates and signatures for new mail, replies and forwards, and where its signature stands (B-24, D-358)
 # v4.4.608: AccountSettings.google_name: the person's name on Google, read again at every synchronisation, never the Shown as name (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.593: AccountSettings.google: an account of Google's calendars or contacts, logged in with Google sign-in (D-335)
@@ -86,6 +87,28 @@ class Pop3Options:
             raise ConfigurationError(f"The number of days must be between 1 and {MAXIMUM_DELETE_AFTER_DAYS}")
 
 
+TEXT_ID_PATTERN: re.Pattern[str] = re.compile(r"(?:[0-9a-f]{12})?")  # a text of the library, or none ("")
+
+
+@dataclass(frozen=True, slots=True)
+class AccountTexts:
+    """Which texts of the library an account puts in by itself (B-24, D-358): a template and a signature for new mail, replies and
+    forwards ("" none, the start for every account), and whether its signature stands after the quoted text of a reply or forward."""
+
+    template_new: str = ""
+    template_reply: str = ""
+    template_forward: str = ""
+    signature_new: str = ""
+    signature_reply: str = ""
+    signature_forward: str = ""
+    signature_below: bool = False
+
+    def __post_init__(self) -> None:
+        for chosen in (self.template_new, self.template_reply, self.template_forward, self.signature_new, self.signature_reply, self.signature_forward):
+            if TEXT_ID_PATTERN.fullmatch(chosen) is None:
+                raise ConfigurationError("A template or signature of an account is not a text of the library")
+
+
 @dataclass(frozen=True, slots=True)
 class AccountSettings:
     account: Account
@@ -112,6 +135,7 @@ class AccountSettings:
     dav_addresses: tuple[str, ...] = ()  # the addresses its calendar server knows as this user, in lower case; (): it does not say (D-310)
     google: bool = False  # the calendar or contacts server is Google's: Google sign-in, its refresh token kept as the password (D-335)
     google_name: str = ""  # the signed-in person's name on Google, read again at every synchronisation; never the Shown as name (D-346)
+    texts: AccountTexts = AccountTexts()  # its templates and signatures (B-24, D-358)
     reminder_emails: str = "chrono"  # who sends the e-mail reminders of its calendars: "chrono", "server", "none"; set per computer, so one of two can send (D-313)
 
     @property

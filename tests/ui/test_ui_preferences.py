@@ -19,13 +19,15 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.test_ui_composer import fill, new_composer
 from tests.ui.test_ui_reader import Probe, load, probe, reader, shown  # noqa: F401 - fixtures
 from tests.ui.world import World, row_of, settle, wait
+from tests.ui.test_ui_signatures import give_signature
 
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.4.616"
+__version__ = "test_ui_preferences.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the page Templates and Signatures after Writing; the signature comes from the library of templates and signatures, chosen per account (B-24, D-358; the owner's approval of 2026-11-18); its place in a reply is the account's
 # v4.4.616: Settings has the Calendar page, after Tags (D-352)
 # v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
 # v4.4.586: Favorites has All messages after All Inboxes (D-334)
@@ -104,7 +106,7 @@ def test_every_page_exists_and_the_values_round_trip(world: World, qtbot: QtBot)
     dialog = SettingsDialog(world.backend, settings_of(world), SettingsContext(tray_available=True, shortcut_actions=world.window._shortcut_registry()))  # noqa: SLF001
     qtbot.addWidget(dialog)
     assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == [
-        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Accounts", "Rules", "Tags", "Calendar", "Scheduled messages", "Operations window",
+        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Templates and Signatures", "Accounts", "Rules", "Tags", "Calendar", "Scheduled messages", "Operations window",
         "Security and storage", "Keyboard",
     ]
     chosen = dialog.chosen()
@@ -279,7 +281,7 @@ def test_writing_settings_reach_the_composer(world: World, qtbot: QtBot, monkeyp
 
 
 def test_replies_follow_the_quote_setting_and_the_signature_goes_to_the_end(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    world.call("account.edit", account=world.account_id, signature="Rob")
+    give_signature(world, world.account_id, "Rob", below=True)
 
     def change(dialog: SettingsDialog) -> None:
         dialog.reply_quote_box.setCurrentIndex(dialog.reply_quote_box.findData("below"))
@@ -290,6 +292,7 @@ def test_replies_follow_the_quote_setting_and_the_signature_goes_to_the_end(worl
     world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     world.window.act_reply.trigger()
     wait(qtbot, lambda: len(world.window.composing.composers) == 1)  # noqa: SLF001
+    wait(qtbot, lambda: "-- \nRob" in world.window.composing.composers[0].body.toPlainText())  # noqa: SLF001
     text = world.window.composing.composers[0].body.toPlainText()  # noqa: SLF001
     assert text.index("wrote:") < text.index("-- \nRob") and text.rstrip().endswith("Rob")
     first = world.window.composing.composers[0]  # noqa: SLF001

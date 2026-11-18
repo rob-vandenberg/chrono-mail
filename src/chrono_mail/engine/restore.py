@@ -20,6 +20,7 @@ from chrono_mail.config import AccountSettings, AppConfig, Pop3DeletePolicy, Rul
 from chrono_mail.config.files import load_config
 from chrono_mail.config.rules import load_rules
 from chrono_mail.config.sidebar import save_sidebar
+from chrono_mail.config.signatures import LIST_FILE as SIGNATURE_LIST_FILE, Item, load_items, parse_items, save_items, write_html
 from chrono_mail.config.tags import load_tags
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionInfo, CollectionKind, ConfigurationError, CryptoError, FolderRole, MessageFlag, StorageError
 from chrono_mail.crypto import DataKey, encrypt_message
@@ -45,9 +46,11 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 4.2.453"
+__version__ = "restore.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the templates and signatures come back (a name not here added, one here replaced only with Replace items that already exist) and
+#           are set aside with the other settings (B-24, D-358)
 # v4.2.453: the rules are restored under engine.rules_lock (D-302)
 # v4.2.418: a message that comes back into an account that is here keeps the account that received it, as the backup recorded it (D-292)
 # v3.6.371: the restored passwords get readable labels in the wallet (B-23, D-275)
@@ -92,7 +95,7 @@ MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024  # a message in a backup: the sam
 MAXIMUM_ENTRY_BYTES: int = 200_000_000  # any other file in a backup (a crafted small file can unpack to far more: RV-63)
 _SETTING_WORDS: dict[str, str] = {  # the settings files of a backup, as the report names one that could not be read
     "config/rules.json": "the rules", "config/tags.json": "the tag colours", "config/sidebar.json": "the order of the folder list",
-    "data/junk-filter.bin": "what the junk filter learned", "config/window.json": "the window settings", "config/passwords.json": "the passwords",
+    "config/templates-and-signatures/items.json": "the templates and signatures", "data/junk-filter.bin": "what the junk filter learned", "config/window.json": "the window settings", "config/passwords.json": "the passwords",
 }
 DRAFTS: tuple[str, ...] = ("Drafts",)  # where the Outbox's messages go when the store has no folder for drafts yet
 SENT: tuple[str, ...] = ("Sent",)  # where a message the server took goes when the store has no Sent folder yet
@@ -1310,6 +1313,59 @@ def _restore_settings(engine: Engine, archive: _Reading, names: list[str], seale
     if "config/window.json" in names:
         with _left_out_when_damaged("config/window.json", report):
             report.window_settings = _read(archive, "config/window.json").decode("utf-8")
+    _restore_signatures(engine, archive, names, replace_existing, report)
+
+
+def _restore_signatures(engine: Engine, archive: _Reading, names: list[str], replace_existing: bool, report: RestoreReport) -> None:
+    """The templates and signatures of the backup (B-24, D-358): one whose name is not here is added at the end of the list;
+    one whose name is here replaces this computer's text only with "Replace items that already exist", else this computer's stays."""
+    folder = engine.directories.signatures_directory
+    listed = f"config/{folder.name}/{SIGNATURE_LIST_FILE}"
+    if listed not in names:
+        return
+    with _left_out_when_damaged(listed, report):
+        backup = parse_items(_read(archive, listed).decode("utf-8"))
+        try:
+            here = load_items(folder)
+        except ConfigurationError as error:  # this computer's list, not the backup's (load_items copied it to .bad)
+            report.notes.append(f"This computer's templates and signatures could not be read, so those of the backup were not added: {error}")
+            return
+        moved: dict[str, str] = {}  # the backup's id of a text -> its id here, where they differ
+        for entry in backup.entries:
+            name = f"config/{folder.name}/{entry.item_id}.html"
+            if name not in names:
+                continue
+            with _left_out_when_damaged(name, report):
+                html = _read(archive, name).decode("utf-8")
+                same = here.named(entry.name)
+                if same is not None:
+                    if replace_existing:
+                        write_html(folder, same.item_id, html)
+                    if same.item_id != entry.item_id:
+                        moved[entry.item_id] = same.item_id
+                    continue
+                item_id = entry.item_id if here.find(entry.item_id) is None else os.urandom(6).hex()
+                if item_id != entry.item_id:
+                    moved[entry.item_id] = item_id
+                changed = here.with_new(Item(item_id, entry.name))
+                write_html(folder, item_id, html)  # the text before the list names it (config/signatures.py)
+                save_items(folder, changed)
+                here = changed
+        if moved:  # the accounts' choices follow the texts to their ids here
+            engine.change_config(lambda fresh: _texts_moved(fresh, moved))
+
+
+def _texts_moved(config: AppConfig, moved: dict[str, str]) -> AppConfig:
+    for settings in config.accounts:
+        texts = settings.texts
+        changed = dataclasses.replace(
+            texts, template_new=moved.get(texts.template_new, texts.template_new), template_reply=moved.get(texts.template_reply, texts.template_reply),
+            template_forward=moved.get(texts.template_forward, texts.template_forward), signature_new=moved.get(texts.signature_new, texts.signature_new),
+            signature_reply=moved.get(texts.signature_reply, texts.signature_reply), signature_forward=moved.get(texts.signature_forward, texts.signature_forward),
+        )
+        if changed != texts:
+            config = config.with_account(dataclasses.replace(settings, texts=changed))
+    return config
 
 
 def _restore_passwords(engine: Engine, passwords: dict[str, dict[str, str]], report: RestoreReport, replace_existing: bool) -> None:
@@ -1335,7 +1391,7 @@ SET_ASIDE_DONE: str = "set-aside-done"  # in the aside folder once all of this c
 
 def _config_files(engine: Engine) -> tuple[Path, ...]:
     directories = engine.directories
-    return directories.rules_file, directories.sidebar_file, directories.tags_file
+    return directories.rules_file, directories.sidebar_file, directories.tags_file, directories.signatures_directory
 
 
 def _set_aside(engine: Engine) -> Path:
@@ -1397,7 +1453,10 @@ def _put_back(engine: Engine, aside: Path) -> None:
         for path in _config_files(engine):
             kept = aside / "config" / path.name
             if done or kept.exists():
-                path.unlink(missing_ok=True)
+                if path.is_dir():  # the signatures' folder (B-24)
+                    shutil.rmtree(path)
+                else:
+                    path.unlink(missing_ok=True)
             if kept.exists():
                 os.replace(kept, path)
         before = (aside / "config" / "config.json").read_text("utf-8")

@@ -59,6 +59,7 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.sidebarpage import SidebarPage
+from chrono_mail.ui.signaturesdialog import SignaturesPanel
 from chrono_mail.ui.startupchooser import StartupChooser
 from chrono_mail.ui.tagsdialog import TagsPanel
 from chrono_mail.core.colours import DARK, LIGHT, text_on_accent
@@ -66,9 +67,11 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.4.623"
+__version__ = "settingsdialog.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: Settings > Templates and Signatures after Writing: the signatures, kept at OK (B-24, D-358); the page list is as wide as its
+#           longest title
 # v4.4.623: Settings > Writing: Default font, a font and a size (D-354)
 # v4.4.616: the Calendar page again: week numbers, short events as 30 minutes, past events less bright, Start week on, the weeks of the
 #           custom view, the days of Upcoming (D-352)
@@ -184,6 +187,8 @@ def _fill_combo(box: QComboBox, choices: tuple[tuple[str, str], ...], current: s
 
 
 SIDEBAR_EXTRA_POINTS: float = 2.0  # the page list: the desktop's font size plus this, times the size factor of the interface
+SIDEBAR_WIDTH: int = 190  # the page list's width, unless its longest title needs more
+SIDEBAR_TEXT_ROOM: int = 16  # room beside the longest title (the rows' own margins)
 SIDEBAR_ROW_EXTRA_POINTS: float = 2.0  # and its rows this much higher than the text needs (half above, half below)
 SLIDER_WIDTH: int = 200  # pixels at the standard size: the smallest width of the size slider
 MINIMUM_WIDTH: int = 760  # the smallest size of this window at the standard size
@@ -335,7 +340,6 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(wpx(MINIMUM_WIDTH), wpx(MINIMUM_HEIGHT))
         self.form: QWidget = forms.fill(self, "settings")  # the page list, the place of the pages, the status line and OK and Cancel (D-276)
         self.sidebar = part(self.form, QListWidget, "pageList")
-        self.sidebar.setFixedWidth(wpx(190))
         self.sidebar_rows = TallerRows(self.sidebar)
         self.sidebar.setItemDelegate(self.sidebar_rows)
         self._size_sidebar_text(scale.windows())
@@ -345,6 +349,7 @@ class SettingsDialog(QDialog):
         self._buttons: QDialogButtonBox = buttons
         self._saving_tags: bool = False
         self._saving_autostart: bool = False
+        self._saving_signatures: bool = False
         self._removing_account: bool = False
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -362,6 +367,8 @@ class SettingsDialog(QDialog):
         self._add_page("Message list", self._list_page())
         self._add_page("Reading", self._reading_page())
         self._add_page("Writing", self._writing_page())
+        self.signatures_panel = SignaturesPanel(backend, settings, self._chosen.sent_from_line, self)  # kept at OK, as everything here (B-24, D-358)
+        self._add_page("Templates and Signatures", self.signatures_panel)
         self._add_page("Accounts", self._accounts_page())
         self.rules_panel = RulesPanel(backend, list(known.accounts), known.folders, known.current_folder, self)
         self._add_page("Rules", self.rules_panel)
@@ -374,6 +381,7 @@ class SettingsDialog(QDialog):
         self._add_page("Operations window", self._operations_page())
         self._add_page("Security and storage", self._security_page())
         self._add_page("Keyboard", self._keyboard_page())
+        self._fit_sidebar_width()
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
         self.setMinimumSize(self._smallest(scale.windows()))
@@ -397,6 +405,12 @@ class SettingsDialog(QDialog):
         self.sidebar_rows.extra = round(SIDEBAR_ROW_EXTRA_POINTS * factor * self.logicalDpiY() / 72)  # points to pixels
         self.sidebar.setFont(font)
         self.sidebar.doItemsLayout()  # the rows take their new height at once
+        self._fit_sidebar_width()
+
+    def _fit_sidebar_width(self) -> None:
+        """The page list is SIDEBAR_WIDTH wide, or wider when its longest title needs it: no title is ever cut off."""
+        needed = self.sidebar.sizeHintForColumn(0) + 2 * self.sidebar.frameWidth() + wpx(SIDEBAR_TEXT_ROOM) if self.sidebar.count() else 0
+        self.sidebar.setFixedWidth(max(wpx(SIDEBAR_WIDTH), needed))
 
     def _add_page(self, title: str, page: QWidget) -> None:
         self.sidebar.addItem(QListWidgetItem(title))
@@ -1031,7 +1045,7 @@ class SettingsDialog(QDialog):
             prefer_plain=self.prefer_plain.isChecked(), remote_always=self.remote_always.isChecked(), remote_senders=senders, links_ask=self.links_ask.isChecked(),
             reading_pane_fits_message=self.fits_message.isChecked(),
             default_account=str(self.default_account.currentData() or ""), compose_html=bool(self.compose_html.currentData()),
-            reply_quote=str(self.reply_quote_box.currentData()), autosave_seconds=self.autosave.value(), warn_no_subject=self.warn_no_subject.isChecked(),
+            reply_quote=str(self.reply_quote_box.currentData()), autosave_seconds=self.autosave.value(), warn_no_subject=self.warn_no_subject.isChecked(), sent_from_line=self.signatures_panel.sent_from.isChecked(),
             compose_font_family=self._chosen_font_family(), compose_font_points=self._chosen_font_points(),
             startup=StartupView.parse(str(self.startup_box.currentData() or "")),
             shortcuts={action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]},
@@ -1050,7 +1064,7 @@ class SettingsDialog(QDialog):
 
     @override
     def done(self, result: int) -> None:
-        if self._saving_tags or self._saving_autostart or self._removing_account:
+        if self._saving_tags or self._saving_autostart or self._saving_signatures or self._removing_account:
             return  # Cancel, Esc or the close button wait until the tags or the start at login are saved or the account is removed: never left half done
         if result != QDialog.DialogCode.Accepted:
             self._grow_with(self.interface_scale_saved)  # Cancel: the size it had, before it is remembered
@@ -1064,11 +1078,14 @@ class SettingsDialog(QDialog):
             self.show_page("Keyboard")
             self.shortcut_note.setText(f"<span style='color:{red()}'>The same keys are used twice: " + "; ".join(conflicts) + "</span>")
             return
-        if self._saving_tags or self._saving_autostart:
-            return  # OK was pressed again while the tags or the start at login are being saved
+        if self._saving_tags or self._saving_autostart or self._saving_signatures:
+            return  # OK was pressed again while the tags, the start at login or the signatures are being saved
         wanted = self.autostart_wanted()
         if wanted is not None:
             self._save_autostart(wanted)
+            return
+        if self.signatures_panel.changed():
+            self._save_signatures()
             return
         if not self.tags_panel.changed():
             super().accept()
@@ -1089,6 +1106,23 @@ class SettingsDialog(QDialog):
             self.show_page("Tags")
 
         self.tags_panel.save(saved, failed)
+
+    def _save_signatures(self) -> None:
+        """OK: the signatures as the page shows them (B-24, D-358), then the rest of OK. A refusal keeps the window open on their page."""
+        self._saving_signatures = True
+        self._buttons.setEnabled(False)
+
+        def saved() -> None:
+            self._saving_signatures = False
+            self._buttons.setEnabled(True)
+            self.accept()  # nothing left to change in the signatures: on with the rest of OK
+
+        def failed() -> None:
+            self._saving_signatures = False
+            self._buttons.setEnabled(True)
+            self.show_page("Templates and Signatures")
+
+        self.signatures_panel.save(saved, failed)
 
     def _save_autostart(self, wanted: AutostartParameters) -> None:
         """OK: the start at login first, as the system's own entry; then the rest of OK. A failure keeps the window open on General."""

@@ -55,27 +55,7 @@
        <item row="2" column="1">
         <widget class="QLineEdit" name="email" />
        </item>
-       <item row="3" column="0">
-        <widget class="QLabel" name="signatureLabel">
-         <property name="text">
-          <string>Signature</string>
-         </property>
-         <property name="buddy">
-          <cstring>signature</cstring>
-         </property>
-        </widget>
-       </item>
        <item row="3" column="1">
-        <widget class="QPlainTextEdit" name="signature">
-         <property name="placeholderText">
-          <string>Added at the end of new messages, replies and forwards</string>
-         </property>
-        </widget>
-       </item>
-       <item row="4" column="1">
-        <widget class="QLabel" name="signatureCount" />
-       </item>
-       <item row="5" column="1">
         <widget class="QCheckBox" name="inSendReceive">
          <property name="text">
           <string>Include this account in Send and Receive</string>
@@ -85,7 +65,7 @@
          </property>
         </widget>
        </item>
-       <item row="6" column="1">
+       <item row="4" column="1">
         <widget class="QCheckBox" name="junkFilter">
          <property name="text">
           <string>Filter junk mail</string>
@@ -95,7 +75,7 @@
          </property>
         </widget>
        </item>
-       <item row="7" column="0">
+       <item row="5" column="0">
         <widget class="QLabel" name="storageLabel">
          <property name="text">
           <string>Keep the mail in</string>
@@ -105,7 +85,7 @@
          </property>
         </widget>
        </item>
-       <item row="7" column="1">
+       <item row="5" column="1">
         <widget class="QComboBox" name="storage">
          <property name="toolTip">
           <string>Changing this moves the stored mail of this account. Nothing is deleted before the copy has been checked.</string>

@@ -13,11 +13,13 @@ from chrono_mail.config import ServerRole
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_block, with_signature
 from tests.ui.world import World, add_window, gone, row_of, settle, wait
+from tests.ui.test_ui_signatures import give_signature
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 3.6.358"
+__version__ = "test_ui_composer.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the signature comes from the library of templates and signatures, chosen per account (B-24, D-358; the owner's approval of 2026-11-18)
 # v3.6.358: attachments added, removed or kept while a draft is saved stay as they are (CR-03)
 # v3.6.351: a send that failed after its copy may be stored never says nothing was stored
 # v3.1.341: a failed send closes the window: the message waits in the Outbox, no draft beside it (RV-155)
@@ -589,18 +591,21 @@ def test_with_signature_puts_it_before_quoted_text() -> None:
 
 
 def test_a_new_message_and_a_reply_get_the_signature_but_a_resumed_draft_does_not(world: World, qtbot: QtBot) -> None:
-    world.call("account.edit", account=world.account_id, signature="Rob\nChrono Mail")
+    give_signature(world, world.account_id, "Rob\nChrono Mail")
     fresh = new_composer(world, qtbot)
+    wait(qtbot, lambda: "-- \nRob" in fresh.body.toPlainText())
     assert fresh.body.toPlainText() == "\n\n-- \nRob\nChrono Mail\n" and not fresh.is_modified()
     assert fresh.close() and not world.dialogs.shown  # a signature alone is not a change worth asking about
     drafted = world.call("message.compose", account=world.account_id, folder="Inbox", message=world.call("message.list", account=world.account_id, folder="Inbox").messages[0].message_id, kind="reply")
     reply = new_composer(world, qtbot, drafted)
+    wait(qtbot, lambda: "-- \nRob" in reply.body.toPlainText())
     text = reply.body.toPlainText()
     assert text.index("-- \nRob") < text.index("wrote:") and text.count("-- \nRob") == 1
     saved = world.call("draft.save", account=world.account_id, subject="x", body="mine\n\n-- \nRob\nChrono Mail\n")
     opened = world.call("draft.open", account=world.account_id, message=saved.message_id)
-    resumed = ComposeWindow(world.backend, accounts(world), world.account_id, opened, None, (opened.folder, opened.message_id))
+    resumed = ComposeWindow(world.backend, list(world.call("account.list")), world.account_id, opened, None, (opened.folder, opened.message_id))
     qtbot.addWidget(resumed)
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - the library arrived: a draft taken up again gets nothing more
     assert resumed.body.toPlainText().count("-- \nRob") == 1
     for window in (reply, resumed):
         window._finished = True  # noqa: SLF001
@@ -611,15 +616,15 @@ def test_choosing_another_sender_swaps_the_signature(world: World, qtbot: QtBot,
     from tests.test_engine_commands import add_account
 
     second = add_account(world.engine, world.pop, world.smtp, email="second@example.com")
-    world.call("account.edit", account=world.account_id, signature="First signature")
-    world.call("account.edit", account=second, signature="Second signature")
+    give_signature(world, world.account_id, "First signature")
+    give_signature(world, second, "Second signature")
     window = new_composer(world, qtbot)
-    assert "First signature" in window.body.toPlainText()
+    wait(qtbot, lambda: "First signature" in window.body.toPlainText())
     window.body.setPlainText("Hello\n\n" + window.body.toPlainText().lstrip("\n"))
     window.from_box.setCurrentIndex(window.from_box.findData(second))
     text = window.body.toPlainText()
     assert "Second signature" in text and "First signature" not in text and text.startswith("Hello")
-    world.call("account.edit", account=second, signature="")
+    world.call("snippet.set-account-texts", account=second)
     window.from_box.setCurrentIndex(window.from_box.findData(world.account_id))
     assert window.body.toPlainText().count("-- \n") == 1  # the first account's signature is back once
     window._finished = True  # noqa: SLF001

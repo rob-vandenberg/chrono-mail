@@ -5,7 +5,7 @@ from typing import Literal
 
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, AccountSummary, NoParameters
@@ -15,6 +15,7 @@ from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters,
 from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResult, OutboxMessageParameters, SentAlready
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
 from chrono_mail.engine.compose import ComposeKind
+from chrono_mail.engine.commands_signatures import SNIPPET_ALL, NoParameters as SnippetNoParameters, SnippetText
 from chrono_mail.ui import appearance, prefs, scale, theme
 from chrono_mail.ui.backend import alive, Backend
 from chrono_mail.ui.columns import OUTBOX_FOLDER_PATH, SCHEDULED_FOLDER_PATH
@@ -26,9 +27,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.4.623"
+__version__ = "composing.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: New's menu lists the templates and signatures to start a new message from; "Sent from Chrono Mail" passed on (B-24, D-358)
 # v4.4.623: The composer writes in Settings > Writing > Default font and sends it with the message (D-354)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.520: open_draft: tells when the draft was sent (D-310)
@@ -71,26 +73,57 @@ class Composing(QObject):
         self._prefs: InUse = prefs_in_use
         self._messages: MessageListPane = messages
         self.composers: list[ComposeWindow] = []
+        self.library: tuple[SnippetText, ...] = ()  # the templates and signatures, for New's menu (B-24, D-358)
+        self._library_error: str = ""  # why they could not be read ("" they could)
+        self.template_menu = QMenu(parent)
+        self.template_menu.setToolTipsVisible(True)
+        self.template_menu.aboutToShow.connect(self._fill_template_menu)
 
-    def new_message(self) -> None:
+    def load_library(self) -> None:
+        """The templates and signatures again (at the start and after Settings), for New's menu."""
+
+        def arrived(found: tuple[SnippetText, ...]) -> None:
+            self.library = found
+
+        def failed(error: ChronoMailError) -> None:
+            self.library = ()
+            self._library_error = str(error)
+
+        self._library_error = ""
+        self._backend.ask(SNIPPET_ALL, SnippetNoParameters(), arrived, failed, owner=self)
+
+    def _fill_template_menu(self) -> None:
+        """New's menu: every text of the library, to start a new message from (B-24, D-358)."""
+        self.template_menu.clear()
+        if not self.library:
+            empty = self.template_menu.addAction("Templates could not be read" if self._library_error else "No templates yet")
+            empty.setEnabled(False)
+            empty.setToolTip(self._library_error or "Make them in Settings > Templates and Signatures")
+            return
+        for entry in self.library:
+            action = self.template_menu.addAction(entry.name)
+            action.setToolTip("A new message that starts with this text")
+            action.triggered.connect(lambda checked=False, chosen=entry.item_id: self.new_message(chosen))
+
+    def new_message(self, template: str = "") -> None:
         """New: from the default account, else the open folder's, else the first account; also while no folder is selected (just after the
         start or a restore, W9) and while the window does not know its accounts yet (the index rebuild at start or after a restore: the
         engine is asked for them, W9b). Without a mail account there is nothing to send from."""
         if self._state.mail_accounts():
-            self._new_from(self._state.mail_accounts())
+            self._new_from(self._state.mail_accounts(), template)
             return
 
         def listed(found: tuple[AccountSummary, ...]) -> None:
-            self._new_from([account for account in found if account.kind not in ("local", "dav")])
+            self._new_from([account for account in found if account.kind not in ("local", "dav")], template)
 
         self._backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self._status.report("New message", error), owner=self)
 
-    def _new_from(self, accounts: list[AccountSummary]) -> None:
+    def _new_from(self, accounts: list[AccountSummary], template: str = "") -> None:
         wanted = self._prefs.read().default_account
         known = [account.account_id for account in accounts]
         account = wanted if wanted in known else self._state.view.account or (known[0] if known else None)
         if account is not None:
-            self.open_composer(account, None, None, accounts=accounts)
+            self.open_composer(account, None, None, accounts=accounts, template=template)
 
     def compose_to(self, address: str) -> None:
         """A new message to this address (from a contact)."""
@@ -137,7 +170,7 @@ class Composing(QObject):
 
     def open_composer(
         self, account_id: str, draft: DraftOpenResult | ComposeResult | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None, schedule_only: bool = False, modal: bool = False,
-        editing: ScheduledInfo | None = None, taken_back: bool = False, accounts: list[AccountSummary] | None = None,
+        editing: ScheduledInfo | None = None, taken_back: bool = False, accounts: list[AccountSummary] | None = None, template: str = "",
     ) -> ComposeWindow:
         accounts = self._state.mail_accounts() if accounts is None else accounts  # given: the engine's, while the window does not know them yet
         mail_ids = [account.account_id for account in accounts]
@@ -146,7 +179,7 @@ class Composing(QObject):
             account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
         window = ComposeWindow(
             self._backend, accounts, account_id, draft, source, resume, self._prefs.read().compose_html, self.compose_options(),
-            settings=self._prefs.settings, schedule_only=schedule_only, editing=editing, taken_back=taken_back,
+            settings=self._prefs.settings, schedule_only=schedule_only, editing=editing, taken_back=taken_back, template=template,
         )
         window.waiting.connect(self.send_waiting)
         window.certificate_stopped.connect(self.certificate_stopped)
@@ -270,7 +303,8 @@ class Composing(QObject):
     def compose_options(self) -> ComposeOptions:
         chosen = self._prefs.read()
         return ComposeOptions(chosen.autosave_seconds, chosen.warn_no_subject, self.writing_points(), chosen.reply_quote == "below",
-                              appearance.compose_family(chosen.compose_font_family), appearance.compose_points(chosen.compose_font_points))
+                              appearance.compose_family(chosen.compose_font_family), appearance.compose_points(chosen.compose_font_points),
+                              sent_from_line=chosen.sent_from_line)
 
     def set_text_size(self, factor: float | None = None) -> None:
         """The text of the open windows at this size factor (tried out from Settings), or at the saved one."""

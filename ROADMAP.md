@@ -37,6 +37,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
 | 1.12e | Settings window, account editing and removal, signatures (0.0.20). | done |
+| 1.12l | Templates and signatures: one library of named texts, Ctrl+1 to Ctrl+7, chosen per account on Settings > Templates and Signatures (B-24, D-358). | done (4.5.626) |
 | 1.12f | Tray icon, new mail notifications, unread count in the title (0.0.21). | done |
 | 1.12g | Save as .eml, view source, print (0.0.22). | done |
 | 1.12h | Address completion in the composer, from the addresses in the mail (0.0.23, index schema 4). | done |

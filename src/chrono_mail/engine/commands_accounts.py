@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from chrono_mail.config.model import AccountTexts
 from chrono_mail.config import (
     load_sidebar,
     save_sidebar,
@@ -54,9 +55,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.608"
+__version__ = "commands_accounts.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: AccountSummary.texts in place of the old signature; account.edit no longer takes a signature (B-24, D-358)
 # v4.4.608: a Google account without a Shown as name is named by the person's name on Google; Google's two parts told apart as Google Calendar
 #           and Google Contacts; list_name and holds: the two lines of an account in Settings > Accounts, the server only when two are the same (D-346)
 # v4.4.607: two accounts shown alike are told apart by their sign-in name, not their server: "Rob - robvandenberg64@gmail.com (Calendars and contacts)" (D-345)
@@ -440,7 +442,7 @@ class AccountSummary:
     outgoing: str
     delete_policy: str
     delete_days: int = 30
-    signature: str = ""
+    texts: AccountTexts = AccountTexts()  # the templates and signatures it puts in by itself (B-24, D-358)
     incoming_host: str = ""
     incoming_port: int = 0
     incoming_security: str = ""
@@ -482,7 +484,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         f"{item.account.outgoing.host}:{item.account.outgoing.port} ({item.account.outgoing.security.value})",
         item.pop3.policy.value,
         item.pop3.days,
-        item.signature,
+        item.texts,
         item.account.incoming.host,
         item.account.incoming.port,
         item.account.incoming.security.value,
@@ -579,7 +581,6 @@ class AccountEditParameters:
     display_name: str | None = field(default=None, metadata=option("Your name: what the people you write to see, with the address"))
     account_name: str | None = field(default=None, metadata=option("How Chrono Mail names the account in its own lists, never in mail (empty: the e-mail address)"))
     email_address: str | None = field(default=None, metadata=option("The e-mail address of the account"))
-    signature: str | None = field(default=None, metadata=option("The signature added to new messages (empty removes it)"))
     username: str | None = field(default=None, metadata=option("The sign-in name for the incoming server"))
     password: str | None = field(default=None, metadata=option("A new password for the incoming server", secret=True))
     incoming_host: str | None = field(default=None, metadata=option("The POP3 server"))
@@ -633,7 +634,6 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
         settings.pop3.policy if parameters.delete_policy is None else Pop3DeletePolicy(parameters.delete_policy),
         settings.pop3.days if parameters.delete_days is None else parameters.delete_days,
     )
-    signature = settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip()
     in_send_receive = settings.in_send_receive if parameters.in_send_receive is None else parameters.in_send_receive
     account_name = settings.account_name if parameters.account_name is None else parameters.account_name.strip()
     junk_filter = settings.junk_filter if parameters.junk_filter is None else parameters.junk_filter
@@ -651,7 +651,6 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             current,
             account=replace(current.account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
             pop3=pop3,
-            signature=signature,
             in_send_receive=in_send_receive,
             account_name=account_name,
             outgoing_same_login=same_login,
@@ -1054,7 +1053,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates, doing="Forgetting the accepted certificates")
     registry.register(ACCOUNT_ADD.id, "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add, doing="Adding an account")
     registry.register(ACCOUNT_CHECK.id, "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check, doing="Testing the connection to the servers")
-    registry.register(ACCOUNT_EDIT.id, "Change the name, address, servers, passwords, signature or server-copy policy of an account", AccountEditParameters, account_edit, doing="Saving the account's settings")
+    registry.register(ACCOUNT_EDIT.id, "Change the name, address, servers, passwords or server-copy policy of an account", AccountEditParameters, account_edit, doing="Saving the account's settings")
     registry.register(ACCOUNT_LIST.id, "List the accounts", NoParameters, account_list, doing="Reading the accounts")
     registry.register(ACCOUNT_REMOVE.id, "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True, doing="Removing an account")
     registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy, doing="Saving what happens to mail on the server")

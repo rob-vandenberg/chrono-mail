@@ -6,11 +6,13 @@ from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.richeditor import clean_html, safe_link
 from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, wait
+from tests.ui.test_ui_signatures import give_signature
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_richtext.py 0.3.108"
+__version__ = "test_ui_richtext.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the signature comes from the library of templates and signatures, chosen per account (B-24, D-358; the owner's approval of 2026-11-18)
 # v0.3.108: The way of writing is chosen in the menu of the button (Rich text, Plain text), which shows it
 # v0.0.24: Initial rich text composing tests
 
@@ -135,8 +137,9 @@ def test_a_rich_draft_comes_back_as_rich_text(world: World, qtbot: QtBot) -> Non
 
 
 def test_the_signature_is_left_alone_in_rich_text_when_the_sender_changes(world: World, qtbot: QtBot) -> None:
-    world.call("account.edit", account=world.account_id, signature="Sig")
+    give_signature(world, world.account_id, "Sig")
     window = new_composer(world, qtbot)
+    wait(qtbot, lambda: "Sig" in window.body.toPlainText())
     switch(window)
     window.rich.edit.selectAll()
     window.rich.bold.trigger()

@@ -45,13 +45,18 @@ from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.mime.pictures import data_address, pictures_out_of
 from chrono_mail.ui.richeditor import Picture, RichEditor
+from chrono_mail.ui.composertexts import KEYED, TextsInMessage, signature_block, with_sent_from, with_signature
+from chrono_mail.config.model import AccountTexts
+from chrono_mail.engine.commands_signatures import SNIPPET_ALL, NoParameters as SnippetNoParameters, SnippetText
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.4.623"
+__version__ = "composer.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: Templates and signatures from the library: the account's template and signature when a message opens, Ctrl+1 to
+#           Ctrl+7, the Signature button, a default signature follows From; "Sent from Chrono Mail" when Settings asks for it (B-24, D-358)
 # v4.4.623: The rich text is written in Settings > Writing > Default font, which the message carries (D-354)
 # v4.4.622: A reply or forward in rich text quotes the original with its formatting and pictures; a forward in plain text carries them as
 #           attachments; a reply switched to plain text leaves the quoted pictures out (D-353)
@@ -137,13 +142,6 @@ def parse_recipients(text: str) -> list[str] | None:
 
 
 AUTOSAVE_SECONDS: int = 30
-SIGNATURE_MARK: str = "-- \n"  # the usual separator: two dashes and a space on a line of their own
-
-
-def signature_block(signature: str) -> str:
-    return SIGNATURE_MARK + signature.strip("\n") if signature.strip() else ""
-
-
 @dataclass(frozen=True, slots=True)
 class ComposeOptions:
     """What the settings say about writing: how often to save, whether to warn about a missing subject, the font size
@@ -155,6 +153,7 @@ class ComposeOptions:
     reply_below: bool = False
     font_family: str = ""  # Settings > Writing > Default font: written in and sent with an HTML message (D-354); "" Qt's own
     font_points: int = 0  # its size in points as sent; 0: none sent
+    sent_from_line: bool = False  # every message sent ends with "Sent from Chrono Mail" (B-24, D-358)
 
 
 def _paragraphs_of(text: str) -> str:
@@ -162,24 +161,11 @@ def _paragraphs_of(text: str) -> str:
     return "".join(f"<p>{html.escape(line) or '<br />'}</p>" for line in text.split("\n"))
 
 
-def with_signature(body: str, signature: str, below: bool = False) -> str:
-    """The body of a new message, a reply or a forward with the signature before any quoted text
-    (after the whole text when the answer is written under the quote)."""
-    block = signature_block(signature)
-    if not block:
-        return body
-    if not body.strip():
-        return f"\n\n{block}\n"
-    if below:
-        return f"{body.rstrip(chr(10))}\n\n{block}\n"
-    rest = body[2:] if body.startswith("\n\n") else body
-    return f"\n\n{block}\n\n{rest}"
+DRAFT_KINDS: dict[str, DraftKind] = {"new": "new", "reply": "reply", "reply_all": "reply_all", "forward": "forward", "forward_attachment": "forward_attachment"}
+
 
 ROLE_PATH: int = 256  # an attachment that is a file on this computer
 ROLE_KEPT: int = 257  # an attachment that is already inside the stored draft (its position there)
-
-
-DRAFT_KINDS: dict[str, DraftKind] = {"new": "new", "reply": "reply", "reply_all": "reply_all", "forward": "forward", "forward_attachment": "forward_attachment"}
 
 
 class ComposeWindow(QMainWindow):
@@ -212,6 +198,7 @@ class ComposeWindow(QMainWindow):
         schedule_only: bool = False,
         editing: ScheduledInfo | None = None,
         taken_back: bool = False,
+        template: str = "",
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -320,6 +307,11 @@ class ComposeWindow(QMainWindow):
         self.plain_action.setChecked(True)
         self.rich_button.setMenu(mode_menu)
         buttons.addWidget(self.rich_button)
+        self.signature_button = QPushButton("Signature", central)  # every text of the library, with its key (B-24, D-358)
+        self.signature_button.setObjectName("flatButton")
+        self.signature_button.setMenu(QMenu(self.signature_button))
+        self.signature_button.setEnabled(False)
+        buttons.addWidget(self.signature_button)
         buttons.addWidget(self.status, 1)
         layout.addLayout(buttons)
         self.setCentralWidget(central)
@@ -346,9 +338,6 @@ class ComposeWindow(QMainWindow):
             self.include_original.setChecked(True)
             self.include_original.show()
         self._accounts: list[AccountSummary] = accounts
-        self._signature: str = self._signature_of(account_id)
-        if resume is None and self._signature:
-            self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature, below=options.reply_below and self._kind in ("reply", "reply_all")))
         self.body.moveCursor(self.body.textCursor().MoveOperation.End if options.reply_below and self._kind in ("reply", "reply_all") and resume is None else self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
         if options.font_family:
@@ -364,7 +353,7 @@ class ComposeWindow(QMainWindow):
             self.set_rich(True, stored_html)
         elif rich and quoted:  # the original quoted with its formatting and pictures (D-353)
             below = options.reply_below and self._kind in ("reply", "reply_all")
-            own = _paragraphs_of(with_signature("", self._signature, below=below) if self._signature else "\n")
+            own = _paragraphs_of("\n")
             self.set_rich(True, quoted + own if below else own + quoted)
             self._quoted_pictures = set(self.rich.pictures)  # the own part has none: these are the original's
             self.rich.edit.moveCursor(self.rich.edit.textCursor().MoveOperation.End if below else self.rich.edit.textCursor().MoveOperation.Start)
@@ -383,11 +372,18 @@ class ComposeWindow(QMainWindow):
             self.save_button.setToolTip("Move back to drafts is on Settings > Scheduled messages")
             self._grey_edit_buttons()
             self.setWindowTitle("Edit scheduled message")
+        self.texts = TextsInMessage(self.body, self.rich, self.is_rich, self._kind, options.reply_below)  # templates and signatures (B-24, D-358)
         self._saved_snapshot: tuple[object, ...] = self._snapshot()
+        backend.ask(SNIPPET_ALL, SnippetNoParameters(), lambda found: self._library_arrived(found, resume is None and editing is None, template), self._library_failed, owner=self)
         if taken_back:  # a send cancelled (B-21): as a message not saved yet, closing asks, and Discard removes its draft
             self._created_here = True
             self._saved_snapshot = ()
 
+        for place in range(KEYED):  # Ctrl+1 to Ctrl+7: the first seven texts of the library as the signature (B-24, D-358)
+            keyed = QAction(f"Signature {place + 1}", self)
+            keyed.setShortcut(QKeySequence(f"Ctrl+{place + 1}"))
+            keyed.triggered.connect(lambda checked=False, chosen=place: self._signature_by_key(chosen))
+            self.addAction(keyed)
         for text, shortcut, handler in (
             ("Send", "Ctrl+Return", self._send_clicked), ("Send", "Ctrl+Enter", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked), ("Close", "Esc", self.close),
         ):
@@ -418,25 +414,50 @@ class ComposeWindow(QMainWindow):
             font.setPointSizeF(points)
             editor.setFont(font)
 
-    def _signature_of(self, account_id: str) -> str:
-        for account in self._accounts:
-            if account.account_id == account_id:
-                return account.signature
-        return ""
+    def _texts_of(self, account_id: str) -> AccountTexts:
+        return next((account.texts for account in self._accounts if account.account_id == account_id), AccountTexts())
+
+    def _library_arrived(self, found: tuple[SnippetText, ...], fresh: bool, template: str) -> None:
+        """The library: the Signature button's list and the keys; a new message gets the account's template and signature (a draft
+        taken up again keeps what it has). A window nobody changed meanwhile still counts as unchanged."""
+        self.texts.library = found
+        self._fill_signature_menu()
+        if not fresh:
+            self.texts.resumed = True  # a draft taken up again: its "-- " block is its signature
+            return
+        unchanged = self._snapshot() == self._saved_snapshot
+        self.texts.open_with(self._texts_of(str(self.from_box.currentData())), template)
+        if unchanged:
+            self.body.document().setModified(False)
+            self._saved_snapshot = self._snapshot()
+
+    def _library_failed(self, error: ChronoMailError) -> None:
+        """The templates and signatures could not be read: said, so the person knows why none was put in."""
+        self._say(f"Your templates and signatures could not be read: {error}")
+
+    def _fill_signature_menu(self) -> None:
+        menu = self.signature_button.menu()
+        assert menu is not None
+        menu.clear()
+        for place, entry in enumerate(self.texts.library):
+            action = menu.addAction(entry.name + (f"\tCtrl+{place + 1}" if place < KEYED else ""))
+            action.triggered.connect(lambda checked=False, chosen=entry.item_id: self.texts.put(chosen))
+        self.signature_button.setEnabled(bool(self.texts.library))
+        self.signature_button.setToolTip("Put in a signature" if self.texts.library else "Make templates and signatures in Settings > Templates and Signatures")
+
+    def _signature_by_key(self, place: int) -> None:
+        entry = self.texts.keyed(place)
+        if entry is not None:
+            self.texts.put(entry.item_id)
 
     def _account_changed(self) -> None:
-        """Another sender was chosen: the signature of the first one is replaced by the signature of the new one."""
-        new = self._signature_of(str(self.from_box.currentData()))
-        if self.is_rich():  # swapping would flatten the formatting: in rich text the signature stays as it is
-            self._signature = new
-            return
-        old, body = signature_block(self._signature), self.body.toPlainText()
-        if new != self._signature:
-            if old and old in body:
-                self.body.setPlainText(body.replace(old, signature_block(new), 1) if new else body.replace(old, "", 1).replace("\n\n\n\n", "\n\n"))
-            elif new and not old and not body.strip():
-                self.body.setPlainText(with_signature(body, new))
-        self._signature = new
+        """Another sender was chosen: a default signature follows it; one put in by key stays (B-24, D-358)."""
+        self.texts.account_changed(self._texts_of(str(self.from_box.currentData())))
+
+    def _as_sent(self) -> tuple[str, str | None]:
+        """The text and HTML as sent: with "Sent from Chrono Mail" at the end when Settings asks for it (B-24, D-358)."""
+        text, html_part = self._text(), self.rich.outgoing_html() if self.is_rich() else None
+        return with_sent_from(text, html_part) if self._options.sent_from_line else (text, html_part)
 
     def is_rich(self) -> bool:
         return self.editor_stack.currentWidget() is self.rich
@@ -451,6 +472,7 @@ class ComposeWindow(QMainWindow):
             if on and html is not None:
                 self.rich.set_html(html)
             return
+        signature = self.texts.before_switch() if hasattr(self, "texts") else ""  # the signature goes along (B-24, D-358)
         if on:
             if html is not None:
                 self.rich.set_html(html)
@@ -464,6 +486,8 @@ class ComposeWindow(QMainWindow):
                     self._add_picture(picture)
             self.body.setPlainText(self.rich.toPlainText())
             self.editor_stack.setCurrentWidget(self.body)
+        if signature:
+            self.texts.after_switch(signature)
         self._show_mode()
         (self.rich if on else self.body).setFocus()
 
@@ -732,8 +756,8 @@ class ComposeWindow(QMainWindow):
         chosen = repeat or {}
         until = chosen.get("repeat_until")
         parameters = ScheduledEdit(
-            account=str(self.from_box.currentData()), to=tuple(to), cc=tuple(cc), bcc=tuple(bcc), subject=self.subject.text(), body=self._text(),
-            html=self.rich.outgoing_html() if self.is_rich() else None, attach=tuple(self.attached_paths()), in_reply_to=self._in_reply_to,
+            account=str(self.from_box.currentData()), to=tuple(to), cc=tuple(cc), bcc=tuple(bcc), subject=self.subject.text(), body=self._as_sent()[0],
+            html=self._as_sent()[1], attach=tuple(self.attached_paths()), in_reply_to=self._in_reply_to,
             references=self._references, keep_attachments=tuple(self.kept_positions()), send_at=send_at,
             repeat_months=int(str(chosen.get("repeat_months", 0))), repeat_weeks=int(str(chosen.get("repeat_weeks", 0))), repeat_days=int(str(chosen.get("repeat_days", 0))),
             repeat_until=str(until) if until else None, message=editing.message_id, keep_time=send_at is None,
@@ -783,8 +807,8 @@ class ComposeWindow(QMainWindow):
         chosen = read_preferences(self._settings) if self._settings is not None and not send_at else None  # Settings > General: send at once, or wait (B-21)
         delay = chosen.send_delay_seconds if chosen is not None and chosen.send_delay else 0
         parameters = SendParameters(
-            account=str(self.from_box.currentData()), to=tuple(to), subject=self.subject.text(), body=self._text(), cc=tuple(cc), bcc=tuple(bcc),
-            html=self.rich.outgoing_html() if self.is_rich() else None, attach=tuple(self.attached_paths()), in_reply_to=self._in_reply_to or None,
+            account=str(self.from_box.currentData()), to=tuple(to), subject=self.subject.text(), body=self._as_sent()[0], cc=tuple(cc), bcc=tuple(bcc),
+            html=self._as_sent()[1], attach=tuple(self.attached_paths()), in_reply_to=self._in_reply_to or None,
             references=tuple(self._references), source_folder=source_folder, source_message=source_message,
             include_source_attachments=answering and self._kind == "forward" and self.include_original.isChecked(),
             attach_source_message=answering and self._kind == "forward_attachment" and self.include_original.isChecked(),

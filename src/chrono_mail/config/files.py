@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any  # json.load returns untyped data; every value is checked below
 
-from chrono_mail.config.model import AccountSettings, AppConfig, Pop3DeletePolicy, Pop3Options
+from chrono_mail.config.model import AccountSettings, AccountTexts, AppConfig, Pop3DeletePolicy, Pop3Options
 from chrono_mail.core import (
     Account,
     AccountKind,
@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.4.608"
+__version__ = "files.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: texts (the account's templates and signatures) read and saved with the account (B-24, D-358)
 # v4.4.608: google_name read and saved with the account (D-346)
 # v4.4.593: google read and saved with the account (D-335)
 # v4.4.536: reminder_emails read and saved with the account (D-313)
@@ -161,7 +162,7 @@ def _account(data: object, position: int) -> AccountSettings:
             calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
             invitation_answers=answers, dav_auto_schedule=auto_schedule, dav_always_answers=always_answers, dav_addresses=tuple(dav_addresses), reminder_emails=reminder_emails,
-            google=google, google_name=google_name,
+            google=google, google_name=google_name, texts=_texts(data.get("texts", {}), where),
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -177,6 +178,29 @@ def _palette(data: Any, where: str) -> tuple[PaletteColour, ...] | None:
 
 
 LOOK_FIELDS: tuple[str, ...] = ("key", "name", "name_state", "base_name", "colour", "colour_state", "base_colour")
+
+
+TEXT_FIELDS: tuple[str, ...] = ("template_new", "template_reply", "template_forward", "signature_new", "signature_reply", "signature_forward")
+
+
+def _texts(data: Any, where: str) -> AccountTexts:  # noqa: ANN401 - JSON as read; checked here
+    """An account's templates and signatures; a file written before 4.5.626 has none."""
+    if not isinstance(data, dict):
+        raise ConfigurationError(f"Setting '{where}.texts' is not valid")
+    chosen = [data.get(name, "") for name in TEXT_FIELDS]
+    below = data.get("signature_below", False)
+    if not all(isinstance(value, str) for value in chosen) or not isinstance(below, bool):
+        raise ConfigurationError(f"Setting '{where}.texts' is not valid")
+    template_new, template_reply, template_forward, signature_new, signature_reply, signature_forward = (str(value) for value in chosen)
+    return AccountTexts(template_new, template_reply, template_forward, signature_new, signature_reply, signature_forward, below)
+
+
+def _texts_data(texts: AccountTexts) -> dict[str, str | bool]:
+    return {
+        "template_new": texts.template_new, "template_reply": texts.template_reply, "template_forward": texts.template_forward,
+        "signature_new": texts.signature_new, "signature_reply": texts.signature_reply, "signature_forward": texts.signature_forward,
+        "signature_below": texts.signature_below,
+    }
 
 
 def _looks(data: Any, where: str) -> tuple[CollectionLook, ...]:
@@ -224,6 +248,7 @@ def config_to_text(config: AppConfig) -> str:
                     "outgoing": _server_data(settings.account.outgoing),
                     "pop3": {"policy": settings.pop3.policy.value, "days": settings.pop3.days},
                     "signature": settings.signature,
+                    "texts": _texts_data(settings.texts),
                     "trusted_certificates": list(settings.trusted_certificates),
                     "in_send_receive": settings.in_send_receive,
                     "storage": settings.storage,

@@ -120,3 +120,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-336]] The Add an account window in tabs
 - [[D-344]] Refresh refreshes everything, in every section
 - [[D-351]] The Size column holds its widest size
+- [[D-358]] Signatures and mail templates as in the reference client

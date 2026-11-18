@@ -10,9 +10,11 @@ from tests.test_engine_commands import Setup, add_account, call, setup  # noqa: 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_account_edit.py 0.0.69"
+__version__ = "test_engine_account_edit.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the signature is no longer an account setting (the library of templates and signatures, B-24, D-358): the summary tells the
+#           account's texts, account.edit takes no signature (the owner's approval of 2026-11-18)
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.20: Initial tests of account.edit and the signature
 
@@ -25,17 +27,17 @@ def summary(setup: Setup) -> Any:  # noqa: ANN401 - an AccountSummary result
 def test_the_summary_tells_every_setting(setup: Setup) -> None:
     item = summary(setup)
     assert item.incoming_host == "127.0.0.1" and item.incoming_port == setup.pop.port and item.incoming_username
-    assert item.outgoing_host == "127.0.0.1" and item.outgoing_port == setup.smtp.port and item.signature == "" and item.delete_days == 30
+    assert item.outgoing_host == "127.0.0.1" and item.outgoing_port == setup.smtp.port and item.texts.signature_new == "" and item.delete_days == 30
 
 
 def test_editing_changes_only_what_is_given(setup: Setup) -> None:
     before = summary(setup)
-    after = call(setup.engine, "account.edit", account=setup.account_id, display_name="Rob V", signature="Rob\r\nChrono Mail  \n")
-    assert after.display_name == "Rob V" and after.signature == "Rob\nChrono Mail"
+    after = call(setup.engine, "account.edit", account=setup.account_id, display_name="Rob V")
+    assert after.display_name == "Rob V"
     assert after.email_address == before.email_address and after.incoming_host == before.incoming_host and after.outgoing_port == before.outgoing_port
-    assert summary(setup).signature == "Rob\nChrono Mail"  # saved, not only returned
-    cleared = call(setup.engine, "account.edit", account=setup.account_id, signature="")
-    assert cleared.signature == "" and cleared.display_name == "Rob V"
+    assert summary(setup).display_name == "Rob V"  # saved, not only returned
+    with pytest.raises(UsageError):
+        call(setup.engine, "account.edit", account=setup.account_id, signature="Rob")  # no longer an account setting
 
 
 def test_servers_ports_security_and_policy_can_be_changed(setup: Setup) -> None:
@@ -66,8 +68,6 @@ def test_bad_values_change_nothing(setup: Setup) -> None:
     for values in ({"email_address": "nobody"}, {"email_address": "a@"}, {"username": "  "}, {"incoming_port": 0}, {"outgoing_port": 70000}, {"incoming_host": " "}, {"delete_days": 0, "delete_policy": "delete_after_days"}):
         with pytest.raises((UsageError, ConfigurationError)):
             call(setup.engine, "account.edit", account=setup.account_id, password="must-not-be-kept", **values)
-    with pytest.raises(ConfigurationError):
-        call(setup.engine, "account.edit", account=setup.account_id, signature="x" * 4001)
     assert summary(setup) == before
     assert setup.engine.passwords.get(setup.account_id, ServerRole.INCOMING) != "must-not-be-kept"
 

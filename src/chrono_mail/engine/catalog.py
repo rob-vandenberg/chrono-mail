@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_calendarmail, commands_colourtags, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_google, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_reminders, commands_rules, commands_schedule, commands_sidebar, commands_tagoverview, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_calendarmail, commands_colourtags, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_google, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_reminders, commands_rules, commands_schedule, commands_sidebar, commands_signatures, commands_tagoverview, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 4.4.593"
+__version__ = "catalog.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: signature.* (B-24, D-358)
 # v4.4.593: google.sign-in (D-335)
 # v4.4.573: event.colours-to-tags (D-329)
 # v4.4.572: tag.overview (D-328)
@@ -88,6 +89,7 @@ def build_registry() -> CommandRegistry:
     commands_outlook_export.register(registry)
     commands_updates.register(registry)
     commands_tags.register(registry)
+    commands_signatures.register(registry)
     commands_autostart.register(registry)
     commands_conflicts.register(registry)
     return registry

@@ -15,9 +15,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.4.608"
+__version__ = "test_ui_settings.py 4.5.626"
 
 # --- Version history ----------------------------------------------------
+# v4.5.626: the signature is no longer in Edit account: templates and signatures are on their own Settings page (B-24, D-358; the owner's approval of 2026-11-18)
 # v4.4.608: an account on two lines: its name and address, below it what it holds (D-346)
 # v4.4.603: the labels Shown as and Sign-in name (D-342)
 # v4.4.595: the Add window has the incoming user name and password on its Account tab; Edit account keeps them with the server (D-336, D-186)
@@ -78,14 +79,13 @@ def test_changing_an_account_sends_only_the_differences(world: World, qtbot: QtB
     qtbot.addWidget(edit)
     edit.show()
     assert edit._values() is None  # noqa: SLF001 - nothing changed yet
-    edit.signature.setPlainText("Rob\nChrono Mail")
     edit.name.setText("Rob V")
-    assert given(edit._values()) == {"display_name": "Rob V", "signature": "Rob\nChrono Mail"}  # noqa: SLF001
+    assert given(edit._values()) == {"display_name": "Rob V"}  # noqa: SLF001
     edit.password.setText("new-secret")
     edit.save_button.click()
     wait(qtbot, lambda: edit.result() == QDialog.DialogCode.Accepted)
     after = world.call("account.list")[0]
-    assert after.display_name == "Rob V" and after.signature == "Rob\nChrono Mail"
+    assert after.display_name == "Rob V"
     assert world.engine.passwords.get(world.account_id, ServerRole.INCOMING) == "new-secret"
 
 
@@ -100,15 +100,14 @@ def test_a_refused_change_stays_open_and_says_why(world: World, qtbot: QtBot) ->
     assert edit.isVisible() and edit.save_button.isEnabled() and world.call("account.list")[0].email_address == "me@example.com"
 
 
-def test_the_signature_length_is_limited_in_the_dialog(world: World, qtbot: QtBot) -> None:
+def test_the_signature_is_no_longer_in_the_account_window(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QPlainTextEdit
+
     dialog = open_settings(world, qtbot)
     edit = AccountEditDialog(world.backend, dialog.accounts.item(0).data(256))
     qtbot.addWidget(edit)
     edit.show()
-    edit.signature.setPlainText("x" * 4001)
-    assert not edit.save_button.isEnabled() and "4001 of 4000" in edit.signature_count.text()
-    edit.signature.setPlainText("x" * 4000)
-    assert edit.save_button.isEnabled()
+    assert edit.findChild(QPlainTextEdit, "signature") is None and edit.save_button.isEnabled()
 
 
 def test_the_policy_days_only_matter_for_delete_after_days(world: World, qtbot: QtBot) -> None:

@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsSignatures</class>
+ <widget class="QWidget" name="SettingsSignatures">
+  <layout class="QVBoxLayout" name="layout" stretch="3,0,0,2,0,0">
+   <item>
+    <widget class="QSplitter" name="librarySplitter">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="childrenCollapsible">
+      <bool>false</bool>
+     </property>
+     <widget class="QWidget" name="listSide">
+      <layout class="QVBoxLayout" name="listColumn">
+        <item>
+         <widget class="QLabel" name="itemsLabel">
+          <property name="text">
+           <string>Templates and signatures</string>
+          </property>
+         <property name="buddy">
+          <cstring>items</cstring>
+         </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QTreeWidget" name="items">
+          <property name="rootIsDecorated">
+           <bool>false</bool>
+          </property>
+          <column>
+           <property name="text">
+            <string>Name</string>
+           </property>
+          </column>
+          <column>
+           <property name="text">
+            <string>Key</string>
+           </property>
+          </column>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     <widget class="QWidget" name="previewSide">
+      <layout class="QVBoxLayout" name="previewColumn">
+        <item>
+         <widget class="QLabel" name="previewLabel">
+          <property name="text">
+           <string>Preview</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QWidget" name="preview" />
+        </item>
+       </layout>
+      </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="tools">
+          <item>
+           <widget class="QPushButton" name="newButton">
+            <property name="text">
+             <string>New</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="editButton">
+            <property name="text">
+             <string>Edit</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="deleteButton">
+            <property name="text">
+             <string>Delete</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="upButton">
+            <property name="text">
+             <string>↑</string>
+            </property>
+            <property name="toolTip">
+             <string>Move up: the first seven have Ctrl+1 to Ctrl+7</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="downButton">
+            <property name="text">
+             <string>↓</string>
+            </property>
+            <property name="toolTip">
+             <string>Move down</string>
+            </property>
+           </widget>
+          </item>
+                   <item>
+           <spacer name="toolsMiddle">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>0</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+
+          <item>
+           <widget class="QPushButton" name="openButton">
+            <property name="text">
+             <string>Open…</string>
+            </property>
+            <property name="toolTip">
+             <string>Make a new template or signature from an HTML file</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="saveAsButton">
+            <property name="text">
+             <string>Save As…</string>
+            </property>
+            <property name="toolTip">
+             <string>Save the selected one as an HTML file</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="importButton">
+            <property name="text">
+             <string>Import…</string>
+            </property>
+            <property name="toolTip">
+             <string>Add the templates and signatures of a file Export made</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="exportButton">
+            <property name="text">
+             <string>Export…</string>
+            </property>
+            <property name="toolTip">
+             <string>Save every template and signature in one file</string>
+            </property>
+           </widget>
+          </item>
+             </layout>
+   </item>
+   <item>
+    <spacer name="blocksGap">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Fixed</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>0</width>
+       <height>18</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QSplitter" name="accountsSplitter">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="childrenCollapsible">
+      <bool>false</bool>
+     </property>
+     <widget class="QWidget" name="accountsSide">
+      <layout class="QVBoxLayout" name="accountsColumn">
+        <item>
+         <widget class="QLabel" name="accountsLabel">
+          <property name="text">
+           <string>Accounts</string>
+          </property>
+         <property name="buddy">
+          <cstring>accounts</cstring>
+         </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QListWidget" name="accounts" />
+        </item>
+       </layout>
+     </widget>
+     <widget class="QWidget" name="choicesSide">
+      <layout class="QFormLayout" name="choices">
+      <item row="0" column="0">
+       <widget class="QLabel" name="templateNewLabel">
+        <property name="text">
+         <string>Template for new mail</string>
+        </property>
+        <property name="buddy">
+         <cstring>templateNew</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="templateNew">
+        <property name="toolTip">
+         <string>The text a new message starts with</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="templateReplyLabel">
+        <property name="text">
+         <string>Template for replies</string>
+        </property>
+        <property name="buddy">
+         <cstring>templateReply</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="templateReply">
+        <property name="toolTip">
+         <string>The text a reply starts with</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="templateForwardLabel">
+        <property name="text">
+         <string>Template for forwards</string>
+        </property>
+        <property name="buddy">
+         <cstring>templateForward</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QComboBox" name="templateForward">
+        <property name="toolTip">
+         <string>The text a forward starts with</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="signatureNewLabel">
+        <property name="text">
+         <string>Signature for new mail</string>
+        </property>
+        <property name="buddy">
+         <cstring>signatureNew</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QComboBox" name="signatureNew">
+        <property name="toolTip">
+         <string>The signature put in a new message</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="signatureReplyLabel">
+        <property name="text">
+         <string>Signature for replies</string>
+        </property>
+        <property name="buddy">
+         <cstring>signatureReply</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QComboBox" name="signatureReply">
+        <property name="toolTip">
+         <string>The signature put in a reply</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="signatureForwardLabel">
+        <property name="text">
+         <string>Signature for forwards</string>
+        </property>
+        <property name="buddy">
+         <cstring>signatureForward</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QComboBox" name="signatureForward">
+        <property name="toolTip">
+         <string>The signature put in a forward</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="signaturePositionLabel">
+        <property name="text">
+         <string>Signature position</string>
+        </property>
+        <property name="buddy">
+         <cstring>signaturePosition</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="QComboBox" name="signaturePosition">
+        <property name="toolTip">
+         <string>Where the signature stands in a reply or a forward</string>
+        </property>
+       </widget>
+      </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="status">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="sentFrom">
+     <property name="text">
+      <string>Attach "Sent from Chrono Mail" to every message</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
