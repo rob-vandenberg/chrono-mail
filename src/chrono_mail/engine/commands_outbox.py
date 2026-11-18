@@ -10,13 +10,15 @@ from chrono_mail.engine.mailbox import LIST_COULD_NOT_FOLLOW, SentAlready, Mailb
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_servers
 from chrono_mail.mime import ParsedMessage, parse_message
+from chrono_mail.mime.pictures import pictures_into
 from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 4.4.542"
+__version__ = "commands_outbox.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: A message taken back keeps the pictures inside its text (D-353; the problem of 3.6.358)
 # v4.4.542: at the end of the program the mail being sent finishes and the next one stays in the Outbox
 # v4.2.451: senders: only the messages sent from these accounts; the others wait (an account left out of Send and Receive, D-059)
 # v4.2.441: mail.send-outbox names each server whose certificate could not be verified (certificates), so the window asks (D-299)
@@ -254,7 +256,7 @@ def mail_cancel_send(engine: Engine, parameters: OutboxMessageParameters) -> Can
             engine,
             DraftSaveParameters(
                 account=account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
-                subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
+                subject=parsed.subject, body=parsed.text_body or "", html=pictures_into(parsed.html_body, parsed.attachments) if parsed.html_body is not None else None, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
                 in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(OUTBOX), replace_message=reference.store_id,
                 kind="reply" if answers else "new", source_folder=source_folder or None, source_message=source_message or None,
             ),

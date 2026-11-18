@@ -31,15 +31,17 @@ from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_serv
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, build_message, delivery_addresses, parse_message
+from chrono_mail.mime.pictures import attachment_from_data
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.563"
+__version__ = "commands_mail.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: An attachment may be given as a picture's data: address (a picture of the text that became an attachment, D-353)
 # v4.4.563: the group headings are counted at the engine's clock, and every answer with headings says the local day they were counted for (day, D-321)
 # v4.4.562: ties_oldest_first: messages with the same value oldest first by when they were received, otherwise newest first (D-320)
 # v4.4.542: mail_send counts as a send at the end of the program
@@ -442,6 +444,9 @@ def _addresses(values: tuple[str, ...]) -> tuple[Address, ...]:
 
 
 def _attachment(path_text: str) -> Attachment:
+    picture = attachment_from_data(path_text)  # a picture of the text that became an attachment: never on disk
+    if picture is not None:
+        return picture
     path = Path(path_text)
     try:
         if path.stat().st_size > MAXIMUM_ATTACHMENT_BYTES:

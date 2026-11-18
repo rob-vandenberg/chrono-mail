@@ -7,11 +7,13 @@ from email.utils import formatdate, make_msgid
 
 from chrono_mail.core import MessageFormatError
 from chrono_mail.mime.model import Address, Attachment, OutgoingMessage
+from chrono_mail.mime.pictures import pictures_out_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "builder.py 4.4.505"
+__version__ = "builder.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: A picture inside the HTML text goes as an inline part the HTML shows by cid: (multipart/related), unaltered (D-353)
 # v4.4.505: a calendar part is written with its method parameter (RFC 6047): an answer to an invitation keeps it (D-310)
 # v4.2.428: as_it_goes_out: the stored message as it goes to the server, without its Bcc and without the program's own X-Chrono-Mail notes; also
 #           for a message with plain LF line ends
@@ -173,7 +175,15 @@ def build_message(outgoing: OutgoingMessage, draft: bool = False) -> bytes:
             message["References"] = " ".join(outgoing.references)
         message.set_content(outgoing.text_body)
         if outgoing.html_body is not None:
-            message.add_alternative(outgoing.html_body, subtype="html")
+            html, pictures = pictures_out_of(outgoing.html_body, lambda: make_msgid(domain=sender.domain or None).strip("<>"))
+            message.add_alternative(html, subtype="html")
+            if pictures:
+                html_part = next(part for part in message.iter_parts() if part.get_content_type() == "text/html")  # it becomes multipart/related
+                if not isinstance(html_part, EmailMessage):
+                    raise MessageFormatError("The HTML text cannot carry its pictures")
+                for picture in pictures:
+                    main_type, subtype = _split_content_type(picture.content_type)
+                    html_part.add_related(picture.data, maintype=main_type, subtype=subtype, cid=f"<{picture.content_id}>", disposition="inline", filename=picture.name)
         for attachment in outgoing.attachments:
             _add_attachment(message, attachment)
         return message.as_bytes(policy=policy.SMTP)

@@ -13,14 +13,16 @@ from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZED_F
 from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_servers
 from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
+from chrono_mail.mime.pictures import pictures_into
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 4.4.542"
+__version__ = "commands_schedule.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: A scheduled message taken back keeps the pictures inside its text (D-353)
 # v4.4.542: at the end of the program the mail being sent finishes and the next one waits
 # v4.2.441: mail.send-due names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.430: a scheduled message's addresses written so the window can read them back
@@ -618,7 +620,7 @@ def mail_unschedule(engine: Engine, parameters: MessageParameters) -> DraftSaveR
                 engine,
                 DraftSaveParameters(
                     account=draft_account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
-                    subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
+                    subject=parsed.subject, body=parsed.text_body or "", html=pictures_into(parsed.html_body, parsed.attachments) if parsed.html_body is not None else None, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
                     in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(reference.folder_path), replace_message=reference.store_id,
                 ),
             )

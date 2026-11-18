@@ -42,14 +42,16 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.prefs import read_preferences
-from chrono_mail.ui.richeditor import RichEditor
+from chrono_mail.mime.pictures import data_address
+from chrono_mail.ui.richeditor import Picture, RichEditor
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.2.442"
+__version__ = "composer.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: A file that is not a picture dragged onto the text is attached; going to plain text makes the pictures attachments (D-353)
 # v4.2.442: a Send stopped by the outgoing server's certificate closes the window without its box and says so (certificate_stopped): the Verify certificate window asks then (D-299)
 # v4.2.430: an escaped quote inside a quoted name never ends it when the addresses are split
 # v4.2.429: save_and_close_quietly and close_for_quit: after an update Chrono Mail closes without a Cancel; what is not saved goes to Drafts first
@@ -269,6 +271,7 @@ class ComposeWindow(QMainWindow):
         layout.addLayout(form)
         self.body = QPlainTextEdit(central)
         self.rich = RichEditor(central)
+        self.rich.files_dropped.connect(self._attach_dropped)
         self.editor_stack = QStackedWidget(central)
         self.editor_stack.addWidget(self.body)
         self.editor_stack.addWidget(self.rich)
@@ -430,6 +433,8 @@ class ComposeWindow(QMainWindow):
                 self.rich.setPlainText(self.body.toPlainText())
             self.editor_stack.setCurrentWidget(self.rich)
         else:
+            for picture in self.rich.pictures_in_text():  # nothing put in is lost: the pictures become attachments (D-353)
+                self._add_picture(picture)
             self.body.setPlainText(self.rich.toPlainText())
             self.editor_stack.setCurrentWidget(self.body)
         self._show_mode()
@@ -443,7 +448,8 @@ class ComposeWindow(QMainWindow):
     def _mode_chosen(self, rich: bool) -> None:
         """Rich text or Plain text was chosen in the menu of the button."""
         if not rich and self.is_rich() and self.rich.has_formatting():
-            answer = QMessageBox.question(self, "Plain text", "Changing to plain text removes the formatting (bold, lists, links). Continue?")
+            pictures = " The pictures become attachments." if self.rich.pictures_in_text() else ""
+            answer = QMessageBox.question(self, "Plain text", f"Changing to plain text removes the formatting (bold, lists, links).{pictures} Continue?")
             if answer != QMessageBox.StandardButton.Yes:
                 self._show_mode()
                 return
@@ -474,6 +480,15 @@ class ComposeWindow(QMainWindow):
         item_text = f"{Path(path).name}  ({Path(path).stat().st_size // 1024 + 1} KB)" if Path(path).exists() else Path(path).name
         self.attachments.addItem(item_text)
         self.attachments.item(self.attachments.count() - 1).setData(ROLE_PATH, path)
+
+    def _add_picture(self, picture: Picture) -> None:
+        """A picture of the text as an attachment: it travels as its data, never as a file on this computer."""
+        self.attachments.addItem(f"{picture.name}  ({len(picture.data) // 1024 + 1} KB)")
+        self.attachments.item(self.attachments.count() - 1).setData(ROLE_PATH, data_address(picture.content_type, picture.name, picture.data))
+
+    def _attach_dropped(self, paths: list[str]) -> None:
+        for path in paths:
+            self.add_attachment(path)
 
     def _add_kept(self, position: int, name: str, size: int) -> None:
         self.attachments.addItem(f"{name}  ({size // 1024 + 1} KB)")

@@ -9,12 +9,14 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, build_message, parse_message
+from chrono_mail.mime.pictures import pictures_into
 from chrono_mail.pim.itip import read_calendar_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 4.4.505"
+__version__ = "commands_drafts.py 4.4.621"
 
 # --- Version history ----------------------------------------------------
+# v4.4.621: draft.open gives the pictures inside the text back as embedded pictures, so they are edited and saved again (D-353)
 # v4.4.505: draft.save takes a calendar answer to attach (calendar): its METHOD kept on the part (RFC 6047), the answer to an invitation (D-310)
 # v3.6.358: draft.save tells where each attachment it was given is in the stored draft (attachment_positions), so the window keeps its list in place (CR-03)
 # v3.6.350: a message the server took is never replaced by a draft (D-262), also from the command line; one of the Outbox goes in one
@@ -212,7 +214,7 @@ def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResu
             parsed.references,
             source_folder,
             source_message,
-            parsed.html_body,
+            pictures_into(parsed.html_body, parsed.attachments) if parsed.html_body is not None else None,
             parsed.from_addresses[0].address if parsed.from_addresses else "",
         )
 
