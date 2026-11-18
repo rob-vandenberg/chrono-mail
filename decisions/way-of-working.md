@@ -28,3 +28,4 @@ Read before work on how the project is run, documents, versions.
 - [[D-163]] Short STATUS and ARCHITECTURE too
 - [[D-205]] Checks run here before every push
 - [[D-220]] Shared code in the lowest layer
+- [[D-357]] A private handover between chats

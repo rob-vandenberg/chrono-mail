@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 4.4.613"
+__version__ = "fakedav.py 4.4.624"
 
 # --- Version history ----------------------------------------------------
+# v4.4.624: MOVE renames an item (never over another: 412); a server that does not rename (405) or fails for now (503)
 # v4.4.613: withheld: items it lists but never hands out, a GET answers 403 (Kerio's Public Contacts, D-348)
 # v4.4.593: bearer: a server that takes only this access code, as Google's does (D-335)
 # v4.4.512: a collection can state its DAV:owner (owners)
@@ -65,6 +66,8 @@ class FakeDav:
         self.announces: str = ""  # more in the DAV header of OPTIONS ("calendar-auto-schedule")
         self.product: str = ""  # the Server header of OPTIONS
         self.user_addresses: tuple[str, ...] = ()  # the calendar-user-address-set of the principal
+        self.moves_refused: bool = False  # MOVE answers 405: a server that does not rename
+        self.moves_failing: bool = False  # MOVE answers 503: for now
         self.like_kerio: bool = like_kerio  # the change report writes @ as %40 and lists each item twice; a multiget answers with @
         self.cut_after: int = 0  # a change report gives at most this many items and then 507 with a token to go on from (0: all)
         self.user, self.password = user, password
@@ -163,6 +166,9 @@ class FakeDav:
             def do_DELETE(self) -> None:  # noqa: N802
                 outer.handle(self, "DELETE")
 
+            def do_MOVE(self) -> None:  # noqa: N802
+                outer.handle(self, "MOVE")
+
             def do_PROPPATCH(self) -> None:  # noqa: N802
                 outer.handle(self, "PROPPATCH")
 
@@ -249,6 +255,8 @@ class FakeDav:
             self.put(handler, path, body)
         elif method == "DELETE":
             self.delete(handler, path)
+        elif method == "MOVE":
+            self.move(handler, path)
         elif method == "PROPPATCH":
             self.proppatch(handler, path, body)
         elif method in ("MKCALENDAR", "MKCOL"):
@@ -483,6 +491,29 @@ class FakeDav:
                 self.respond(handler, 201 if existing is None else 204, "", {"ETag": f'"{etag}"'} if self.etag_on_put else {})
                 return
         self.respond(handler, 404)
+
+    def move(self, handler: BaseHTTPRequestHandler, path: str) -> None:
+        """Rename an item within its collection; its version stays. 405 when moves_refused, 503 when moves_failing, 412 over another item."""
+        import urllib.parse
+
+        if self.moves_refused or self.moves_failing:
+            self.respond(handler, 405 if self.moves_refused else 503, "no")
+            return
+        found = self.find_item(path)
+        destination = urllib.parse.unquote(urllib.parse.urlsplit(handler.headers.get("Destination", "")).path)
+        if found is None:
+            self.respond(handler, 404)
+            return
+        prefix = self.collection_path(found[0])
+        new_name = destination[len(prefix):] if destination.startswith(prefix) else ""
+        if not new_name or "/" in new_name or new_name in found[1].items:
+            self.respond(handler, 412)
+            return
+        old_name = path[len(prefix):]
+        found[1].items[new_name] = found[1].items.pop(old_name)
+        found[1].changed(old_name, True)
+        found[1].changed(new_name, False)
+        self.respond(handler, 201)
 
     def delete(self, handler: BaseHTTPRequestHandler, path: str) -> None:
         whole = self.find_collection(path)

@@ -55,9 +55,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.4.613"
+__version__ = "davsync.py 4.4.624"
 
 # --- Version history ----------------------------------------------------
+# v4.4.624: A new item is never named with an @ on the server; an own item an older version named so is renamed once, on the server first (D-356)
 # v4.4.613: an item the server lists but refuses for good is remembered with its version tag (withheld), said once, and asked for again only when
 #           it changes on the server or once at a new start of Chrono Mail; the listing is then remembered again (D-348)
 # v4.4.604: a Google calendar's name is sent as one's own name for it, never the calendar's own name (D-343)
@@ -95,7 +96,8 @@ __version__ = "davsync.py 4.4.613"
 # v0.0.66: Initial synchronisation of the calendars, task lists and address books with a CalDAV and CardDAV server
 
 STATE_VERSION: int = 1
-SAFE_NAME: re.Pattern[str] = re.compile(r"[A-Za-z0-9._@-]{1,100}")
+SAFE_NAME: re.Pattern[str] = re.compile(r"[A-Za-z0-9._-]{1,100}")  # never an @: other programs' later syncs skip an item named with one (D-356)
+OWN_AT_NAME: re.Pattern[str] = re.compile(r"[A-Za-z0-9._-]{1,100}@chrono-mail\.(?:ics|vcf)")  # a name with an @ older versions chose for their own items
 PUBLIC_SUFFIX: str = " (public)"
 RUN: str = uuid.uuid4().hex  # this start of Chrono Mail: the withheld items are asked for once per start (D-348)
 VANISH_MINIMUM: int = 10  # the guard against a listing that lost most items: as for mail (D-049), more than half of at least this many
@@ -120,6 +122,7 @@ class CollectionState:
     organizer_later: set[str] = field(default_factory=set[str])  # items that wait here: sent without their organizer first, then as they are, so the server mails nothing (D-310)
     withheld: dict[str, str] = field(default_factory=dict[str, str])  # items the server lists but refuses for good, by address: the version tag it listed (D-348)
     withheld_run: str = ""  # the RUN in which the withheld items were last asked for: a new start of Chrono Mail asks once more (D-348)
+    no_rename: bool = False  # the server refused to rename an item for good: its own names with an @ stay as they are (D-356)
 
 
 def _link_description(link: ItemLink) -> dict[str, str]:
@@ -146,7 +149,7 @@ class DavState:
                 state = CollectionState(str(description.get("token", "")), str(description.get("ctag", "")), refused=str(description.get("refused", "")),
                                         organizer_later={str(item) for item in description.get("organizer_later", [])},
                                         withheld={canonical_href(str(href)): str(etag) for href, etag in description.get("withheld", {}).items()},
-                                        withheld_run=str(description.get("withheld_run", "")))
+                                        withheld_run=str(description.get("withheld_run", "")), no_rename=bool(description.get("no_rename", False)))
                 for href, link in description.get("links", {}).items():
                     state.links[canonical_href(str(href))] = ItemLink(str(link["id"]), str(link["etag"]), str(link["digest"]), str(link.get("before_delete", "")))
                 self.collections[str(collection)] = state
@@ -167,6 +170,7 @@ class DavState:
                     "organizer_later": sorted(state.organizer_later),
                     "withheld": state.withheld,
                     "withheld_run": state.withheld_run,
+                    "no_rename": state.no_rename,
                     "links": {href: _link_description(link) for href, link in state.links.items()},
                 }
                 for identifier, state in self.collections.items()
@@ -554,10 +558,39 @@ def matching_collection(store: PimStore, key: str) -> CollectionInfo | None:
 
 def _sync_collection(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, state: DavState, report: DavReport, push: bool) -> None:
     collection_state = state.get(local.collection_id)
+    if push and not remote.read_only and not collection_state.no_rename:
+        _rename_own_names(client, remote, collection_state, state)
     _pull(client, store, local, remote, collection_state, report, remove_here=push)
     state.save()
     if push and not remote.read_only:
         _push(client, store, local, remote, collection_state, report)
+
+
+def _rename_own_names(client: DavClient, remote: RemoteCollection, collection_state: CollectionState, state: DavState) -> None:
+    """Chrono Mail's own items that an older version named on the server with an @ are renamed without it ("<uuid>@chrono-mail.ics" becomes
+    "<uuid>.ics"), on the server first
+    (D-193): the link follows only when the server confirms. Other programs' later syncs skip an item named with an @ (D-356). A passing
+    failure is tried again at the next synchronisation; a lasting refusal leaves every name of the collection as it is, and is not asked again."""
+    for href, link in list(collection_state.links.items()):
+        old_name = href.rsplit("/", 1)[-1]
+        if not OWN_AT_NAME.fullmatch(old_name):
+            continue  # a name another program chose, or one without an @: never touched
+        new = canonical_href(href.rsplit("/", 1)[0] + "/" + old_name.replace("@chrono-mail", "", 1))
+        if new in collection_state.links:
+            continue  # that name is taken here: left as it is
+        try:
+            client.move(href, new)
+        except ProtocolError as error:
+            status = error.status if isinstance(error, DavError) else 0
+            if status in (404, 409, 412):
+                continue  # this item only: gone or renamed by another computer, or the name taken; the listing sorts it out
+            if not passing_failure(error):
+                collection_state.no_rename = True  # the server does not rename (405, 501) or does not allow it (403): nothing is asked again
+                state.save()
+            return  # a passing failure: everything stays, tried again at the next synchronisation
+        del collection_state.links[href]  # the known version stays: a change made elsewhere since the last synchronisation is still fetched
+        collection_state.links[new] = ItemLink(link.item_id, link.etag, link.digest, link.before_delete)
+        state.save()  # each rename kept at once: an interruption never loses one the server made
 
 
 def _listing(client: DavClient, remote: RemoteCollection, collection_state: CollectionState) -> tuple[list[RemoteItem], list[str], str, bool] | None:

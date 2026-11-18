@@ -13,3 +13,4 @@ See also: [[basic-rule]] · [[imap]] · [[calendars-contacts-tasks]]
 - [[D-196]] Server deletes need confirmation
 - [[D-198]] New collections made on the server
 - [[D-192]] Collection name and colour from the server
+- [[D-356]] A server name never has an @

@@ -17,9 +17,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.613"
+__version__ = "dav.py 4.4.624"
 
 # --- Version history ----------------------------------------------------
+# v4.4.624: move: rename an item on the server, never over another (D-356)
 # v4.4.613: fetch tells the items the server refuses for good (refused) apart from those that failed only for now (D-348)
 # v4.4.604: access: Google's access code, for one's own name of a calendar (D-343)
 # v4.4.603: a refused sign-in says sign-in name (D-342)
@@ -662,6 +663,11 @@ class DavClient:
         if response.status == 404:
             return  # already gone
         self._ok(response, (200, 204))
+
+    def move(self, href: str, destination: str) -> None:
+        """Rename an item on the server (WebDAV MOVE): its content and version stay, it is never deleted. Never over an existing item."""
+        target = f"{self.scheme}://{self.host}:{self.port}{_escaped(self.absolute_path(destination))}"
+        self._ok(self.request("MOVE", href, {"Destination": target, "Overwrite": "F"}), (201, 204))
 
     def set_collection(self, href: str, name: str | None = None, colour: str | None = None) -> dict[str, int]:
         """Give a collection on the server another name (displayname) and/or colour (Apple's calendar-color, sent as #RRGGBBFF as Apple's programs
