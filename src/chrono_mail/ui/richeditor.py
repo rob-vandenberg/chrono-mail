@@ -13,9 +13,10 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QTextEdit,
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.4.621"
+__version__ = "richeditor.py 4.4.622"
 
 # --- Version history ----------------------------------------------------
+# v4.4.622: pictures_in_text gives each picture with its address, so the quoted ones can be told apart (D-353)
 # v4.4.621: Pictures in the text: dragged in, pasted or chosen with Picture…, shown no wider than the text, sent unaltered as embedded
 #           pictures; a dropped file that is not a picture is attached, never its path typed (D-353)
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
@@ -194,13 +195,13 @@ class RichEditor(QWidget):
             block = block.next()
         return names
 
-    def pictures_in_text(self) -> list[Picture]:
-        """The pictures that stand in the text now, each once, in their order."""
+    def pictures_in_text(self) -> dict[str, Picture]:
+        """The pictures that stand in the text now, by their address, each once, in their order."""
         found: dict[str, Picture] = {}
         for address in _OWN_PICTURE.findall(self.edit.toHtml()):
             if address[1] in self.pictures:
                 found.setdefault(address[1], self.pictures[address[1]])
-        return list(found.values())
+        return found
 
     def setPlainText(self, text: str) -> None:  # noqa: N802
         self.edit.setPlainText(text)

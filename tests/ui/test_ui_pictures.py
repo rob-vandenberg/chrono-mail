@@ -6,17 +6,21 @@ from PySide6.QtGui import QColor, QImage, QTextDocument
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_accounts import AccountSummary
+from chrono_mail.engine.commands_mail import ComposeResult
 from chrono_mail.mime.pictures import data_address
 from chrono_mail.ui import richeditor
 from chrono_mail.ui.composer import ROLE_PATH, ComposeWindow
 from chrono_mail.ui.richeditor import RichEditor
 from tests.ui.test_ui_composer import new_composer
-from tests.ui.world import World, answer_open_file
+
+from tests.ui.world import World, add_window, answer_open_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_pictures.py 4.4.621"
+__version__ = "test_ui_pictures.py 4.4.622"
 
 # --- Version history ----------------------------------------------------
+# v4.4.622: A reply in rich text shows the quoted picture; a plain-text forward names the original's pictures
 # v4.4.621: Initial tests: pictures dragged, pasted or chosen into the text, sent unaltered; a dropped file attached (D-353)
 
 
@@ -143,3 +147,56 @@ def test_pasted_text_with_a_picture_that_cannot_be_shown_is_pasted_without_it(wo
     copied.setHtml(f'<p>Logo <img src="{data_address("image/png", "logo.png", b"not a picture at all")}" /> here</p>')
     window.rich.edit.insertFromMimeData(copied)
     assert window.rich.pictures == {} and "<img" not in window.rich.outgoing_html()
+
+
+def answer(kind: str, png: bytes, attachments: tuple[str, ...] = ()) -> ComposeResult:
+    quoted = f'<p>On Tue, Ann wrote:</p><blockquote><p>Look at <b>our</b> garden</p><img src="{data_address("image/png", "garden.png", png)}" /></blockquote>'
+    return ComposeResult(kind, ("ann@example.com",), (), "Re: Our garden", "\n\nOn Tue, Ann wrote:\n> Look at our garden\n", None, (), attachments, None, quoted)
+
+
+def rich_answer(world: World, qtbot: QtBot, draft: ComposeResult, rich: bool = True) -> ComposeWindow:
+    """A reply or forward window as the program opens it with Settings > Writing on Rich text (or Plain text)."""
+    window = ComposeWindow(world.backend, [account for account in world.call("account.list") if isinstance(account, AccountSummary)], world.account_id, draft, ("Inbox", "1"), rich=rich)
+    add_window(qtbot, window)
+    window.show()
+    return window
+
+
+def test_a_reply_in_rich_text_shows_the_quoted_original_with_its_picture_and_sends_it(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    png = picture_file(tmp_path, "garden.png").read_bytes()
+    window = rich_answer(world, qtbot, answer("reply", png))
+    assert window.is_rich()
+    assert "[picture: garden.png]" in window.rich.toPlainText() and "Look at our garden" in window.rich.toPlainText()
+    assert data_address("image/png", "garden.png", png) in window.rich.outgoing_html() and window.attachments.count() == 0
+
+
+def yes_to_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    def yes(*arguments: object) -> QMessageBox.StandardButton:
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", yes)
+
+
+def picture_attachments(window: ComposeWindow) -> list[str]:
+    return [str(window.attachments.item(row).data(ROLE_PATH)) for row in range(window.attachments.count())]
+
+
+def test_a_forward_in_plain_text_lists_the_pictures_of_the_original_as_attachments_once(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    png = picture_file(tmp_path, "garden.png").read_bytes()
+    window = rich_answer(world, qtbot, answer("forward", png, ("plan.pdf",)), rich=False)
+    assert picture_attachments(window) == [data_address("image/png", "garden.png", png)] and window.include_original.text().endswith("(plan.pdf)")
+    switched = rich_answer(world, qtbot, answer("forward", png, ("plan.pdf",)))  # opened in rich text, then switched
+    yes_to_questions(monkeypatch)
+    switched.plain_action.trigger()
+    assert picture_attachments(switched) == [data_address("image/png", "garden.png", png)] and switched.include_original.text().endswith("(plan.pdf)")
+
+
+def test_a_reply_switched_to_plain_text_leaves_the_quoted_pictures_out_but_keeps_its_own(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    png = picture_file(tmp_path, "garden.png").read_bytes()
+    window = rich_answer(world, qtbot, answer("reply", png))
+    window.rich.edit.moveCursor(window.rich.edit.textCursor().MoveOperation.Start)
+    mine = picture_file(tmp_path, "mine.png", width=12)
+    drop_files(window.rich, mine)
+    yes_to_questions(monkeypatch)
+    window.plain_action.trigger()
+    assert picture_attachments(window) == [data_address("image/png", "mine.png", mine.read_bytes())]

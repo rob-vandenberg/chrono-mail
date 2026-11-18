@@ -1,3 +1,4 @@
+import html
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,15 +43,17 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.prefs import read_preferences
-from chrono_mail.mime.pictures import data_address
+from chrono_mail.mime.pictures import data_address, pictures_out_of
 from chrono_mail.ui.richeditor import Picture, RichEditor
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.4.621"
+__version__ = "composer.py 4.4.622"
 
 # --- Version history ----------------------------------------------------
+# v4.4.622: A reply or forward in rich text quotes the original with its formatting and pictures; a forward in plain text carries them as
+#           attachments; a reply switched to plain text leaves the quoted pictures out (D-353)
 # v4.4.621: A file that is not a picture dragged onto the text is attached; going to plain text makes the pictures attachments (D-353)
 # v4.2.442: a Send stopped by the outgoing server's certificate closes the window without its box and says so (certificate_stopped): the Verify certificate window asks then (D-299)
 # v4.2.430: an escaped quote inside a quoted name never ends it when the addresses are split
@@ -149,6 +152,11 @@ class ComposeOptions:
     warn_no_subject: bool = True
     font_size: float = 0.0  # points
     reply_below: bool = False
+
+
+def _paragraphs_of(text: str) -> str:
+    """Plain text as HTML paragraphs, one per line."""
+    return "".join(f"<p>{html.escape(line) or '<br />'}</p>" for line in text.split("\n"))
 
 
 def with_signature(body: str, signature: str, below: bool = False) -> str:
@@ -322,12 +330,10 @@ class ComposeWindow(QMainWindow):
             self.bcc.setText(", ".join(draft.bcc) if isinstance(draft, DraftOpenResult) else "")  # a reply starts without Bcc
             self.subject.setText(draft.subject)
             self.body.setPlainText(draft.body)
-            names: tuple[str, ...] = draft.attachment_names if isinstance(draft, ComposeResult) else ()  # what a forward takes along
-            if names:
-                wording = "Attach the original message" if self._kind == "forward_attachment" else "Include the attachments of the original message"
-                self.include_original.setText(f"{wording} ({', '.join(names)})")
-                self.include_original.setChecked(True)
-                self.include_original.show()
+            if isinstance(draft, ComposeResult):  # what a forward takes along
+                self._original_names = draft.attachment_names
+                if draft.attachment_names:
+                    self.include_original.setChecked(True)
             for stored in draft.attachments if isinstance(draft, DraftOpenResult) else ():  # a draft's own attachments
                 self._add_kept(stored.position, stored.name, stored.size)
             self.setWindowTitle(draft.subject or "New message")
@@ -345,10 +351,21 @@ class ComposeWindow(QMainWindow):
         if options.font_size > 0:
             self.set_text_size(options.font_size)
         stored_html = draft.html if isinstance(draft, DraftOpenResult) else None
+        quoted = draft.quoted_html if isinstance(draft, ComposeResult) and resume is None else None
         if stored_html:  # a rich text draft comes back as rich text
             self.set_rich(True, stored_html)
+        elif rich and quoted:  # the original quoted with its formatting and pictures (D-353)
+            below = options.reply_below and self._kind in ("reply", "reply_all")
+            own = _paragraphs_of(with_signature("", self._signature, below=below) if self._signature else "\n")
+            self.set_rich(True, quoted + own if below else own + quoted)
+            self._quoted_pictures = set(self.rich.pictures)  # the own part has none: these are the original's
+            self.rich.edit.moveCursor(self.rich.edit.textCursor().MoveOperation.End if below else self.rich.edit.textCursor().MoveOperation.Start)
         elif rich:
             self.set_rich(True)
+        if quoted and not self.is_rich() and self._kind == "forward":  # a forward in plain text carries the original's pictures as attachments
+            for picture in pictures_out_of(quoted, lambda: "picture", leave_out_bad=True)[1]:
+                self._add_picture(Picture(picture.content_type, picture.name, picture.data))
+        self._show_original_names()
         if editing is not None:  # it stays scheduled: Save keeps its time, Schedule… changes it; sending now and drafts are on the page
             self.keep_button.show()
             self.keep_button.setDefault(True)
@@ -433,14 +450,31 @@ class ComposeWindow(QMainWindow):
                 self.rich.setPlainText(self.body.toPlainText())
             self.editor_stack.setCurrentWidget(self.rich)
         else:
-            for picture in self.rich.pictures_in_text():  # nothing put in is lost: the pictures become attachments (D-353)
-                self._add_picture(picture)
+            answering = self._kind in ("reply", "reply_all")
+            for address, picture in self.rich.pictures_in_text().items():  # nothing put in is lost: the pictures become attachments (D-353)
+                if not (answering and address in self._quoted_pictures):  # the quoted original's pictures: in a plain reply they go (the owner)
+                    self._add_picture(picture)
             self.body.setPlainText(self.rich.toPlainText())
             self.editor_stack.setCurrentWidget(self.body)
         self._show_mode()
         (self.rich if on else self.body).setFocus()
 
+    _original_names: tuple[str, ...] = ()  # a forward: the original's attachments (its pictures stand in the text or in the attachment list)
+    _quoted_pictures: set[str] = set()  # the editor's pictures that came with the quoted original  # noqa: RUF012 - replaced, never changed in place
+
+    def _show_original_names(self) -> None:
+        """What a forward takes along, named on its tick box."""
+        names = self._original_names
+        whole = self._kind == "forward_attachment"
+        if names:
+            wording = "Attach the original message" if whole else "Include the attachments of the original message"
+            self.include_original.setText(f"{wording} ({', '.join(names)})")
+            self.include_original.setVisible(True)
+        elif not whole:
+            self.include_original.setVisible(False)
+
     def _show_mode(self) -> None:
+        self._show_original_names()
         rich = self.is_rich()
         self.rich_button.setText("Rich text" if rich else "Plain text")
         (self.rich_action if rich else self.plain_action).setChecked(True)

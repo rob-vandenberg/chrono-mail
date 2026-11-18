@@ -4,17 +4,20 @@ from email.message import EmailMessage
 
 import pytest
 
-from chrono_mail.core import MessageFormatError
-from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
+from chrono_mail.core import MessageFlag, MessageFormatError
+from chrono_mail.engine.compose import build_draft
+from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
 from chrono_mail.mime.pictures import attachment_from_data, data_address, pictures_into
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pictures.py 4.4.621"
+__version__ = "test_engine_pictures.py 4.4.622"
 
 # --- Version history ----------------------------------------------------
+# v4.4.622: Replies and forwards quote the original with its pictures; a plain-text forward carries them as attachments
 # v4.4.621: Initial tests: pictures inside the text are sent, saved, opened and taken back unaltered as inline parts (D-353)
 
 # a real 1 x 1 PNG; its bytes must arrive exactly as given
@@ -111,3 +114,47 @@ def test_a_scheduled_message_taken_back_keeps_its_pictures(setup: Setup) -> None
     draft = call(setup.engine, "mail.unschedule", account=setup.account_id, folder="Scheduled", message=result.message_id)
     opened = call(setup.engine, "draft.open", account=setup.account_id, folder=draft.folder, message=draft.message_id)
     assert data_address("image/png", "beach.png", PNG) in opened.html
+
+
+def html_message_with_a_picture() -> ParsedMessage:
+    return parse_message(build_message(OutgoingMessage(
+        Address("Ann", "ann@example.com"), (Address("", "me@example.com"),), (), (), "Our garden", "Look [picture: garden.png]",
+        html_body='<html><head><style>p { color: red }</style></head><body><p>Look at <b>our</b> garden</p><script>x()</script>'
+        + f'<img src="{data_address("image/png", "garden.png", PNG)}" /></body></html>',
+        attachments=(Attachment("plan.pdf", "application/pdf", None, False, b"%PDF made-up"),),
+    )))
+
+
+def test_a_reply_in_rich_text_quotes_the_original_with_its_formatting_and_its_picture_and_no_attachment() -> None:
+    draft = build_draft(html_message_with_a_picture(), "reply", "me@example.com")
+    assert draft.quoted_html is not None and "<b>our</b>" in draft.quoted_html and "<blockquote>" in draft.quoted_html
+    assert data_address("image/png", "garden.png", PNG) in draft.quoted_html
+    assert "<style" not in draft.quoted_html and "<script" not in draft.quoted_html and "color: red" not in draft.quoted_html
+    assert draft.attachment_names == ()
+
+
+def test_a_forward_quotes_with_its_picture_and_names_the_picture_apart_from_the_attachments() -> None:
+    draft = build_draft(html_message_with_a_picture(), "forward", "me@example.com")
+    assert draft.quoted_html is not None and "Forwarded message" in draft.quoted_html and data_address("image/png", "garden.png", PNG) in draft.quoted_html
+    assert draft.attachment_names == ("plan.pdf",)
+
+
+def test_a_plain_text_message_has_no_html_quote() -> None:
+    plain = parse_message(build_message(OutgoingMessage(Address("", "ann@example.com"), (Address("", "me@example.com"),), (), (), "Hi", "Hello")))
+    assert build_draft(plain, "reply", "me@example.com").quoted_html is None
+
+
+def test_a_forward_takes_along_only_the_attachments_of_the_original_its_pictures_come_from_the_window(setup: Setup) -> None:
+    raw = build_message(OutgoingMessage(
+        Address("Ann", "ann@example.com"), (Address("", "me@example.com"),), (), (), "Our garden", "Look",
+        html_body=f'<p>Look <img src="{data_address("image/png", "garden.png", PNG)}" /></p>',
+        attachments=(Attachment("plan.pdf", "application/pdf", None, False, b"%PDF made-up"),),
+    ))
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        reference = mailbox.deliver(("Inbox",), raw, frozenset({MessageFlag.SEEN}))
+    for html, expected in ((None, ["plan.pdf"]), ("<p>Look</p>", ["plan.pdf"])):  # never twice: the window gives a plain forward its pictures
+        setup.smtp.received.clear()
+        call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Fwd: Our garden", body="See below", html=html,
+             source_folder="Inbox", source_message=reference.store_id, include_source_attachments=True)
+        (received,) = setup.smtp.received
+        assert sorted(part.filename or "" for part in parse_message(received.data).attachments if not part.inline) == sorted(expected)

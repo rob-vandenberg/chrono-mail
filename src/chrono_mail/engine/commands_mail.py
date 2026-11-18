@@ -38,9 +38,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.621"
+__version__ = "commands_mail.py 4.4.622"
 
 # --- Version history ----------------------------------------------------
+# v4.4.622: message.compose gives the quote as HTML with the original's formatting and pictures (D-353)
 # v4.4.621: An attachment may be given as a picture's data: address (a picture of the text that became an attachment, D-353)
 # v4.4.563: the group headings are counted at the engine's clock, and every answer with headings says the local day they were counted for (day, D-321)
 # v4.4.562: ties_oldest_first: messages with the same value oldest first by when they were received, otherwise newest first (D-320)
@@ -1397,6 +1398,7 @@ class ComposeResult:
     references: tuple[str, ...]
     attachment_names: tuple[str, ...]
     from_account: str | None = None  # the account the answer is sent from; None: the caller chooses
+    quoted_html: str | None = None  # the quote as HTML with the original's formatting and pictures (D-353)
 
 
 def reply_account(engine: Engine, opened: AccountSettings, parsed: ParsedMessage, raw: bytes) -> str | None:
@@ -1417,7 +1419,8 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
         from_account = reply_account(engine, mailbox.settings, parsed, raw)
         own = engine.resolve_account(from_account).account.email_address if from_account else mailbox.settings.account.email_address
         draft = build_draft(parsed, parameters.kind, own, parameters.quote)
-        return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names, from_account)
+        return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names, from_account,
+                             draft.quoted_html)
 
 
 MESSAGE_SHOW: TypedCommand[MessageParameters, ShowResult] = TypedCommand("message.show", MessageParameters, ShowResult)
