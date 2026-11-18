@@ -20,9 +20,10 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.617"
+__version__ = "calendarwidgets.py 4.4.620"
 
 # --- Version history ----------------------------------------------------
+# v4.4.620: In Month a day's timed events start below the all-day bars of that day, not below the deepest bar of its week (the owner)
 # v4.4.617: A past block keeps its own colour and text, both dimmed together: a fresh white text on the darker block did not look dimmed (D-352)
 # v4.4.616: Month draws any number of weeks (the n weeks view, no other month greyed there); week numbers in Month, n weeks and the header
 #           of Day and Week; a short event drawn as long as chosen; a past event less bright in every view (D-352)
@@ -861,7 +862,6 @@ class MonthView(EntryHits):
             top = 22 + week * height
             week_bars = layout.bars(self.entries, week_days, include_timed_spanning=True)
             used = {bar.entry.row for bar in week_bars}
-            bar_rows = max((bar.row for bar in week_bars), default=-1) + 1
             for column, day in enumerate(week_days):
                 left = column * width
                 cell = QRectF(left, top, width, height)
@@ -904,6 +904,7 @@ class MonthView(EntryHits):
                 left = column * width
                 timed = [entry for entry in self.entries if entry.first_day == day and entry.last_day == day and not entry.all_day and id(entry) not in single_ids]
                 timed.sort(key=lambda entry: (entry.start, entry.summary.casefold()))
+                bar_rows = max((bar.row for bar in week_bars if bar.first <= column <= bar.last), default=-1) + 1  # the bars of this day only (the owner)
                 free_rows = max(0, room - bar_rows)
                 for position, entry in enumerate(timed[:free_rows]):
                     y = top + 22 + (bar_rows + position) * line_height
