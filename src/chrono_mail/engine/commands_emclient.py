@@ -7,11 +7,11 @@ check of an imported account records mail that is already here instead of downlo
 import json
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from chrono_mail.config import Rule, ServerRole, load_rules, load_tags, new_rule_id, save_rules, save_tags
-from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, MessageRef, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, ConfigurationError, CollectionKind, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, account_add
 from chrono_mail.engine.commands_calendar import ImportParameters as EventImportParameters, event_import
 from chrono_mail.engine.commands_dav import AddDavParameters, SetDavParameters, account_add_dav, dav_set
@@ -20,6 +20,7 @@ from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportP
 from chrono_mail.pim.ical import parse_events, parse_tasks
 from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_addressbook import AddParameters, AddressesParameters, contact_add, contact_addresses
+from chrono_mail.engine.commands_signatures import add_texts
 from chrono_mail.engine.emclient_source import (
     MAXIMUM_MESSAGE_BYTES,
     BackupData,
@@ -51,9 +52,11 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.461"
+__version__ = "commands_emclient.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: the signatures and templates of the settings export into the library, each account's choices from them, and the "Sent from"
+#           tick; a name already in the library is skipped and its text left as it is (D-359)
 # v4.2.461: a POP3 account's store in the backup gives its mail its read, flagged and replied marks and its tags, wherever the import puts
 #           that mail (its own folders, or Local Folders > its name), as Local Folders' mail gets them (UR-09); the scan counts them; mail of
 #           such a store already here gets its tags; a store whose marks cannot be read is said once per import
@@ -185,6 +188,10 @@ class ImportResult:
     events_existing: int = 0
     tasks_added: int = 0
     tasks_existing: int = 0
+    texts_added: int = 0  # signatures and templates added to the library (D-359)
+    texts_existing: int = 0  # their name was in the library already: that text was left as it is
+    texts_given: int = 0  # choices of an account (a template or signature for new mail, replies or forwards) set from them
+    sent_from_line: bool = False  # the export had 'Attach "Sent from eM Client"' on: the window ticks its own "Sent from Chrono Mail"
 
 
 def _path(text: str | None, what: str) -> Path | None:
@@ -549,6 +556,75 @@ def _import_calendar_servers(
 
 def _same_rule(first: Rule, second: Rule) -> bool:
     return (first.name, first.conditions, first.actions, first.match, first.accounts) == (second.name, second.conditions, second.actions, second.match, second.accounts)
+
+
+_CHOICE: dict[tuple[str, str], str] = {
+    ("signature", "new"): "signature_new", ("signature", "reply"): "signature_reply", ("signature", "forward"): "signature_forward",
+    ("template", "new"): "template_new", ("template", "reply"): "template_reply", ("template", "forward"): "template_forward",
+}
+
+
+def _import_texts(engine: Engine, export: SettingsExport, notes: list[str]) -> tuple[int, int, int]:
+    """The signatures and templates into the library, and each mail account here of an address they are used for gets them as its
+    choice for new mail, replies or forwards (D-359). A choice the account already has stays; a name already in the library is
+    skipped and its text left as it is, the account then gets that text. Added, already there, choices set."""
+    notes.extend(export.texts_not_imported)
+    if not export.texts:
+        return 0, 0, 0
+    try:
+        found = add_texts(engine, [(text.name, text.html) for text in export.texts])
+    except ConfigurationError as error:
+        notes.append(f"Templates and signatures: {error}")
+        return 0, 0, 0
+    notes.extend(found.problems)
+    wanted: dict[str, dict[str, str]] = {}  # address, folded -> field of AccountTexts -> text id
+    below: dict[str, bool] = {}  # address, folded -> the signature's place, from a reply or forward use (where it matters), else a new one
+    shown: dict[str, str] = {}  # address, folded -> as written
+    for text in export.texts:
+        item_id = found.ids.get(" ".join(text.name.split()).casefold())
+        if item_id is None:
+            continue
+        for use in text.uses:
+            address = use.address.casefold()
+            shown.setdefault(address, use.address)
+            wanted.setdefault(address, {}).setdefault(_CHOICE[(text.kind, use.use)], item_id)
+            if text.kind == "signature" and (use.use != "new" or address not in below):
+                below[address] = use.below
+    given = 0
+    kept: list[str] = []
+    missing: list[str] = []
+    for address, choices in wanted.items():
+        accounts = [
+            settings for settings in engine.config().accounts
+            if settings.account.kind in (AccountKind.POP3, AccountKind.IMAP) and settings.account.email_address.casefold() == address
+        ]
+        if not accounts:
+            missing.append(shown[address])
+            continue
+        for settings in accounts:
+            current = asdict(settings.texts)
+            changed: dict[str, str] = {}
+            for name, item_id in choices.items():
+                if not current[name]:
+                    changed[name] = item_id
+                elif current[name] != item_id:
+                    kept.append(shown[address])
+            old = settings.texts
+            texts = replace(
+                old, template_new=changed.get("template_new", old.template_new), template_reply=changed.get("template_reply", old.template_reply),
+                template_forward=changed.get("template_forward", old.template_forward), signature_new=changed.get("signature_new", old.signature_new),
+                signature_reply=changed.get("signature_reply", old.signature_reply), signature_forward=changed.get("signature_forward", old.signature_forward),
+            )
+            given += len(changed)
+            if address in below and any(name.startswith("signature") for name in changed):
+                texts = replace(texts, signature_below=below[address])
+            if texts != settings.texts:
+                engine.change_config(lambda config, chosen=settings.account.account_id, new=texts: config.with_account(replace(config.find(chosen), texts=new)))
+    if kept:
+        notes.append(f"These accounts keep the templates and signatures already chosen for them: {', '.join(dict.fromkeys(kept))}")
+    if missing:
+        notes.append(f"Templates and signatures are in Settings > Templates and Signatures; no account here has the address {', '.join(missing)}, so they are not chosen for it")
+    return found.added, found.existing, given
 
 
 def _import_rules(engine: Engine, export: SettingsExport, accounts: dict[str, str], notes: list[str]) -> tuple[int, int, list[str]]:
@@ -973,6 +1049,8 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         if parameters.rules:
             rules_added, rules_existing, not_imported = _import_rules(engine, export, accounts, notes)
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
+        texts_added, texts_existing, texts_given = _import_texts(engine, export, notes)  # with the accounts made just now (D-359)
+        result = replace(result, texts_added=texts_added, texts_existing=texts_existing, texts_given=texts_given, sent_from_line=export.sent_from_line)
         if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
             journal.phase("settings")
     pop3 = _pop3_in(layout)

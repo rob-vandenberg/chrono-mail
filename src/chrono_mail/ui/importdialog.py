@@ -42,9 +42,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.465"
+__version__ = "importdialog.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: the report counts the signatures and templates added and already there, and the accounts' choices given; an export with
+#           "Sent from eM Client" on ticks "Sent from Chrono Mail" through on_sent_from (D-359)
 # v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.2.463: when an import ends (done, stopped or failed) the recovery code is shown while it was never confirmed as stored: an import
 #           may make this computer's key, whose code was never shown (UR-08, D-260)
@@ -251,13 +253,17 @@ def merge(total: ImportResult, batch: ImportResult) -> ImportResult:
         events_existing=total.events_existing + batch.events_existing,
         tasks_added=total.tasks_added + batch.tasks_added,
         tasks_existing=total.tasks_existing + batch.tasks_existing,
+        texts_added=total.texts_added + batch.texts_added,
+        texts_existing=total.texts_existing + batch.texts_existing,
+        texts_given=total.texts_given + batch.texts_given,
+        sent_from_line=total.sent_from_line or batch.sent_from_line,
     )
 
 
 def import_summary(result: ImportResult, stopped: bool) -> str:
     nothing_new = not (
         result.accounts_added or result.rules_added or result.contacts_added or result.messages_imported or result.tags_added or result.messages_tagged
-        or result.events_added or result.tasks_added or result.calendars_given
+        or result.events_added or result.tasks_added or result.calendars_given or result.texts_added or result.texts_given
     )
     lines = [_first_line(stopped, nothing_new)]
     if result.accounts_added or result.accounts_existing:
@@ -277,6 +283,11 @@ def import_summary(result: ImportResult, stopped: bool) -> str:
         )
     if result.tags_added or result.messages_tagged:
         lines.append(f"Tags made: {result.tags_added}; messages that got their tags: {result.messages_tagged}.")
+    if result.texts_added or result.texts_existing or result.texts_given:
+        lines.append(
+            f"Templates and signatures added: {result.texts_added}; already here, left as they are: {result.texts_existing}; "
+            f"chosen for accounts: {result.texts_given}."
+        )
     if result.messages_imported or result.messages_duplicate or result.messages_failed:
         lines.append(f"Messages imported: {result.messages_imported:,}; already here: {result.messages_duplicate:,}; failed: {len(result.messages_failed)}.")
     if result.messages_failed:
@@ -399,9 +410,10 @@ class ImportDialog(QDialog):
 
     def __init__(
         self, backend: Backend, on_changed: Callable[[], None], parent: QWidget | None = None, on_running: Callable[[bool], None] | None = None,
-        memory: Remembered | None = None,
+        memory: Remembered | None = None, on_sent_from: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        self._on_sent_from = on_sent_from  # an import whose export had "Sent from eM Client" on: tick "Sent from Chrono Mail" (D-359)
         self._memory = memory  # the paths of the last import, on this computer (None: nothing remembered)
         self._backend = backend
         self._on_changed = on_changed
@@ -756,6 +768,8 @@ class ImportDialog(QDialog):
 
     def _batch_done(self, result: ImportResult) -> None:
         self._result = merge(self._result, result)
+        if result.sent_from_line and self._on_sent_from is not None:
+            self._on_sent_from()
         self._done_before += result.messages_imported + result.messages_duplicate + len(result.messages_failed)
         self.progress.setValue(min(self._done_before, self.progress.maximum()))
         if result.messages_left > 0 and not self._stop:

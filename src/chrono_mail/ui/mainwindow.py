@@ -74,9 +74,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.5.626"
+__version__ = "mainwindow.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: an import whose export had the reference client's "Sent from" tick on ticks Settings > Templates and Signatures > "Sent from Chrono Mail" (D-359)
 # v4.4.616: Settings > Calendar's choices taken into use: Start week on for every date field, the rest by the Calendar section (D-352)
 # v4.5.626: The start moves each account's old plain-text signature into the list of signatures, once (B-24, D-358)
 # v4.4.615: A section switch from the folder list takes the focus to the new sidebar itself, so hiding the old one no longer
@@ -1660,7 +1661,10 @@ class MainWindow(QMainWindow):
 
     def show_import(self) -> None:
         """File > Import: accounts, rules, contacts and mail; the folder list is loaded again after each import."""
-        ImportDialog(self.backend, self._after_import, self, on_running=self.checking.import_running, memory=self.memory).exec()
+        ImportDialog(
+            self.backend, self._after_import, self, on_running=self.checking.import_running, memory=self.memory,
+            on_sent_from=lambda: self.prefs.keep(changed(self.prefs.read(), sent_from_line=True)),
+        ).exec()
 
     def show_export(self) -> None:
         """File > Export: data files, accounts and rules for another program; nothing here changes."""

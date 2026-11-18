@@ -27,14 +27,17 @@ from typing import Literal
 
 from chrono_mail.config import Action, Condition
 from chrono_mail.config.rules import HEADER_NAME
+from chrono_mail.config.signatures import MAXIMUM_HTML_BYTES, MAXIMUM_ITEMS, MAXIMUM_NAME
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag
 from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 4.2.462"
+__version__ = "emclient_source.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: the settings export's signatures and templates (name, HTML, which account uses each for new mail, replies or forwards, and the
+#           signature's place) and its "Sent from eM Client" tick; a template's pictures (attachments named by cid:) put inside its HTML (D-359)
 # v4.2.462: a Local Folders file of the backup that is damaged (also when packed with LZMA or Zstandard), encrypted, packed in an unknown
 #           way or cut short gives "The backup cannot be read" instead of an unhandled error
 # v4.2.461: the backup's store of each POP3 account (a folder named by its id, UR-09) gives that account's mail its read, flagged and
@@ -554,15 +557,106 @@ def _categories(root: ElementTree.Element) -> tuple[SourceCategory, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class TextUse:
+    """One account's use of a signature or template: its address, "new", "reply" or "forward", and (a signature) after the quoted text."""
+
+    address: str
+    use: Literal["new", "reply", "forward"]
+    below: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SourceText:
+    """A signature or template of eM Client: a text of the library in Chrono Mail (D-359). Its HTML is kept as written, pictures included;
+    a template's subject, recipients and font are not kept (a text is a name and its HTML, D-358)."""
+
+    kind: Literal["signature", "template"]
+    name: str
+    html: str
+    uses: tuple[TextUse, ...]
+
+
+_USES: dict[str, Literal["new", "reply", "forward"]] = {"new": "new", "reply": "reply", "forward": "forward"}
+
+
+def _uses(element: ElementTree.Element) -> tuple[TextUse, ...]:
+    found: list[TextUse] = []
+    for item in [child for child in element if _local(child.tag) == "UseFor"][:MAXIMUM_ACCOUNTS * 3]:
+        use = _USES.get(item.get("type", "").strip().lower())
+        address = (item.text or "").strip()
+        if use is not None and address:
+            found.append(TextUse(address, use, item.get("position", "BeforeQuotedText").strip().lower() != "beforequotedtext"))
+    return tuple(found)
+
+
+_CID_PICTURE: re.Pattern[str] = re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*)(["'])cid:(.*?)\2""", re.IGNORECASE | re.DOTALL)
+
+
+def _with_pictures(name: str, html: str, item: ElementTree.Element, problems: list[str]) -> str:
+    """A template's pictures put inside its HTML as data addresses: the export keeps each as an attachment the text names by its
+    content id (cid:). An attachment the text does not show as a picture is a file Chrono Mail's texts cannot hold: named, not kept."""
+    pictures: dict[str, tuple[str, str]] = {}  # content id -> (type, base64)
+    files: list[str] = []
+    holder = _child(item, "attachments")
+    for attachment in [] if holder is None else [child for child in holder if _local(child.tag) == "attachment"]:
+        content_id = _text(attachment, "contentId").strip("<>")
+        kind = _text(attachment, "contentType").lower()
+        data = "".join(_text(attachment, "attachmentData").split())
+        if content_id and kind.startswith("image/") and data and re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", data):
+            pictures[content_id] = (kind, data)
+        else:
+            files.append(_text(attachment, "filename") or kind or "a file")
+    shown: set[str] = set()
+
+    def inside(match: re.Match[str]) -> str:
+        found = pictures.get(match.group(3).strip())
+        if found is None:
+            return match.group(0)
+        shown.add(match.group(3).strip())
+        return f"{match.group(1)}{match.group(2)}data:{found[0]};base64,{found[1]}{match.group(2)}"
+
+    html = _CID_PICTURE.sub(inside, html)
+    files.extend(pictures[content_id][0] for content_id in pictures if content_id not in shown)
+    if files:
+        problems.append(f"{name}: its attached files are not kept, the text is ({', '.join(files)})")
+    return html
+
+
+def _library_texts(root: ElementTree.Element) -> tuple[tuple[SourceText, ...], tuple[str, ...]]:
+    """The signatures and templates of the settings export, and the ones that cannot be imported, each with why."""
+    texts: list[SourceText] = []
+    problems: list[str] = []
+    kinds: tuple[Literal["signature", "template"], ...] = ("signature", "template")
+    for kind in kinds:
+        element = _child(root, f"{kind}s")
+        for item in [] if element is None else [child for child in element if _local(child.tag) == kind][:MAXIMUM_ITEMS]:
+            name = " ".join(item.get("name", "").split())[:MAXIMUM_NAME]
+            html = _text(item, "content")
+            if name and kind == "template":
+                html = _with_pictures(name, html, item, problems)
+            if not name:
+                problems.append(f"A {kind} without a name was not imported")
+            elif len(html.encode("utf-8", "surrogatepass")) > MAXIMUM_HTML_BYTES:
+                problems.append(f"{name}: larger than {MAXIMUM_HTML_BYTES // (1024 * 1024)} MB, not imported")
+            else:
+                holder = _child(item, "addresses") if kind == "template" else item
+                texts.append(SourceText(kind, name, html, _uses(holder) if holder is not None else ()))
+    return tuple(texts), tuple(problems)
+
+
+@dataclass(frozen=True, slots=True)
 class SettingsExport:
     accounts: tuple[SourceAccount, ...]
     rules: tuple[SourceRule, ...]
     passwords_encrypted: bool
     categories: tuple[SourceCategory, ...] = ()
+    texts: tuple[SourceText, ...] = ()  # the signatures and templates (D-359)
+    texts_not_imported: tuple[str, ...] = ()  # "name: why"
+    sent_from_line: bool = False  # the tick 'Attach "Sent from eM Client" signature to every email' (general settings AttachEmSignature)
 
 
 def read_settings(path: Path) -> SettingsExport:
-    """Accounts, passwords and rules from the settings file (Menu > File > Export > Settings, with passwords)."""
+    """Accounts, passwords, rules, categories, signatures and templates from the settings file (Menu > File > Export > Settings, with passwords)."""
     try:
         if path.stat().st_size > MAXIMUM_SETTINGS_BYTES:
             raise ImportSourceError("The settings file is far too large")
@@ -580,7 +674,9 @@ def read_settings(path: Path) -> SettingsExport:
     rules_element = _child(root, "rules")
     uids = {account.uid for account in accounts}
     rules = () if rules_element is None else tuple(_rule(item, uids) for item in list(rules_element)[:MAXIMUM_RULES] if _local(item.tag) == "rule")
-    return SettingsExport(accounts, rules, crypted, _categories(root))
+    texts, texts_not_imported = _library_texts(root)
+    sent_from_line = _text(_child(root, "general-settings"), "AttachEmSignature").lower() == "true"
+    return SettingsExport(accounts, rules, crypted, _categories(root), texts, texts_not_imported, sent_from_line)
 
 
 # --- the mail export ------------------------------------------------------------------------------

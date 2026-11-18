@@ -20,14 +20,17 @@ from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
 from tests.mailfactory import raw_message
 from tests.test_emclient_source import (
-    NAMESPACE, FakeAccount, FakeContact, FakeItem, category_xml, encode_password, rule_xml, settings_xml, ui_rule, words, write_backup, write_mail_export, write_settings,
+    NAMESPACE, FakeAccount, FakeContact, FakeItem, category_xml, encode_password, rule_xml, settings_xml, texts_xml, ui_rule, with_texts, words, write_backup,
+    write_mail_export, write_settings,
 )
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.461"
+__version__ = "test_import_emclient.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: signatures and templates come into the library and become the accounts' choices; a name already there is skipped and its
+#           text left as it is; a choice already made stays; a second import adds nothing (D-359)
 # v4.2.461: a POP3 account's store in the backup gives its mail its marks and tags, in its own folders and in Local Folders > its name; an
 #           IMAP or calendar account's store is never read; a damaged store leaves out only its marks; tags given later reach its mail (UR-09)
 # v4.2.458: Local Folders found by its place in the mail export (the chosen folder holds it, is it, lies inside it, or holds it further
@@ -1218,3 +1221,69 @@ def test_the_bad_store_line_comes_again_when_the_run_that_said_it_failed(tmp_pat
     monkeypatch.setattr(commands_emclient, "_import_mail", real)
     result = import_all(engine, chosen, settings, backup)
     assert sum("could not be read from the backup" in note for note in result.notes) == 1
+
+
+# --- signatures and templates (D-359) -----------------------------------------------------------------
+
+
+def text_exports(folder: Path) -> Exports:
+    exports = make_exports(folder)
+    with_texts(exports.settings, texts_xml())
+    return exports
+
+
+def library(engine: Engine) -> dict[str, tuple[str, str]]:
+    """name -> (id, HTML) of every text of the library, in its order."""
+    return {text.name: (text.item_id, text.html) for text in call(engine, "snippet.all")}
+
+
+def by_address(engine: Engine) -> dict[str, Any]:
+    return {item.email_address: engine.config().find(item.account_id) for item in call(engine, "account.list") if item.kind == "pop3"}
+
+
+def only_settings(exports: Exports, **extra: object) -> dict[str, object]:
+    return exports.values(mail=False, contacts=False, calendars=False, tags=False, **extra)
+
+
+def test_signatures_and_templates_come_into_the_library_and_become_the_accounts_choices(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    call(engine, "snippet.save-all", ids=("",), names=("answer",), htmls=("<p>Mine</p>",))  # the person's own text of that name
+    exports = text_exports(tmp_path)
+    result: Any = call(engine, "import.emclient", **only_settings(exports))
+    texts = library(engine)
+    assert list(texts) == ["answer", "Greeting", "Short", "Logo", "Weekly report"]  # "Answer" is skipped: never a second name
+    assert texts["answer"][1] == "<p>Mine</p>"  # and the person's text is left as it is
+    assert texts["Greeting"][1] == "Kind regards,<br />Ann" and texts["Logo"][1] == '<img src="data:image/png;base64,iVBORw0KGgo=">'
+    accounts = by_address(engine)
+    first, second = accounts["a1@example.com"].texts, accounts["a2@example.com"].texts
+    assert (first.signature_new, first.signature_reply, first.signature_forward) == (texts["Greeting"][0], texts["Short"][0], texts["Logo"][0])
+    assert (first.template_new, first.template_reply, first.template_forward) == (texts["Weekly report"][0], texts["answer"][0], "")
+    assert first.signature_below  # after the quoted text, as the reply and forward signatures stand
+    assert (second.signature_new, second.signature_reply, second.template_new, second.signature_below) == (texts["Greeting"][0], "", "", False)
+    assert (result.texts_added, result.texts_existing, result.texts_given, result.sent_from_line) == (4, 1, 6, True)
+    assert any("other@example.com" in note for note in result.notes)  # no account of that address here: named, the text is still added
+
+
+def test_a_second_import_adds_no_text_and_changes_none(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = text_exports(tmp_path)
+    call(engine, "import.emclient", **only_settings(exports))
+    before, choices = library(engine), by_address(engine)["a1@example.com"].texts
+    result: Any = call(engine, "import.emclient", **only_settings(exports, again=True))
+    assert library(engine) == before and by_address(engine)["a1@example.com"].texts == choices
+    assert (result.texts_added, result.texts_existing, result.texts_given) == (0, 5, 0)
+    assert not any("keep" in note for note in result.notes)
+
+
+def test_a_choice_the_account_already_has_stays(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    (own,) = call(engine, "snippet.save-all", ids=("",), names=("Mine",), htmls=("<p>Mine</p>",))
+    existing: Any = call(
+        engine, "account.add", display_name="Mine", email_address="a1@example.com", username="a1login", password="x", incoming_host="pop.example.com",
+        outgoing_host="smtp.example.com", storage="local",
+    )
+    call(engine, "snippet.set-account-texts", account=existing.account_id, signature_new=own.item_id)
+    result: Any = call(engine, "import.emclient", **only_settings(text_exports(tmp_path)))
+    texts = engine.config().find(existing.account_id).texts
+    assert texts.signature_new == own.item_id and texts.signature_reply == library(engine)["Short"][0]
+    assert any("keep" in note and "a1@example.com" in note for note in result.notes)

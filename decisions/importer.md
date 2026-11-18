@@ -11,6 +11,7 @@ See also: [[storage]]
 - [[D-301]] Imported calendar accounts
 - [[D-212]] One table of standard folder names
 - [[D-131]] Categories become tags
+- [[D-359]] The reference client's signatures and templates come into the library
 - [[D-134]] Import button waits for the exports
 - [[D-278]] Import from a data file
 - [[D-279]] Export to a data file

@@ -10,13 +10,15 @@ import pytest
 from chrono_mail.config import Action, Condition
 from chrono_mail.core import MessageFlag
 from chrono_mail.engine import emclient_source
-from chrono_mail.engine.emclient_source import ImportSourceError, SourceRule, decode_password, message_files, message_keys, read_backup, read_settings
+from chrono_mail.engine.emclient_source import ImportSourceError, SourceRule, TextUse, decode_password, message_files, message_keys, read_backup, read_settings
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_emclient_source.py 4.2.462"
+__version__ = "test_emclient_source.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: the signatures and templates of the settings export and its "Sent from" tick are read; a template's pictures go inside its text;
+#           a text over 5 MB or without a name, and an attached file, is named (D-359)
 # v4.2.462: a backup whose Local Folders file is damaged (deflate, LZMA, Zstandard, its name), encrypted or packed in an unknown way is refused in plain words
 # v1.2.254: a rule that moves to a standard folder by its name goes to Chrono Mail's own standard folder (Junk E-mail: Move to Junk)
 # v0.5.137: categories, the categories of messages in the backup, category parts of rules
@@ -489,3 +491,74 @@ def test_the_backup_gives_the_tags_of_each_message(tmp_path: Path) -> None:
     assert data.take(("Inbox",), "a@x", None) == (frozenset({MessageFlag.SEEN}), ("Work", "Home"))
     assert data.take(("Inbox",), "b@x", None) == (frozenset({MessageFlag.SEEN}), ())
 
+
+
+# --- signatures and templates (D-359) -----------------------------------------------------------------
+
+
+def texts_xml(sent_from: bool = True, picture: str = "") -> str:
+    """Made-up signatures and templates as the settings export writes them: the HTML escaped in <content>, the accounts in UseFor."""
+    return (
+        f"<general-settings><AttachEmSignature>{'true' if sent_from else 'false'}</AttachEmSignature></general-settings>"
+        '<signatures>'
+        '<signature name="Greeting" allow-edit="true" overwrite="false">'
+        '<UseFor type="New" position="BeforeQuotedText">a1@example.com</UseFor><UseFor type="New" position="BeforeQuotedText">A2@Example.com</UseFor>'
+        "<content>Kind regards,&lt;br /&gt;Ann</content></signature>"
+        '<signature name="Short" allow-edit="true" overwrite="false">'
+        '<UseFor type="Reply" position="AfterQuotedText">a1@example.com</UseFor><UseFor type="New" position="BeforeQuotedText">other@example.com</UseFor>'
+        "<content>Ann</content></signature>"
+        '<signature name="Logo" allow-edit="true" overwrite="false"><UseFor type="Forward" position="AfterQuotedText">a1@example.com</UseFor>'
+        f'<content>&lt;img src="{picture or "data:image/png;base64,iVBORw0KGgo="}"&gt;</content></signature>'
+        "</signatures><templates>"
+        '<template name="Weekly  report " allow-edit="true" overwrite="false"><to>boss@example.com</to><subject>Week</subject>'
+        "<content>&lt;p&gt;This week:&lt;/p&gt;</content><fontFamily>Segoe UI</fontFamily><fontSize>12</fontSize>"
+        '<addresses><UseFor type="New">a1@example.com</UseFor></addresses></template>'
+        '<template name="Answer" allow-edit="true" overwrite="false"><content>Thank you.</content>'
+        '<addresses><UseFor type="Reply">a1@example.com</UseFor></addresses></template>'
+        "</templates>"
+    )
+
+
+def with_texts(path: Path, blocks: str) -> Path:
+    """A settings export of write_settings with these blocks in place of its empty general settings."""
+    path.write_text(path.read_text("utf-8").replace("<general-settings />", blocks, 1), "utf-8")
+    return path
+
+
+def test_the_signatures_templates_and_sent_from_tick_are_read(tmp_path: Path) -> None:
+    export = read_settings(with_texts(write_settings(tmp_path), texts_xml()))
+    assert [(text.kind, text.name) for text in export.texts] == [
+        ("signature", "Greeting"), ("signature", "Short"), ("signature", "Logo"), ("template", "Weekly report"), ("template", "Answer"),
+    ]
+    greeting, short, logo, weekly, _ = export.texts
+    assert greeting.html == "Kind regards,<br />Ann"
+    assert greeting.uses == (TextUse("a1@example.com", "new", False), TextUse("A2@Example.com", "new", False))
+    assert short.uses[0] == TextUse("a1@example.com", "reply", True)  # after the quoted text
+    assert logo.html == '<img src="data:image/png;base64,iVBORw0KGgo=">'  # the picture as it was written
+    assert weekly.html == "<p>This week:</p>" and weekly.uses == (TextUse("a1@example.com", "new", False),)  # no subject, no recipient
+    assert export.sent_from_line and export.texts_not_imported == ()
+
+
+def test_a_text_too_large_or_without_a_name_is_named_and_left_out(tmp_path: Path) -> None:
+    large = "x" * (5 * 1024 * 1024 + 1)
+    blocks = (
+        f'<signatures><signature name="Huge"><content>{large}</content></signature><signature name="  "><content>a</content></signature>'
+        '<signature name="Fine"><content>b</content></signature></signatures>'
+    )
+    export = read_settings(with_texts(write_settings(tmp_path), blocks))
+    assert [text.name for text in export.texts] == ["Fine"]
+    assert export.texts_not_imported == ("Huge: larger than 5 MB, not imported", "A signature without a name was not imported")
+    assert not export.sent_from_line
+
+
+def test_a_templates_pictures_go_inside_its_text_and_an_attached_file_is_named(tmp_path: Path) -> None:
+    blocks = (
+        '<templates><template name="Offer"><content>See:&lt;img src="cid:pic1@example.com" border="0" /&gt;</content>'
+        "<attachments><attachment><filename /><contentType>image/png</contentType><contentId>pic1@example.com</contentId>"
+        "<attachmentData>iVBORw0K\n  Ggo=</attachmentData></attachment>"
+        "<attachment><filename>prices.pdf</filename><contentType>application/pdf</contentType><contentId /><attachmentData>JVBERi0=</attachmentData></attachment>"
+        "</attachments></template></templates>"
+    )
+    export = read_settings(with_texts(write_settings(tmp_path), blocks))
+    assert export.texts[0].html == 'See:<img src="data:image/png;base64,iVBORw0KGgo=" border="0" />'
+    assert export.texts_not_imported == ("Offer: its attached files are not kept, the text is (prices.pdf)",)

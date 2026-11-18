@@ -11,7 +11,7 @@ import json
 import mimetypes
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -36,9 +36,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_signatures.py 4.5.628"
+__version__ = "commands_signatures.py 4.5.629"
 
 # --- Version history ----------------------------------------------------
+# v4.5.629: add_texts: an import adds named texts; a name already in the library is skipped and its text left as it is (D-359)
 # v4.5.628: A text that cannot be read is given with its reason and never written over; the others still load (D-358)
 # v4.5.626: Initial version: snippet.all, .save-all, .open, .save-as, .import, .export, .account-texts, .set-account-texts,
 #           .take-old-signatures (B-24, D-358)
@@ -354,6 +355,53 @@ def snippet_import(engine: Engine, parameters: ImportParameters) -> tuple[Snippe
         return tuple(found)
     except (KeyError, TypeError, AttributeError, ConfigurationError):
         raise UsageError(refused) from None
+
+
+# --- add_texts: the texts an import brings ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AddedTexts:
+    ids: dict[str, str]  # each name given, folded (str.casefold), -> the id of the text of that name in the library now
+    added: int
+    existing: int  # names already in the library: their text was left as it is
+    problems: tuple[str, ...]  # "name: why" of the texts that could not be added
+
+
+def add_texts(engine: Engine, texts: Sequence[tuple[str, str]]) -> AddedTexts:
+    """Named HTML texts into the library (an import, D-359). A name already there, compared without regard to capitals, is skipped and
+    that text left as it is: an import never changes or doubles what the person has. Each text's file is written before the list
+    names it, so an interruption leaves at most a file that nothing names. Raises ConfigurationError when the list cannot be read
+    or saved (nothing is added then)."""
+    directory = _directory(engine)
+    items = load_items(directory)
+    ids: dict[str, str] = {}
+    added = existing = 0
+    problems: list[str] = []
+    for name, text in texts:
+        try:
+            cleaned = clean_name(name)
+        except ConfigurationError as error:
+            problems.append(f"{name or 'A text without a name'}: {error}")
+            continue
+        known = items.named(cleaned)
+        if known is not None:
+            ids[cleaned.casefold()] = known.item_id
+            existing += 1
+            continue
+        try:
+            item_id = _new_id(items)
+            grown = items.with_new(Item(item_id, cleaned))
+            write_html(directory, item_id, text)
+        except ConfigurationError as error:
+            problems.append(f"{cleaned}: {error}")
+            continue
+        items = grown
+        ids[cleaned.casefold()] = item_id
+        added += 1
+    if added:
+        save_items(directory, items)
+    return AddedTexts(ids, added, existing, tuple(problems))
 
 
 # --- snippet.take-old-signatures: the first start's move ---------------------------------------------------------

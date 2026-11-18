@@ -121,3 +121,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-344]] Refresh refreshes everything, in every section
 - [[D-351]] The Size column holds its widest size
 - [[D-358]] Signatures and mail templates as in the reference client
+- [[D-359]] The reference client's signatures and templates come into the library
