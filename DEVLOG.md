@@ -4490,3 +4490,6 @@ From a user's complaint: one fixed plain-text signature per account. Now a templ
 Tests: 31 new in tests/ui/test_ui_signatures.py, 17 in tests/test_signatures.py, 6 in tests/test_engine_restore_signatures.py, all failing on 4.4.625; the old signature tests changed with the owner's approval (test_engine_account_edit, test_ui_composer, test_ui_preferences, test_ui_richtext, test_ui_settings); related tests, Pyrefly (Linux, win32), the layer check and the isolation proof pass. Four review rounds of two Sonnet reviewers; the last found nothing real.
 Open: the importer from the reference client still writes the old field (the library gets it at the next start); a text over 5 MB makes the whole library unreadable; text typed below a signature in a new message is replaced with it.
 
+## 2026-11-18, 4.5.627: the account block as the owner drew it (D-358)
+Settings > Templates and Signatures: a heading above the account's fields, the first field level with the account list, the "Sent from Chrono Mail" tick under the account list, a gap of 24 (was 18) under the button row. The page test checks the heading, the alignment and the tick's place; 232 related window tests, Pyrefly (Linux, win32) and the layer check pass; one review round of two Sonnet reviewers found nothing real.
+

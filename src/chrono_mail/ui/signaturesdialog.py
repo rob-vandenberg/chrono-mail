@@ -66,9 +66,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "signaturesdialog.py 4.5.626"
+__version__ = "signaturesdialog.py 4.5.627"
 
 # --- Version history ----------------------------------------------------
+# v4.5.627: The account block as the owner drew it: a heading above the fields, the first field level with the account list, the tick under
+#           the account list, a larger gap above the block
 # v4.5.626: Initial version: the library of templates and signatures on Settings > Templates and Signatures, kept at OK, and the
 #           window of one text (B-24, D-358)
 
@@ -188,7 +190,8 @@ class SignaturesPanel(QWidget):
         for column in ("listColumn", "previewColumn"):  # the library lines up with the accounts block below it, left and right
             part(self.form, QVBoxLayout, column).setContentsMargins(0, 0, 0, 0)
         part(self.form, QVBoxLayout, "accountsColumn").setContentsMargins(0, 0, 0, 0)
-        part(self.form, QFormLayout, "choices").setContentsMargins(wpx(ACCOUNTS_GAP), 0, 0, 0)  # the fields a little away from the account list
+        part(self.form, QVBoxLayout, "choicesColumn").setContentsMargins(wpx(ACCOUNTS_GAP), 0, 0, 0)  # the fields a little away from the account list
+        part(self.form, QFormLayout, "choices").setContentsMargins(0, 0, 0, 0)  # the first field level with the top of the account list
         self.accounts_splitter = part(self.form, QSplitter, "accountsSplitter")
         self.accounts_splitter.setSizes([ACCOUNTS_SIZES[0], ACCOUNTS_SIZES[1]])  # the owner's measured layout, taken in proportion
         for splitter in (self.splitter, self.accounts_splitter):

@@ -2,7 +2,7 @@
 <ui version="4.0">
  <class>SettingsSignatures</class>
  <widget class="QWidget" name="SettingsSignatures">
-  <layout class="QVBoxLayout" name="layout" stretch="3,0,0,2,0,0">
+  <layout class="QVBoxLayout" name="layout" stretch="3,0,0,2,0">
    <item>
     <widget class="QSplitter" name="librarySplitter">
      <property name="orientation">
@@ -168,7 +168,7 @@
      <property name="sizeHint" stdset="0">
       <size>
        <width>0</width>
-       <height>18</height>
+       <height>24</height>
       </size>
      </property>
     </spacer>
@@ -196,129 +196,160 @@
         <item>
          <widget class="QListWidget" name="accounts" />
         </item>
+        <item>
+         <widget class="QCheckBox" name="sentFrom">
+          <property name="text">
+           <string>Attach "Sent from Chrono Mail" to every message</string>
+          </property>
+         </widget>
+        </item>
        </layout>
      </widget>
      <widget class="QWidget" name="choicesSide">
-      <layout class="QFormLayout" name="choices">
-      <item row="0" column="0">
-       <widget class="QLabel" name="templateNewLabel">
-        <property name="text">
-         <string>Template for new mail</string>
-        </property>
-        <property name="buddy">
-         <cstring>templateNew</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="templateNew">
-        <property name="toolTip">
-         <string>The text a new message starts with</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="templateReplyLabel">
-        <property name="text">
-         <string>Template for replies</string>
-        </property>
-        <property name="buddy">
-         <cstring>templateReply</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QComboBox" name="templateReply">
-        <property name="toolTip">
-         <string>The text a reply starts with</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0">
-       <widget class="QLabel" name="templateForwardLabel">
-        <property name="text">
-         <string>Template for forwards</string>
-        </property>
-        <property name="buddy">
-         <cstring>templateForward</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1">
-       <widget class="QComboBox" name="templateForward">
-        <property name="toolTip">
-         <string>The text a forward starts with</string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="0">
-       <widget class="QLabel" name="signatureNewLabel">
-        <property name="text">
-         <string>Signature for new mail</string>
-        </property>
-        <property name="buddy">
-         <cstring>signatureNew</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="1">
-       <widget class="QComboBox" name="signatureNew">
-        <property name="toolTip">
-         <string>The signature put in a new message</string>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="0">
-       <widget class="QLabel" name="signatureReplyLabel">
-        <property name="text">
-         <string>Signature for replies</string>
-        </property>
-        <property name="buddy">
-         <cstring>signatureReply</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="1">
-       <widget class="QComboBox" name="signatureReply">
-        <property name="toolTip">
-         <string>The signature put in a reply</string>
-        </property>
-       </widget>
-      </item>
-      <item row="5" column="0">
-       <widget class="QLabel" name="signatureForwardLabel">
-        <property name="text">
-         <string>Signature for forwards</string>
-        </property>
-        <property name="buddy">
-         <cstring>signatureForward</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="5" column="1">
-       <widget class="QComboBox" name="signatureForward">
-        <property name="toolTip">
-         <string>The signature put in a forward</string>
-        </property>
-       </widget>
-      </item>
-      <item row="6" column="0">
-       <widget class="QLabel" name="signaturePositionLabel">
-        <property name="text">
-         <string>Signature position</string>
-        </property>
-        <property name="buddy">
-         <cstring>signaturePosition</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="6" column="1">
-       <widget class="QComboBox" name="signaturePosition">
-        <property name="toolTip">
-         <string>Where the signature stands in a reply or a forward</string>
-        </property>
-       </widget>
-      </item>
+      <layout class="QVBoxLayout" name="choicesColumn">
+       <item>
+        <widget class="QLabel" name="choicesLabel">
+         <property name="text">
+          <string>Templates and signatures assigned to the account:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QFormLayout" name="choices">
+        <item row="0" column="0">
+         <widget class="QLabel" name="templateNewLabel">
+          <property name="text">
+           <string>Template for new mail</string>
+          </property>
+          <property name="buddy">
+           <cstring>templateNew</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QComboBox" name="templateNew">
+          <property name="toolTip">
+           <string>The text a new message starts with</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="templateReplyLabel">
+          <property name="text">
+           <string>Template for replies</string>
+          </property>
+          <property name="buddy">
+           <cstring>templateReply</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QComboBox" name="templateReply">
+          <property name="toolTip">
+           <string>The text a reply starts with</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="templateForwardLabel">
+          <property name="text">
+           <string>Template for forwards</string>
+          </property>
+          <property name="buddy">
+           <cstring>templateForward</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QComboBox" name="templateForward">
+          <property name="toolTip">
+           <string>The text a forward starts with</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="signatureNewLabel">
+          <property name="text">
+           <string>Signature for new mail</string>
+          </property>
+          <property name="buddy">
+           <cstring>signatureNew</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="QComboBox" name="signatureNew">
+          <property name="toolTip">
+           <string>The signature put in a new message</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="0">
+         <widget class="QLabel" name="signatureReplyLabel">
+          <property name="text">
+           <string>Signature for replies</string>
+          </property>
+          <property name="buddy">
+           <cstring>signatureReply</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="1">
+         <widget class="QComboBox" name="signatureReply">
+          <property name="toolTip">
+           <string>The signature put in a reply</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="0">
+         <widget class="QLabel" name="signatureForwardLabel">
+          <property name="text">
+           <string>Signature for forwards</string>
+          </property>
+          <property name="buddy">
+           <cstring>signatureForward</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="1">
+         <widget class="QComboBox" name="signatureForward">
+          <property name="toolTip">
+           <string>The signature put in a forward</string>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="0">
+         <widget class="QLabel" name="signaturePositionLabel">
+          <property name="text">
+           <string>Signature position</string>
+          </property>
+          <property name="buddy">
+           <cstring>signaturePosition</cstring>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="1">
+         <widget class="QComboBox" name="signaturePosition">
+          <property name="toolTip">
+           <string>Where the signature stands in a reply or a forward</string>
+          </property>
+         </widget>
+        </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="choicesEnd">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
       </layout>
      </widget>
     </widget>
@@ -327,13 +358,6 @@
     <widget class="QLabel" name="status">
      <property name="wordWrap">
       <bool>true</bool>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QCheckBox" name="sentFrom">
-     <property name="text">
-      <string>Attach "Sent from Chrono Mail" to every message</string>
      </property>
     </widget>
    </item>

@@ -14,9 +14,10 @@ from tests.ui.test_ui_settings import open_settings
 from tests.ui.world import Dialogs, World, add_window, answer_open_file, answer_save_file, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_signatures.py 4.5.626"
+__version__ = "test_ui_signatures.py 4.5.627"
 
 # --- Version history ----------------------------------------------------
+# v4.5.627: the account block as the owner drew it: the fields' heading, the first field level with the account list, the tick under it
 # v4.5.626: Initial tests: Settings > Templates and Signatures (the library and the accounts' choices, kept at OK), the window of one
 #           text, the New message window's templates, signatures and keys, New's menu (B-24, D-358)
 
@@ -117,6 +118,14 @@ def test_the_page_stands_after_writing_with_the_library_above_the_accounts(world
     assert panel.accounts.count() == 1 and panel.accounts.currentRow() == 0
     assert panel.preview.toPlainText().strip() == "1"
     assert panel.accounts_splitter.count() == 2  # the account list and its fields can be made wider or narrower
+    from PySide6.QtWidgets import QLabel
+
+    heading = panel.findChild(QLabel, "choicesLabel")
+    assert heading is not None and heading.text() == "Templates and signatures assigned to the account:"
+    top = panel.accounts.mapTo(panel, panel.accounts.rect().topLeft()).y()
+    assert abs(panel.boxes[0].mapTo(panel, panel.boxes[0].rect().topLeft()).y() - top) <= 4  # the first field level with the account list
+    assert panel.sent_from.mapTo(panel, panel.sent_from.rect().topLeft()).y() > top + panel.accounts.height() - 1  # the tick under the list
+    assert panel.sent_from.mapTo(panel, panel.sent_from.rect().topLeft()).x() == panel.accounts.mapTo(panel, panel.accounts.rect().topLeft()).x()
     assert panel.items.mapTo(panel, panel.items.rect().topLeft()).x() == panel.accounts.mapTo(panel, panel.accounts.rect().topLeft()).x()  # lined up on the left
     left, right = panel.splitter.sizes()
     panel.splitter.moveSplitter(left + 100, 1)
