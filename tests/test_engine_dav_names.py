@@ -8,9 +8,10 @@ from tests.test_engine_dav import linked, shown
 from tests.test_sync_dav import event
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_dav_names.py 4.4.625"
+__version__ = "test_engine_dav_names.py 4.6.636"
 
 # --- Version history ----------------------------------------------------
+# v4.6.636: A name the server says is taken is asked once, remembered through a restart, never again (D-356)
 # v4.4.625: A second computer follows a rename without a conflict; a conflict of such a rename goes by itself; a real one stays
 # v4.4.624: Initial tests (also: a taken name skips only its item; a change made elsewhere still arrives): a server name never has an @; Chrono Mail's own names with one are renamed once, on the server first (D-356)
 
@@ -164,3 +165,22 @@ def test_a_real_delete_on_the_server_with_a_change_here_stays_a_conflict(tmp_pat
         assert [conflict.reason for conflict in load_conflicts(here.store)] == [DELETED_ON_SERVER]  # still the person's choice
         here.sync()
         assert [conflict.reason for conflict in load_conflicts(here.store)] == [DELETED_ON_SERVER]  # and it stays
+
+
+def test_a_new_name_the_server_says_is_taken_is_asked_once_and_never_again(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        server.add("events", f"{OLD}.ics", event(OLD, "Pedicure"))
+        server.moves_refused = True  # the first synchronisation takes it in under its old name
+        engine, account, _ = linked(tmp_path, server)
+        server.moves_refused = False
+        state = list(tmp_path.rglob("dav-state.json"))[0]
+        kept = json.loads(state.read_text())
+        for each in kept["collections"].values():
+            each["no_rename"] = False  # as before the refusal: this test is about the taken name
+        state.write_text(json.dumps(kept))
+        server.add("events", "11111111-2222-3333-4444-555555555555.ics", "BEGIN:VCALENDAR\nnot readable here\n")  # takes the new name, never taken in
+        moves = server.count("MOVE")
+        for _ in range(3):
+            assert call(engine, "dav.sync", account=account)[0].errors == ()
+        assert server.count("MOVE") == moves + 1 and f"{OLD}.ics" in names(server)
+        assert any(each["rename_taken"] for each in json.loads(state.read_text())["collections"].values())  # kept through a restart
