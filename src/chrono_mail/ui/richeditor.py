@@ -9,7 +9,10 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QFont, QResizeEvent, QImage, QImageReader, QImageWriter, QKeySequence, QTextCharFormat, QTextDocument, QTextImageFormat, QTextList, QTextListFormat
+from PySide6.QtGui import (
+    QAction, QFont, QImage, QImageReader, QImageWriter, QKeySequence, QMouseEvent, QResizeEvent, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
+    QTextImageFormat, QTextList, QTextListFormat,
+)
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
@@ -17,9 +20,10 @@ from chrono_mail.ui.fontstyle import FontStyle
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.640"
+__version__ = "richeditor.py 4.6.641"
 
 # --- Version history ----------------------------------------------------
+# v4.6.641: Paint Format after U: the format of the selected text given to the next text selected with the mouse, then off (D-363)
 # v4.6.640: Font Style (the A) after U: the font, size and colours of the selected text; a font, size or colour counts as formatting (D-363)
 # v4.6.639: The bar of the reference client: B, I, U and the lists as icons, on the right the three dots with Cut, Copy, Paste, Remove
 #           Format, Undo, Redo, Outdent, Indent, Insert Link and Insert Image; what only rich text can do can be greyed (D-363)
@@ -72,6 +76,11 @@ def _without_foreign_pictures(html: str) -> str:
     return _IMAGE.sub(lambda match: match.group(0) if _KEPT_IMAGE.match(match.group(0)) else "", html)
 
 
+PAINTED: tuple[QTextFormat.Property, ...] = (  # what Paint Format copies: the look of the text, never its link
+    QTextFormat.Property.FontFamilies, QTextFormat.Property.FontPointSize, QTextFormat.Property.FontWeight, QTextFormat.Property.FontItalic,
+    QTextFormat.Property.FontUnderline, QTextFormat.Property.TextUnderlineStyle, QTextFormat.Property.ForegroundBrush,
+    QTextFormat.Property.BackgroundBrush,
+)
 _STYLE: re.Pattern[str] = re.compile(r'style="([^"]*)"', re.IGNORECASE)
 _BLOCK_INDENT: re.Pattern[str] = re.compile(r"-qt-block-indent:\s*(\d+)", re.IGNORECASE)
 _MARGIN_LEFT: re.Pattern[str] = re.compile(r"margin-left:\s*(\d+)px", re.IGNORECASE)
@@ -177,6 +186,12 @@ class _Editor(QTextEdit):
             self._owner.fit_pictures()
 
     @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt name
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:  # a right-click (to copy, for instance) never paints
+            self._owner.paint_on_selection()  # Paint Format: the text just selected gets the format copied (D-363)
+
+    @override
     def canInsertFromMimeData(self, source: QMimeData) -> bool:  # noqa: N802 - Qt name
         return source.hasImage() or source.hasUrls() or source.hasHtml() or source.hasText()
 
@@ -224,6 +239,9 @@ class RichEditor(QWidget):
         self.bold = self._action("B", "Bold", "Ctrl+B", checkable=True, icon="format-text-bold")
         self.italic = self._action("I", "Italic", "Ctrl+I", checkable=True, icon="format-text-italic")
         self.underline = self._action("U", "Underline", "Ctrl+U", checkable=True, icon="format-text-underline")
+        self.paint_format = self._action("Paint Format", "Paint Format: copy the format of the selected text, then select the text to give it", None,
+                                         checkable=True, icon="draw-brush")
+        self._painted: QTextCharFormat | None = None  # the format Paint Format copied, until it is given to the next text selected
         self.bullets = self._action("Bulleted list", "Bulleted list", None, icon="format-list-unordered")
         self.numbers = self._action("Numbered list", "Numbered list", None, icon="format-list-ordered")
         self.cut = self._action("Cut", "Cut the selected text", None, icon="edit-cut")
@@ -236,8 +254,8 @@ class RichEditor(QWidget):
         self.indent = self._action("Indent", "Move the paragraph to the right", None, icon="format-indent-more")
         self.link = self._action("Insert Link", "Make the selected text a link", "Ctrl+K", icon="insert-link")
         self.picture = self._action("Insert Image", "Insert a picture at the cursor", None, icon="insert-image")
-        self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.bullets, self.numbers, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
-        for action in (self.bold, self.italic, self.underline):
+        self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.paint_format, self.bullets, self.numbers, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
+        for action in (self.bold, self.italic, self.underline, self.paint_format):
             self.toolbar.addAction(action)
         self.font_style = FontStyle(self.edit, self.toolbar)  # the A: font, size and colours (D-363)
         self.toolbar.addWidget(self.font_style)
@@ -260,6 +278,7 @@ class RichEditor(QWidget):
         self.bold.triggered.connect(self._toggle_bold)
         self.italic.triggered.connect(self._toggle_italic)
         self.underline.triggered.connect(self._toggle_underline)
+        self.paint_format.triggered.connect(self._copy_format)
         self.bullets.triggered.connect(self._bullets)
         self.numbers.triggered.connect(self._numbers)
         self.cut.triggered.connect(lambda: self.target().cut())
@@ -444,6 +463,44 @@ class RichEditor(QWidget):
 
     def _numbers(self) -> None:
         self._list(QTextListFormat.Style.ListDecimal)
+
+    def _copy_format(self, on: bool) -> None:
+        """Paint Format pressed: the format of the selected text (or at the cursor) is copied; pressed again, nothing is given."""
+        self._painted = QTextCharFormat(self.edit.textCursor().charFormat()) if on else None
+
+    def paint_on_selection(self) -> None:
+        """The text selected after Paint Format gets the copied font, size, bold, italic, underline and colours; its links and pictures
+        stay as they are, look included; then Paint Format is off."""
+        cursor = self.edit.textCursor()
+        if self._painted is None or not cursor.hasSelection():
+            return
+        source = self._painted
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        pieces: list[tuple[int, int, QTextCharFormat]] = []  # first every piece of the selection, then the change: a change splits the pieces
+        block = self.edit.document().findBlock(start)
+        while block.isValid() and block.position() < end:
+            part = block.begin()
+            while not part.atEnd():
+                fragment = part.fragment()
+                first, last = max(start, fragment.position()), min(end, fragment.position() + fragment.length())
+                if first < last and not fragment.charFormat().isImageFormat() and not fragment.charFormat().isAnchor():  # a link keeps its look
+                    painted = QTextCharFormat(fragment.charFormat())
+                    for prop in PAINTED:
+                        painted.clearProperty(prop)
+                        if source.hasProperty(prop):
+                            painted.setProperty(prop, source.property(prop))
+                    pieces.append((first, last, painted))
+                part += 1
+            block = block.next()
+        cursor.beginEditBlock()  # one Undo takes it all back
+        for first, last, painted in pieces:
+            piece = QTextCursor(self.edit.document())
+            piece.setPosition(first)
+            piece.setPosition(last, QTextCursor.MoveMode.KeepAnchor)
+            piece.setCharFormat(painted)
+        cursor.endEditBlock()
+        self._painted = None
+        self.paint_format.setChecked(False)
 
     def set_formatting_enabled(self, on: bool) -> None:
         """Plain text: what only rich text can do is greyed, never hidden (OR-15)."""
