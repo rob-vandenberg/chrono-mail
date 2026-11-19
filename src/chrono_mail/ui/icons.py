@@ -9,9 +9,10 @@ from PySide6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QIconEngine, Q
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 4.4.586"
+__version__ = "icons.py 4.6.643"
 
 # --- Version history ----------------------------------------------------
+# v4.6.643: smile_icon: the smiley of the message editor's bar, drawn in the colour of text (D-363)
 # v4.4.586: The icon of Favorites > All messages (D-334)
 # v4.4.504: place_icon: a pin, the place of a meeting on the invitation card (D-310), drawn in the colour of text
 # v4.3.498: split_icon: the owner's split of a row (an arrow, and a dotted line from under it to a second arrow), drawn in the colour of text;
@@ -156,6 +157,25 @@ class SplitEngine(DrawnEngine):
         return SplitEngine()
 
 
+class SmileEngine(DrawnEngine):
+    """The smiley of the message editor's bar (D-363): a round face with two eyes and a smile, in the colour of text."""
+
+    @override
+    def draw(self, painter: QPainter, at: Callable[[float, float], QPointF], size: float) -> None:
+        filled = painter.brush()  # the colour of text, for the eyes
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRectF(at(0.14, 0.14), at(0.86, 0.86)))
+        painter.drawArc(QRectF(at(0.32, 0.36), at(0.68, 0.70)), 200 * 16, 140 * 16)  # the smile: the lower part of a circle
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(filled)
+        for x in (0.39, 0.61):
+            painter.drawEllipse(QRectF(at(x - 0.045, 0.37), at(x + 0.045, 0.46)))
+
+    @override
+    def clone(self) -> "SmileEngine":
+        return SmileEngine()
+
+
 class KeepBothEngine(DrawnEngine):
     """The owner's icon for Keep both (B-30): a square at the top, a line down from it to a bar, and from the bar's ends two squares below."""
 
@@ -207,6 +227,10 @@ def split_icon() -> QIcon:
 def keep_both_icon() -> QIcon:
     """Keep both versions of an item in a sync conflict as two (B-30): one square that becomes two."""
     return QIcon(KeepBothEngine())
+
+
+def smile_icon() -> QIcon:
+    return QIcon(SmileEngine())
 
 
 def grey_icon(name: str) -> QIcon:

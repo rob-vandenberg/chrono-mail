@@ -53,9 +53,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.6.639"
+__version__ = "composer.py 4.6.643"
 
 # --- Version history ----------------------------------------------------
+# v4.6.643: The recently used emoji of the smiley are kept with the window's preferences (D-363)
 # v4.6.639: The bar of the reference client above the text, in rich and plain text: the paperclip, Signature (the signature, replacing
 #           the one there), Template (added at the cursor, also Ctrl+1 to Ctrl+7), B, I, U, the lists; the three dots with Save and Format;
 #           in plain text what only rich text can do is greyed; Attach a file…, Plain text and Signature below the text are gone (D-363)
@@ -180,6 +181,8 @@ DRAFT_KINDS: dict[str, DraftKind] = {"new": "new", "reply": "reply", "reply_all"
 ROLE_PATH: int = 256  # an attachment that is a file on this computer
 ROLE_KEPT: int = 257  # an attachment that is already inside the stored draft (its position there)
 
+
+RECENT_EMOJI_KEY: str = "compose/recent_emoji"
 
 class ComposeWindow(QMainWindow):
     """Writes a new message, a reply, or a forward, and sends it through the engine.
@@ -313,6 +316,9 @@ class ComposeWindow(QMainWindow):
         self.setCentralWidget(central)
         self.resize(760, 640)
         self._settings: QSettings | None = settings
+        if settings is not None:  # the recently used emoji, kept on this computer with the window's other preferences (D-363)
+            self.rich.emoji.set_recent(str(settings.value(RECENT_EMOJI_KEY, "") or ""))
+            self.rich.emoji.recent_changed.connect(self._keep_recent_emoji)
         restore_geometry(self, settings, "composer_geometry")
 
         if draft is not None:
@@ -431,6 +437,10 @@ class ComposeWindow(QMainWindow):
     def _library_failed(self, error: ChronoMailError) -> None:
         """The templates and signatures could not be read: said, so the person knows why none was put in."""
         self._say(f"Your templates and signatures could not be read: {error}")
+
+    def _keep_recent_emoji(self, text: str) -> None:
+        if self._settings is not None:
+            self._settings.setValue(RECENT_EMOJI_KEY, text)
 
     def _build_bar(self) -> None:
         """The bar of the reference client (D-363): in front of the editor's own buttons the paperclip, Signature and Template; in the

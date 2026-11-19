@@ -10,9 +10,10 @@ from tests.ui.test_ui_signatures import close, composer, keep, pick_signature
 from tests.ui.world import World, add_window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_compose_toolbar.py 4.6.642"
+__version__ = "test_ui_compose_toolbar.py 4.6.643"
 
 # --- Version history ----------------------------------------------------
+# v4.6.643: the smiley (Emoji) stands after Alignment
 # v4.6.642: Alignment stands after the lists
 # v4.6.641: Paint Format stands between U and A
 # v4.6.640: Font Style (A) stands after U
@@ -44,7 +45,7 @@ def menu_names(editor: RichEditor) -> list[str]:
 
 def test_the_bar_stands_above_the_text_in_the_order_of_the_reference_client(world: World, qtbot: QtBot) -> None:
     window = composer(world, qtbot)
-    assert on_bar(window.rich) == ["Attach a file", "Signature", "Template", "|", "B", "I", "U", "Paint Format", "A", "Bulleted list", "Numbered list", "Alignment", "", "More"]
+    assert on_bar(window.rich) == ["Attach a file", "Signature", "Template", "|", "B", "I", "U", "Paint Format", "A", "Bulleted list", "Numbered list", "Alignment", "Emoji", "", "More"]
     assert menu_names(window.rich) == MORE
     assert window.rich.toolbar.isVisible() and window.rich.toolbar.y() < window.editor_stack.y()  # also in plain text, above the text
     assert window.rich.more.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup and window.rich.more.toolTip() == "More"
@@ -140,7 +141,7 @@ def test_the_window_of_one_text_has_the_formatting_but_not_the_message_buttons(q
     add_window(qtbot, editor)
     rich = editor.findChild(RichEditor)
     assert rich is not None
-    assert on_bar(rich) == ["B", "I", "U", "Paint Format", "A", "Bulleted list", "Numbered list", "Alignment", "", "More"]
+    assert on_bar(rich) == ["B", "I", "U", "Paint Format", "A", "Bulleted list", "Numbered list", "Alignment", "Emoji", "", "More"]
     assert menu_names(rich) == EDITING
     assert all(action.isEnabled() for action in rich.formatting)
     assert not [action for action in rich.findChildren(QAction) if action.text() in ("Save", "Format", "Attach a file", "Signature", "Template")]

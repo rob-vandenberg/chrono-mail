@@ -16,13 +16,15 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
+from chrono_mail.ui.emojipanel import EmojiButton
 from chrono_mail.ui.fontstyle import FontStyle
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.642"
+__version__ = "richeditor.py 4.6.643"
 
 # --- Version history ----------------------------------------------------
+# v4.6.643: The smiley after Alignment: the emoji panel, the emoji put at the cursor in rich and in plain text (D-363)
 # v4.6.642: The list buttons' arrows choose the style (Disc, Circle, Square; Decimal, Lower and Upper Latin, Lower and Upper Roman);
 #           Alignment after the lists: Left Align, Center, Right Align, Justify (D-363)
 # v4.6.641: Paint Format after U: the format of the selected text given to the next text selected with the mouse, then off (D-363)
@@ -296,6 +298,8 @@ class RichEditor(QWidget):
         align_button = self.toolbar.widgetForAction(self.align)
         if isinstance(align_button, QToolButton):
             align_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)  # the button opens its menu
+        self.emoji = EmojiButton(self._insert_emoji, self.toolbar)  # the smiley: emoji only (Q83); also in plain text
+        self.toolbar.addWidget(self.emoji)
         spacer = QWidget(self.toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toolbar.addWidget(spacer)
@@ -514,6 +518,11 @@ class RichEditor(QWidget):
         list_format = current.format()
         list_format.setStyle(style)
         current.setFormat(list_format)
+
+    def _insert_emoji(self, emoji: str) -> None:
+        target = self.target()
+        target.insertPlainText(emoji)  # at the cursor, in the text in use
+        target.setFocus()
 
     def _align(self, alignment: Qt.AlignmentFlag) -> None:
         self.edit.setAlignment(alignment)  # the paragraph, or every paragraph of the selection
