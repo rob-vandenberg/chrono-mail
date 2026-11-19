@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.4.600"
+__version__ = "colours.py 4.6.640"
 
 # --- Version history ----------------------------------------------------
+# v4.6.640: TEXT_COLOUR_ROWS: the grids of Font Style's Text Color and Background Color in the New message window (D-363)
 # v4.4.600: GOOGLE_COLOUR_NAMES: the name Google gives each of its eleven colours, the name of its tag here (D-339)
 # v4.4.598: GOOGLE_EVENT_COLOURS and google_colour_nearest: Google's event colours by their number, the nearest one to a colour (D-337)
 # v4.4.550: task_grey is also the grey of a cancelled event (D-316)
@@ -417,3 +418,17 @@ def css_colour(name: str) -> str:
     if len(text) == 7 and text.startswith("#") and all(character in "0123456789abcdef" for character in text[1:]):
         return text
     return CSS_COLOURS.get(text, "")
+
+# --- The colours a person gives text in a message (D-363) -------------------------------------------------------------------
+
+# Font Style's grids of Text Color and Background Color in the New message window, row by row, eight to a row: the greys from black to white,
+# the bright colours, then two rows lighter and three rows darker of them. A colour chosen here is the person's and is never themed.
+TEXT_COLOUR_ROWS: tuple[tuple[str, ...], ...] = (
+    ("#000000", "#434343", "#666666", "#999999", "#b7b7b7", "#cccccc", "#efefef", "#ffffff"),
+    ("#ff0000", "#ff9900", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#9900ff", "#ff00ff"),
+    ("#ffb2b2", "#ffe0b2", "#ffffb2", "#b2ffb2", "#b2ffff", "#b2b2ff", "#e0b2ff", "#ffb2ff"),
+    ("#ff7373", "#ffc773", "#ffff73", "#73ff73", "#73ffff", "#7373ff", "#c773ff", "#ff73ff"),
+    ("#cc0000", "#cc7a00", "#cccc00", "#00cc00", "#00cccc", "#0000cc", "#7a00cc", "#cc00cc"),
+    ("#8c0000", "#8c5400", "#8c8c00", "#008c00", "#008c8c", "#00008c", "#54008c", "#8c008c"),
+    ("#4d0000", "#4d2e00", "#4d4d00", "#004d00", "#004d4d", "#00004d", "#2e004d", "#4d004d"),
+)

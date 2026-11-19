@@ -13,12 +13,14 @@ from PySide6.QtGui import QAction, QFont, QResizeEvent, QImage, QImageReader, QI
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
+from chrono_mail.ui.fontstyle import FontStyle
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.639"
+__version__ = "richeditor.py 4.6.640"
 
 # --- Version history ----------------------------------------------------
+# v4.6.640: Font Style (the A) after U: the font, size and colours of the selected text; a font, size or colour counts as formatting (D-363)
 # v4.6.639: The bar of the reference client: B, I, U and the lists as icons, on the right the three dots with Cut, Copy, Paste, Remove
 #           Format, Undo, Redo, Outdent, Indent, Insert Link and Insert Image; what only rich text can do can be greyed (D-363)
 # v4.6.634: PlainEditor: in plain text a dropped file and a pasted picture become attachments, never a path or text typed (D-353)
@@ -39,7 +41,7 @@ PICTURE_FILTER: str = "Pictures (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
 _QT_META: re.Pattern[str] = re.compile(r"<meta\s+name=\"qrichtext\"[^>]*>\s*", re.IGNORECASE)
 _BODY_STYLE: re.Pattern[str] = re.compile(r"<body\s+style=\"[^\"]*\"\s*>", re.IGNORECASE)
 _HREF: re.Pattern[str] = re.compile(r"href=\"([^\"]*)\"", re.IGNORECASE)
-_FORMATTING: re.Pattern[str] = re.compile(r"font-weight:\s*[6-9]00|font-style:\s*italic|text-decoration:\s*underline|<ul|<ol|<a\s|<img\s|-qt-block-indent:\s*[1-9]", re.IGNORECASE)
+_FORMATTING: re.Pattern[str] = re.compile(r'font-weight:\s*[6-9]00|font-style:\s*italic|text-decoration:\s*underline|<ul|<ol|<a\s|<img\s|-qt-block-indent:\s*[1-9]|<span style="[^"]*(?:font-size|font-family|color)', re.IGNORECASE)
 
 
 def safe_link(address: str) -> bool:
@@ -235,7 +237,11 @@ class RichEditor(QWidget):
         self.link = self._action("Insert Link", "Make the selected text a link", "Ctrl+K", icon="insert-link")
         self.picture = self._action("Insert Image", "Insert a picture at the cursor", None, icon="insert-image")
         self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.bullets, self.numbers, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
-        for action in (self.bold, self.italic, self.underline, self.bullets, self.numbers):
+        for action in (self.bold, self.italic, self.underline):
+            self.toolbar.addAction(action)
+        self.font_style = FontStyle(self.edit, self.toolbar)  # the A: font, size and colours (D-363)
+        self.toolbar.addWidget(self.font_style)
+        for action in (self.bullets, self.numbers):
             self.toolbar.addAction(action)
         spacer = QWidget(self.toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -443,6 +449,7 @@ class RichEditor(QWidget):
         """Plain text: what only rich text can do is greyed, never hidden (OR-15)."""
         for action in self.formatting:
             action.setEnabled(on)
+        self.font_style.setEnabled(on)
 
     def _shift(self, step: int) -> None:
         """Indent or Outdent: the paragraph one step to the right or left, never past the margin; in a list only this item, which joins
