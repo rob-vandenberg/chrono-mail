@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,9 @@ from chrono_mail.config.rules import Action, Condition, Rule, RuleSet, save_rule
 from chrono_mail.core import AccountKind, FolderRole
 from chrono_mail.engine import UsageError, outlook_profile, outlook_windows
 from chrono_mail.engine.commands_outlook import ImportResult, ScanResult
+from chrono_mail.engine.commands_signatures import NoParameters, add_texts, snippet_all
+from chrono_mail.engine.outlook_settings import import_profile
+from chrono_mail.engine.session import Engine
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.outlook_rules import OutlookPart, OutlookRule, OutlookRuleSpec
 from chrono_mail.engine.outlook_windows import Machine, RegistryValue
@@ -15,9 +19,10 @@ from tests.test_engine_commands import REGISTRY
 from tests.test_import_outlook import FakeFile, data_file, files  # noqa: F401 - files is the fixture of the data files the reader knows
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_outlook_profile.py 4.2.386"
+__version__ = "test_import_outlook_profile.py 4.6.632"
 
 # --- Version history ----------------------------------------------------
+# v4.6.632: Every signature comes into Settings > Templates and Signatures as it is, with the accounts' choices (D-361)
 # v4.2.386: Initial tests: accounts, passwords, signatures, rules and blocked senders from a made-up profile; the export to a profile file
 #           and of rules into a made-up Outlook
 
@@ -33,6 +38,7 @@ def entries() -> list[dict[str, RegistryValue]]:
         "Account Name": "Anna at home", "Display Name": "Anna", "Email": "anna@example.com", "POP3 Server": "pop.example.com", "POP3 User": "anna@example.com",
         "POP3 Port": 995, "POP3 Use SSL": 1, "SMTP Server": "smtp.example.com", "SMTP Port": 465, "SMTP Use SSL": 1, "SMTP Secure Connection": 1,
         "SMTP Use Auth": 1, "Leave on Server": 0x000E0001, "POP3 Password": secret("Pop-Secret1"), "New Signature": "Home (anna@example.com)",
+        "Reply-Forward Signature": "Short",
     }
     imap: dict[str, RegistryValue] = {
         "Account Name": "bert@example.org", "Display Name": "Bert", "Email": "bert@example.org", "IMAP Server": "imap.example.org", "IMAP User": "bert",
@@ -41,6 +47,12 @@ def entries() -> list[dict[str, RegistryValue]]:
     }
     exchange: dict[str, RegistryValue] = {"Account Name": "Work", "Service Name": "MSEMS"}
     return [exchange, pop3, imap]
+
+
+HOME_HTM: bytes = (
+    '<html><head><meta http-equiv=Content-Type content="text/html; charset=windows-1252"><style><!-- p.MsoNormal {margin:0cm} --></style></head>'
+    '<body><p class=MsoNormal>Groetjes, Ann\u00e9</p><p class=MsoNormal><img src="Home (anna@example.com)_files/image001.png"></p></body></html>'
+).encode("cp1252")
 
 
 def junk_blob() -> bytes:
@@ -57,6 +69,13 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     signatures = tmp_path / "Signatures"
     signatures.mkdir()
     (signatures / "Home (anna@example.com).txt").write_bytes("Greetings,\r\nAnna".encode("utf-16"))
+    (signatures / "Home (anna@example.com).htm").write_bytes(HOME_HTM)
+    (signatures / "Home (anna@example.com).rtf").write_bytes(b"{\\rtf1 Greetings}")
+    pictures = signatures / "Home (anna@example.com)_files"
+    pictures.mkdir()
+    (pictures / "image001.png").write_bytes(b"made-up picture")
+    (signatures / "Short.htm").write_bytes(b"<html><body><p>Anna</p></body></html>")
+    (signatures / "Old only.txt").write_bytes(b"Plain only")
     folder = tmp_path / "Outlook Files"
     folder.mkdir()
     made = Machine(lambda: ("Outlook", entries()), lambda blob: blob[5:] if blob.startswith(b"BLOB:") else None, lambda: object(), signatures, (folder,))
@@ -89,11 +108,11 @@ def test_accounts_passwords_signatures_rules_and_blocked_senders_come_from_the_p
     result = REGISTRY.run(engine, "import.outlook", {"files": (str(pst),), "accounts": True, "rules": True, "signatures": True})
     assert isinstance(result, ImportResult)
     profile = result.profile
-    assert (profile.accounts_added, profile.signatures, profile.rules_added) == (2, 1, 2)  # Newsletters and one rule of blocked senders
+    assert (profile.accounts_added, profile.signatures_added, profile.rules_added) == (2, 2, 2)  # Newsletters and one rule of blocked senders
     assert profile.rules_not_imported == ("Play a sound: Chrono Mail has no action like 'PlaySound'",)
     accounts = {settings.account.email_address: settings for settings in engine.config().accounts}
     anna, bert = accounts["anna@example.com"], accounts["bert@example.org"]
-    assert anna.account.kind is AccountKind.POP3 and anna.account.incoming.port == 995 and anna.skip_known_mail and anna.signature == "Greetings,\nAnna"
+    assert anna.account.kind is AccountKind.POP3 and anna.account.incoming.port == 995 and anna.skip_known_mail and anna.texts.signature_new != ""
     assert bert.account.kind is AccountKind.IMAP and bert.account.outgoing.security.value == "starttls"
     assert engine.passwords.get(anna.account.account_id, ServerRole.INCOMING) == "Pop-Secret1"
     assert engine.passwords.get(bert.account.account_id, ServerRole.INCOMING) == "Imap-Secret2"
@@ -140,3 +159,43 @@ def test_rules_go_into_a_running_outlook_and_what_it_cannot_hold_is_named(tmp_pa
     count, notes = outlook_profile.export_rules_to_outlook(engine, None)
     assert count == 1 and [spec.name for spec in made] == ["Invoices"] and made[0].actions == (OutlookPart("MoveToFolder", ("Inbox/Invoices",)),)
     assert notes == ["Read it: Outlook cannot take the action 'mark as read' from another program"]
+
+
+def texts_here(engine: Engine) -> dict[str, str]:
+    return {text.name: text.html for text in snippet_all(engine, NoParameters())}
+
+
+def test_every_signature_comes_into_templates_and_signatures_as_it_is_with_its_picture_inside(tmp_path: Path, machine: Path) -> None:
+    engine = make_engine(tmp_path)
+    result = import_profile(engine, accounts=True, rules=False, signatures=True)
+    texts = texts_here(engine)
+    assert set(texts) == {"Home (anna@example.com)", "Short"} and (result.signatures_added, result.signatures_existing) == (2, 0)
+    home = texts["Home (anna@example.com)"]
+    assert "<style><!-- p.MsoNormal {margin:0cm} --></style>" in home and "Groetjes, Ann\u00e9" in home  # unchanged, in its own character set
+    assert 'src="data:image/png;base64,' in home and "_files/image001.png" not in home
+    assert "Not imported: Old only: the signature has no .htm file" in result.notes
+
+
+def test_an_account_gets_its_new_signature_and_its_reply_forward_signature(tmp_path: Path, machine: Path) -> None:
+    engine = make_engine(tmp_path)
+    result = import_profile(engine, accounts=True, rules=False, signatures=True)
+    ids = {text.name: text.item_id for text in snippet_all(engine, NoParameters())}
+    anna = next(settings for settings in engine.config().accounts if settings.account.email_address == "anna@example.com")
+    assert anna.texts.signature_new == ids["Home (anna@example.com)"]
+    assert anna.texts.signature_reply == anna.texts.signature_forward == ids["Short"]
+    assert result.signatures_given == 1  # bert has no signature
+
+
+def test_a_name_already_there_is_skipped_and_a_choice_already_made_stays(tmp_path: Path, machine: Path) -> None:
+    engine = make_engine(tmp_path)
+    add_texts(engine, [("Short", "<p>My own Short</p>")])
+    import_profile(engine, accounts=True, rules=False, signatures=False)
+    anna = next(settings for settings in engine.config().accounts if settings.account.email_address == "anna@example.com")
+    mine = add_texts(engine, [("Mine", "<p>Mine</p>")]).ids["mine"]
+    engine.change_config(lambda config: config.with_account(replace(config.find(anna.account.account_id), texts=replace(anna.texts, signature_new=mine))))
+    result = import_profile(engine, accounts=True, rules=False, signatures=True)
+    assert texts_here(engine)["Short"] == "<p>My own Short</p>" and (result.signatures_added, result.signatures_existing) == (1, 1)
+    anna = engine.config().find(anna.account.account_id)
+    assert anna.texts.signature_new == mine  # kept
+    assert anna.texts.signature_reply == {text.name: text.item_id for text in snippet_all(engine, NoParameters())}["Short"]
+    assert "These accounts keep the signatures already chosen for them: anna@example.com" in result.notes

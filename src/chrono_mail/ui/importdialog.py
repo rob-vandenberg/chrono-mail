@@ -42,9 +42,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.6.630"
+__version__ = "importdialog.py 4.6.632"
 
 # --- Version history ----------------------------------------------------
+# v4.6.632: the office suite's import tells the signatures added, already here and chosen for accounts (D-361)
 # v4.6.630: the tick Templates and signatures after Rules; the scan's line counts them (D-359)
 # v4.5.629: the report counts the signatures and templates added and already there, and the accounts' choices given; an export with
 #           "Sent from eM Client" on ticks "Sent from Chrono Mail" through on_sent_from (D-359)
@@ -320,8 +321,11 @@ def profile_import_lines(result: ProfileImport) -> list[str]:
         lines.append(f"Accounts made: {result.accounts_added}; already here: {result.accounts_existing}.")
     if result.accounts_without_password:
         lines.append(f"Without a password (type it in Edit account): {_listed(result.accounts_without_password)}")
-    if result.signatures:
-        lines.append(f"Signatures given: {result.signatures}.")
+    if result.signatures_added or result.signatures_existing or result.signatures_given:
+        lines.append(
+            f"Signatures added: {result.signatures_added}; already here, left as they are: {result.signatures_existing}; "
+            f"accounts given them: {result.signatures_given}."
+        )
     if result.rules_added or result.rules_existing:
         lines.append(f"Rules imported: {result.rules_added}; already here: {result.rules_existing}.")
     if result.rules_not_imported:
@@ -373,7 +377,7 @@ def data_file_import_summary(result: commands_outlook.ImportResult, stopped: boo
     profile = result.profile
     nothing_new = not (
         result.mail_imported or result.events_imported or result.contacts_imported or result.groups_imported or result.tasks_imported or result.tags_added
-        or result.items_tagged or profile.accounts_added or profile.rules_added or profile.signatures
+        or result.items_tagged or profile.accounts_added or profile.rules_added or profile.signatures_added or profile.signatures_given
     )
     lines = [_first_line(stopped, nothing_new)]
     lines.extend(profile_import_lines(result.profile))

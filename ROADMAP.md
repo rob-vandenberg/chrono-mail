@@ -159,7 +159,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 |---|---|---|
 | O.1 | A read-only check on the Windows computer of where that program keeps accounts, passwords, rules, signatures and junk lists. | done (2026-10-27) |
 | O.2 | Import from its data file (.pst), on Linux and Windows: mail, calendar, contacts, contact groups, tasks, categories as tags; placed as that program showed it. | done (4.2.385); a real test file made by that program with made-up items: the Windows computer |
-| O.3 | Import on the Windows computer where that program keeps its accounts: accounts with passwords, rules, junk lists, signatures. | built (4.2.386); to try on the Windows computer |
+| O.3 | Import on the Windows computer where that program keeps its accounts: accounts with passwords, rules, junk lists, signatures; every signature into Settings > Templates and Signatures as it is, with the accounts' choices (4.6.632, D-361). | built (4.2.386, 4.6.632); to try on the Windows computer |
 | O.4 | Export to a data file (.pst) with our own writer. | built (4.2.386); to open in that program on the Windows computer |
 | O.5 | Export of accounts (its profile file) and rules. | built (4.2.386); to try on the Windows computer |
 | O.6 | The round trip: exported, opened there, imported back, compared. | the automatic round trip here passes (4.2.386); the Windows half waits |

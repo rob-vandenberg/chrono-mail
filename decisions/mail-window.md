@@ -123,3 +123,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-358]] Signatures and mail templates as in the reference client
 - [[D-359]] The reference client's signatures and templates come into the library
 - [[D-360]] A reply never changes the original's style; own text is one line high
+- [[D-361]] The office suite's signatures come into Templates and Signatures as they are

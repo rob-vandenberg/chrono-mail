@@ -2,23 +2,27 @@
 
 Accounts are made as the other import makes them: their passwords into the credential store (never asked again, OR-19); an account that
 is here already (the same kind, server and user name) is skipped. Rules are taken whole or not at all, and the junk list's blocked senders
-become rules that mark their mail as junk. A signature goes to its account here when that account has none yet."""
+become rules that mark their mail as junk. Every signature comes into Settings > Templates and Signatures as it is, and each account here
+gets its New and Reply-Forward Signature as its choice when it has none yet (D-361)."""
 
 from dataclasses import dataclass, replace
 
 from chrono_mail.config import Rule, load_rules, save_rules
-from chrono_mail.core import AccountKind, ChronoMailError
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError
 from chrono_mail.engine import outlook_windows
 from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, account_add
+from chrono_mail.engine.commands_signatures import add_texts, with_pictures_inside
 from chrono_mail.engine.outlook_rules import blocked_rules, junk_senders, rule_from_outlook
 from chrono_mail.engine.outlook_windows import Profile, ProfileAccount
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "outlook_settings.py 4.2.453"
+__version__ = "outlook_settings.py 4.6.632"
 
 # --- Version history ----------------------------------------------------
+# v4.6.632: Every signature into Settings > Templates and Signatures as it is, its pictures inside; each account gets its New and
+#           Reply-Forward Signature as its choice for new mail, replies and forwards; the old signature field is no longer written (D-361)
 # v4.2.453: the imported rules are added under engine.rules_lock (D-302)
 # v4.2.420: the rules that could not be imported are collected in a list (Pyrefly could not settle the tuple's type in the loop)
 # v4.2.386: Initial version: accounts with their passwords, rules with the junk list's blocked senders, and signatures from Outlook's profile
@@ -52,7 +56,9 @@ class ProfileImport:
     rules_added: int = 0
     rules_existing: int = 0
     rules_not_imported: tuple[str, ...] = ()
-    signatures: int = 0
+    signatures_added: int = 0
+    signatures_existing: int = 0  # a signature of a name already in Settings > Templates and Signatures, left as it is
+    signatures_given: int = 0  # the accounts that got a signature chosen
     notes: tuple[str, ...] = ()
 
 
@@ -108,7 +114,7 @@ def scan_profile(engine: Engine) -> ProfileScan:
     rules = _read_rules(engine, outlook) if outlook is not None else None
     return ProfileScan(
         True, "", rules is not None, "" if rules is not None else OPEN_OUTLOOK, tuple(f"{account.email} ({account.kind.upper()})" for account in profile.accounts),
-        sum(1 for account in profile.accounts if _same_account(engine, account) is not None), sum(1 for account in profile.accounts if account.signature),
+        sum(1 for account in profile.accounts if _same_account(engine, account) is not None), len(profile.signatures),
         len(rules.rules) if rules else 0, rules.not_imported if rules else (), rules.blocked if rules else 0, rules.safe if rules else 0,
         tuple(str(path) for path in profile.files), tuple(account.email for account in profile.accounts if account.kind == "pop3"),
     )
@@ -139,6 +145,45 @@ def _add_account(engine: Engine, source: ProfileAccount, notes: list[str]) -> st
     return result.account_id
 
 
+def _import_signatures(engine: Engine, profile: Profile, here: dict[str, str], notes: list[str]) -> tuple[int, int, int]:
+    """Every signature into Settings > Templates and Signatures as it is, its pictures inside it; a name already there is skipped and
+    left as it is, and the account then gets that one. Each account here gets its New Signature for new mail and its Reply-Forward
+    Signature for replies and forwards, unless it has one chosen already (D-361). Added, already there, accounts given them."""
+    notes.extend(f"Not imported: {problem}" for problem in profile.signatures_not_imported)
+    if not profile.signatures:
+        return 0, 0, 0
+    try:
+        found = add_texts(engine, [(signature.name, with_pictures_inside(signature.html, signature.folder)) for signature in profile.signatures])
+    except ConfigurationError as error:
+        notes.append(f"Signatures: {error}")
+        return 0, 0, 0
+    notes.extend(f"Not imported: {problem}" for problem in found.problems)
+    given = 0
+    kept: list[str] = []
+    for source in profile.accounts:
+        account_id = here.get(source.email)
+        if account_id is None:
+            continue
+        new_id = found.ids.get(" ".join(source.signature_new.split()).casefold(), "") if source.signature_new else ""
+        reply_id = found.ids.get(" ".join(source.signature_reply.split()).casefold(), "") if source.signature_reply else ""
+        old = engine.config().find(account_id).texts
+        chosen = {"signature_new": new_id, "signature_reply": reply_id, "signature_forward": reply_id}
+        current = {"signature_new": old.signature_new, "signature_reply": old.signature_reply, "signature_forward": old.signature_forward}
+        changed = {name: item_id for name, item_id in chosen.items() if item_id and not current[name]}
+        if any(item_id and current[name] and current[name] != item_id for name, item_id in chosen.items()):
+            kept.append(source.email)
+        if changed:
+            texts = replace(
+                old, signature_new=changed.get("signature_new", old.signature_new), signature_reply=changed.get("signature_reply", old.signature_reply),
+                signature_forward=changed.get("signature_forward", old.signature_forward),
+            )
+            engine.change_config(lambda config, account=account_id, new=texts: config.with_account(replace(config.find(account), texts=new)))
+            given += 1
+    if kept:
+        notes.append(f"These accounts keep the signatures already chosen for them: {', '.join(dict.fromkeys(kept))}")
+    return found.added, found.existing, given
+
+
 def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool) -> ProfileImport:
     machine = outlook_windows.machine()
     profile: Profile | None = outlook_windows.read_profile(machine)
@@ -163,18 +208,9 @@ def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool
                 here[source.email] = made
                 if source.password is None:
                     without_password.append(source.email)
-    given = 0
+    signatures_added = signatures_existing = given = 0
     if signatures:
-        for source in profile.accounts:
-            account_id = here.get(source.email)
-            if not source.signature or account_id is None:
-                continue
-            current = engine.config().find(account_id).signature
-            if current.strip() and current.strip() != source.signature.strip():
-                notes.append(f"{source.email}: keeps its own signature")
-            elif not current.strip():
-                engine.change_config(lambda config, chosen=account_id, text=source.signature: config.with_account(replace(config.find(chosen), signature=text)))
-                given += 1
+        signatures_added, signatures_existing, given = _import_signatures(engine, profile, here, notes)
     rules_added = rules_existing = 0
     not_imported: list[str] = []
     if outlook is not None:
@@ -195,4 +231,6 @@ def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool
             save_rules(engine.directories.rules_file, rule_set)
         if found.safe:
             notes.append(f"Safe senders: {found.safe:,}; Chrono Mail has no list like it, so they are not imported")
-    return ProfileImport(added, existing, tuple(without_password), rules_added, rules_existing, tuple(not_imported), given, tuple(notes))
+    return ProfileImport(
+        added, existing, tuple(without_password), rules_added, rules_existing, tuple(not_imported), signatures_added, signatures_existing, given, tuple(notes),
+    )

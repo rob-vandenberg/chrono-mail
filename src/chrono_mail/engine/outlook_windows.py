@@ -5,21 +5,25 @@ never started: it could send its Outbox) the rules and the junk list.
 Importable everywhere; elsewhere than on Windows it finds nothing. The registry, the decryption and Outlook itself sit behind Machine,
 which the tests replace. A password is never logged, printed or shown (repr=False)."""
 
+import codecs
 import importlib
 import os
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from chrono_mail.config.model import MAXIMUM_SIGNATURE_CHARACTERS
+from chrono_mail.config.signatures import MAXIMUM_HTML_BYTES
 from chrono_mail.engine.outlook_rules import OutlookPart, OutlookRule, OutlookRuleSpec
 
 # --- Version ------------------------------------------------------------
-__version__ = "outlook_windows.py 4.2.386"
+__version__ = "outlook_windows.py 4.6.632"
 
 # --- Version history ----------------------------------------------------
+# v4.6.632: Every signature is read as it is from its .htm (its own character set), its pictures' folder beside it; an account names
+#           its New and Reply-Forward Signature (D-361)
 # v4.2.386: Initial version: the default profile's POP3 and IMAP accounts from the registry, their passwords (DPAPI), signatures and data
 #           files; rules and the junk list read and rules made through a running Outlook (never started)
 
@@ -31,7 +35,8 @@ JUNK_PROPERTY: str = "http://schemas.microsoft.com/mapi/proptag/0x0E9A0102"  # P
 RULE_NAME_PROPERTY: str = "http://schemas.microsoft.com/mapi/proptag/0x65EC001F"  # PR_RULE_MSG_NAME
 JUNK_RULE_NAME: str = "Junk E-mail Rule"
 INBOX: int = 6  # olFolderInbox
-MAXIMUM_SIGNATURE_BYTES: int = 1024 * 1024
+_CHARSET: re.Pattern[bytes] = re.compile(rb"""<meta\b[^>]*?charset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)""", re.IGNORECASE)
+_SIGNATURE_FILES: tuple[str, ...] = (".htm", ".rtf", ".txt")  # the three files the program writes of one signature
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +59,17 @@ class ProfileAccount:
     leave_other_bits: bool = False  # other options of "Leave on Server" were set (not taken over)
     password: str | None = field(default=None, repr=False)
     outgoing_password: str | None = field(default=None, repr=False)
-    signature: str = ""
+    signature_new: str = ""  # the name of its New Signature ("" none)
+    signature_reply: str = ""  # the name of its Reply-Forward Signature ("" none)
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileSignature:
+    """One signature as it is in the signatures folder: its name and its .htm text; its pictures are in the folder beside it."""
+
+    name: str
+    html: str
+    folder: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +77,8 @@ class Profile:
     name: str
     accounts: tuple[ProfileAccount, ...]
     files: tuple[Path, ...]  # the data files (.pst) in Outlook's folders
+    signatures: tuple[ProfileSignature, ...] = ()
+    signatures_not_imported: tuple[str, ...] = ()  # name: why
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,22 +213,50 @@ def _password(data: Machine, values: dict[str, RegistryValue], name: str) -> str
     return clear.decode("utf-16-le", "replace").split("\x00", 1)[0] or None
 
 
-def _read_signature(data: Machine, name: str) -> str:
-    if not name or data.signatures is None or any(part in name for part in ("/", "\\", "..")):
-        return ""
-    path = data.signatures / f"{name}.txt"
-    try:
-        raw = path.read_bytes()[:MAXIMUM_SIGNATURE_BYTES]
-    except OSError:
-        return ""
-    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        text = raw.decode("utf-16", "replace")
-    else:
+def _decoded(raw: bytes) -> str:
+    """The text of a signature's .htm in the character set the file itself gives: its byte order mark, else its charset line, else
+    UTF-8, else the Windows character set the program writes by default. The text is not changed."""
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw.decode("utf-8-sig", "replace")
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return raw.decode("utf-16", "replace")
+    declared = _CHARSET.search(raw[:4096])
+    if declared is not None:
         try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252", "replace")
-    return text.replace("\r\n", "\n").strip()[:MAXIMUM_SIGNATURE_CHARACTERS]
+            return raw.decode(declared.group(1).decode("ascii"), "replace")
+        except LookupError:
+            pass
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", "replace")
+
+
+def _read_signatures(data: Machine) -> tuple[list[ProfileSignature], list[str]]:
+    """Every signature of the signatures folder, read as it is from its .htm; the ones that cannot be read, each with why."""
+    if data.signatures is None:
+        return [], []
+    try:
+        names = sorted({path.stem for path in data.signatures.iterdir() if path.suffix.lower() in _SIGNATURE_FILES and path.is_file()}, key=str.casefold)
+    except OSError:
+        return [], []
+    found: list[ProfileSignature] = []
+    problems: list[str] = []
+    for name in names:
+        path = data.signatures / f"{name}.htm"
+        try:
+            if not path.is_file():
+                problems.append(f"{name}: the signature has no .htm file")
+                continue
+            if path.stat().st_size > MAXIMUM_HTML_BYTES:
+                problems.append(f"{name}: the signature is larger than {MAXIMUM_HTML_BYTES // (1024 * 1024)} MB")
+                continue
+            raw = path.read_bytes()
+        except OSError as error:
+            problems.append(f"{name}: {error.strerror or error}")
+            continue
+        found.append(ProfileSignature(name, _decoded(raw), data.signatures))
+    return found, problems
 
 
 def _account(data: Machine, values: dict[str, RegistryValue]) -> ProfileAccount | None:
@@ -233,7 +278,8 @@ def _account(data: Machine, values: dict[str, RegistryValue]) -> ProfileAccount 
         _security(values, prefix, incoming_port), incoming_user, _text(values, "SMTP Server"), outgoing_port, _security(values, "SMTP", outgoing_port),
         smtp_user if smtp_user and smtp_user != incoming_user else "", _number(values, "SMTP Use Auth") != 0,
         bool(leave & 1) if kind == "pop3" else True, leave >> 16, bool(leave & 0xFFFE), _password(data, values, f"{prefix} Password"),
-        _password(data, values, "SMTP Password") if smtp_user and smtp_user != incoming_user else None, _read_signature(data, _text(values, "New Signature")),
+        _password(data, values, "SMTP Password") if smtp_user and smtp_user != incoming_user else None, _text(values, "New Signature"),
+        _text(values, "Reply-Forward Signature"),
     )
 
 
@@ -251,7 +297,14 @@ def read_profile(data: Machine | None = None) -> Profile | None:
             files.extend(sorted(path for path in folder.glob("*.pst") if path.is_file()))
         except OSError:
             continue
-    return Profile(name, accounts, tuple(dict.fromkeys(files)))
+    signatures, problems = _read_signatures(data)
+    known = {signature.name.casefold() for signature in signatures} | {problem.split(":", 1)[0].casefold() for problem in problems}
+    for account in accounts:
+        for chosen in (account.signature_new, account.signature_reply):
+            if chosen and chosen.casefold() not in known:
+                known.add(chosen.casefold())
+                problems.append(f"{chosen}: the signature of {account.email} is not in the signatures folder")
+    return Profile(name, accounts, tuple(dict.fromkeys(files)), tuple(signatures), tuple(problems))
 
 
 # --- Outlook itself (COM) -------------------------------------------------------------------------------------------------------------

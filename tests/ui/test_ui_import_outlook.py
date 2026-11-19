@@ -10,16 +10,18 @@ from chrono_mail.engine.commands_outlook import FileScan, ImportResult, ScanResu
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.importdialog import WINDOWS_ONLY, ImportDialog, data_file_import_summary, data_file_scan_summary, merge_data_files
+from chrono_mail.engine.outlook_settings import ProfileImport
+from chrono_mail.ui.importdialog import WINDOWS_ONLY, ImportDialog, data_file_import_summary, data_file_scan_summary, merge_data_files, profile_import_lines
 from tests.enginefactory import make_engine
 from tests.test_import_outlook import FakeFile, data_file, files  # noqa: F401 - files is the fixture of the made-up data files
 from tests.test_import_outlook_profile import machine  # noqa: F401 - the fixture of the made-up profile
 from tests.ui.world import RecoveryCodes, record_recovery_codes, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import_outlook.py 4.2.463"
+__version__ = "test_ui_import_outlook.py 4.6.632"
 
 # --- Version history ----------------------------------------------------
+# v4.6.632: the end summary tells the signatures added, already here and the accounts given them (D-361)
 # v4.2.463: an import of a data file that made this computer's key shows its recovery code when it ends (UR-08)
 # v4.2.431: the data file's later choices: the reason in their (i), no hover text
 # v4.2.388: a data file imported before: Import asks first; Import again says nothing new came in
@@ -212,3 +214,9 @@ def test_a_data_file_import_that_made_the_key_shows_its_recovery_code(qtbot: QtB
     dialog.import_button.click()
     wait(qtbot, lambda: setup.codes.shown == 1)
     assert dialog.summary.text().startswith("The import is done.")
+
+
+def test_the_summary_tells_the_signatures_added_already_here_and_the_accounts_given_them() -> None:
+    lines = profile_import_lines(ProfileImport(signatures_added=2, signatures_existing=1, signatures_given=1, notes=("Not imported: Old only: the signature has no .htm file",)))
+    assert "Signatures added: 2; already here, left as they are: 1; accounts given them: 1." in lines
+    assert any("Old only: the signature has no .htm file" in line for line in lines)
