@@ -11,9 +11,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, add_window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_compose_font.py 4.4.623"
+__version__ = "test_ui_compose_font.py 4.6.635"
 
 # --- Version history ----------------------------------------------------
+# v4.6.635: A Default font that is not installed shows "(not installed)" and stays the choice at OK until another is picked (D-354)
 # v4.4.623: Initial tests (also: OK keeps an unchosen font unchosen): Settings > Writing > Default font is written in and sent with the message; the slider only enlarges what is shown (D-354)
 
 
@@ -68,3 +69,31 @@ def test_ok_in_settings_keeps_an_unchosen_font_unchosen_so_it_follows_the_system
     saved = settings_of(world)
     assert saved.value("compose_font_family", "") in ("", None) and int(str(saved.value("compose_font_points", 0) or 0)) == 0
     assert (chosen.font_family, chosen.font_points) == (appearance.compose_family(""), appearance.compose_points(0))
+
+
+MISSING = "Chrono Made-up Sans"  # a font no computer has
+
+
+def choose(family: str) -> object:
+    def change(dialog: SettingsDialog) -> None:
+        dialog.compose_font.setCurrentFont(QFont(family))
+
+    return change
+
+
+def test_a_default_font_that_is_not_installed_shows_so_and_stays_the_choice(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    edit_settings(world, qtbot, monkeypatch, choose(MISSING))
+    shown: list[str] = []
+
+    def look(dialog: SettingsDialog) -> None:
+        shown.append(dialog.compose_font.currentText())
+
+    edit_settings(world, qtbot, monkeypatch, look)  # opened again and OK pressed without a change
+    assert shown == [f"{MISSING} (not installed)"]
+    assert world.window.composing.compose_options().font_family == MISSING  # noqa: SLF001 - never Qt's stand-in
+
+
+def test_picking_another_font_replaces_one_that_is_not_installed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    edit_settings(world, qtbot, monkeypatch, choose(MISSING))
+    edit_settings(world, qtbot, monkeypatch, choose("DejaVu Sans"))
+    assert world.window.composing.compose_options().font_family == QFont("DejaVu Sans").family()  # noqa: SLF001

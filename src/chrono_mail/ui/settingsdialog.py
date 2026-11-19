@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFontComboBox,
@@ -67,9 +67,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.5.626"
+__version__ = "settingsdialog.py 4.6.635"
 
 # --- Version history ----------------------------------------------------
+# v4.6.635: A Default font that is not installed shows its name with "(not installed)" and stays the choice at OK (D-354)
 # v4.5.626: Settings > Templates and Signatures after Writing: the signatures, kept at OK (B-24, D-358); the page list is as wide as its
 #           longest title
 # v4.4.623: Settings > Writing: Default font, a font and a size (D-354)
@@ -163,6 +164,7 @@ __version__ = "settingsdialog.py 4.5.626"
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window
 
+NOT_INSTALLED: str = " (not installed)"  # after a Default font this computer does not have (D-354)
 NO_TRAY: str = "This desktop has no notification area, so there are no icon and no notifications."
 AUTOSTART_NOT_HERE: str = "Not available for this copy of Chrono Mail"
 START_AT_LOGIN: str = "Start Chrono Mail when I log in"
@@ -767,6 +769,10 @@ class SettingsDialog(QDialog):
         self.warn_no_subject.setChecked(self._chosen.warn_no_subject)
         self.compose_font = part(page, QFontComboBox, "composeFont")  # what new messages are written and sent in (D-354)
         self.compose_font.setCurrentFont(QFont(compose_family(self._chosen.compose_font_family)))
+        chosen = self._chosen.compose_font_family.strip()
+        self._missing_font = chosen if chosen and not QFontDatabase.hasFamily(chosen) else ""  # stays the choice until another is picked
+        if self._missing_font:
+            self.compose_font.setEditText(f"{self._missing_font}{NOT_INSTALLED}")
         self.compose_font.setToolTip("The font new messages are written in; the receiver sees it too")
         self.compose_font_points = part(page, QSpinBox, "composeFontPoints")
         self.compose_font_points.setRange(6, 72)
@@ -777,6 +783,8 @@ class SettingsDialog(QDialog):
     def _chosen_font_family(self) -> str:
         """The font chosen; "" while the field still shows the program's own, so that it keeps following the system (D-354)."""
         family = self.compose_font.currentFont().family()
+        if self._missing_font and family == f"{self._missing_font}{NOT_INSTALLED}":  # never Qt's stand-in: used again once installed
+            return self._missing_font
         return "" if not self._chosen.compose_font_family and family == compose_family("") else family
 
     def _chosen_font_points(self) -> int:
