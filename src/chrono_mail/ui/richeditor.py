@@ -13,9 +13,10 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QTextEdit,
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.4.623"
+__version__ = "richeditor.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: with_styles_inside writes an HTML text's own style rules onto its paragraphs and text, so they reach nothing else (D-360)
 # v4.4.623: The HTML sent carries the default font and its size (D-354)
 # v4.4.622: pictures_in_text gives each picture with its address, so the quoted ones can be told apart (D-353)
 # v4.4.621: Pictures in the text: dragged in, pasted or chosen with Picture…, shown no wider than the text, sent unaltered as embedded
@@ -43,6 +44,18 @@ def safe_link(address: str) -> bool:
     except ValueError:
         return False
     return scheme in ALLOWED_LINK_SCHEMES and len(text) <= 2000 and not any(ord(character) < 32 for character in text)
+
+
+_BODY_INNER: re.Pattern[str] = re.compile(r"<body\b[^>]*>(.*)</body\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def with_styles_inside(html: str) -> str:
+    """An HTML text with its own style rules written onto each of its paragraphs and pieces of text, the way the editor reads them, and
+    no style rules left: put next to other text, its rules reach only itself (a quoted original, D-360)."""
+    document = QTextDocument()
+    document.setHtml(html)
+    found = _BODY_INNER.search(document.toHtml())
+    return found.group(1) if found is not None else ""
 
 
 def _without_foreign_pictures(html: str) -> str:

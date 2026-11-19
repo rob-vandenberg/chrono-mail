@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pictures.py 4.4.622"
+__version__ = "test_engine_pictures.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: The quote keeps the original's own style rules (D-360)
 # v4.4.622: Replies and forwards quote the original with its pictures; a plain-text forward carries them as attachments
 # v4.4.621: Initial tests: pictures inside the text are sent, saved, opened and taken back unaltered as inline parts (D-353)
 
@@ -127,9 +128,9 @@ def html_message_with_a_picture() -> ParsedMessage:
 
 def test_a_reply_in_rich_text_quotes_the_original_with_its_formatting_and_its_picture_and_no_attachment() -> None:
     draft = build_draft(html_message_with_a_picture(), "reply", "me@example.com")
-    assert draft.quoted_html is not None and "<b>our</b>" in draft.quoted_html and "<blockquote>" in draft.quoted_html
+    assert draft.quoted_html is not None and "<b>our</b>" in draft.quoted_html and "<blockquote" in draft.quoted_html
     assert data_address("image/png", "garden.png", PNG) in draft.quoted_html
-    assert "<style" not in draft.quoted_html and "<script" not in draft.quoted_html and "color: red" not in draft.quoted_html
+    assert "<script" not in draft.quoted_html and "p { color: red }" in draft.quoted_html  # the original keeps its own style rules (D-360)
     assert draft.attachment_names == ()
 
 

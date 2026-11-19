@@ -10,9 +10,10 @@ from chrono_mail.mime.pictures import pictures_into
 from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 4.4.622"
+__version__ = "compose.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: The quote keeps the original's own style rules, for the original only; Chrono Mail's own lines have no space around them (D-360)
 # v4.4.622: A reply or forward of an HTML message also gives the quote as HTML, with the original's formatting and its pictures (D-353)
 # v4.4.504: a part without a name gets its extension only from Chrono Mail's own list of types it knows for certain, never from the
 #           computer's (text/calendar was .bin on a computer without one); an unknown type gets none (D-311)
@@ -87,7 +88,13 @@ class Draft:
     in_reply_to: str | None
     references: tuple[str, ...]
     attachment_names: tuple[str, ...]  # what a forward would carry along
-    quoted_html: str | None = None  # the quote (its intro line or the forward's header, then the original) as HTML, with its pictures
+    quote_intro: str | None = None  # Chrono Mail's own lines above the original as HTML: the intro line, or the forward's header
+    quote_original: str | None = None  # the original as a whole HTML text, with its own style rules and its pictures (D-360)
+
+    @property
+    def quoted_html(self) -> str | None:
+        """The whole quote as one HTML text: Chrono Mail's own lines, then the original."""
+        return quote_html(self.kind, self.quote_intro or "", self.quote_original) if self.quote_original is not None else None
 
 
 def _format(address: Address) -> str:
@@ -111,22 +118,31 @@ def _text_of(message: ParsedMessage) -> str:
     return html_to_text(message.html_body, keep_lines=True) if message.html_body else ""
 
 
-_BODY: re.Pattern[str] = re.compile(r"<body\b[^>]*>(.*)</body\s*>", re.IGNORECASE | re.DOTALL)
-_NOT_SHOWN: re.Pattern[str] = re.compile(r"<(script|style|head|title)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+_NOT_SHOWN: re.Pattern[str] = re.compile(r"<(script|title)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+_STYLE_BLOCK: re.Pattern[str] = re.compile(r"(<style\b[^>]*>)(.*?)(</style\s*>)", re.IGNORECASE | re.DOTALL)
+_COMMENT_MARKS: re.Pattern[str] = re.compile(r"<!--|-->")
+OWN_PARAGRAPH: str = '<p style="margin:0">'  # Chrono Mail's own lines: one line high, no space above or below (D-360)
 
 
 def _html_of(message: ParsedMessage) -> str | None:
-    """The original's HTML text to quote: what its body shows, with its own pictures inside it; None for a plain-text message.
-    Its styles and scripts stay out (they would change the answer's own text); the editor draws only what it can show."""
+    """The original's HTML text to quote, whole, with its own style rules and its pictures inside it; None for a plain-text message.
+    Its scripts stay out. Its style rules may be wrapped in <!-- -->, which CSS ignores but Qt's reader does not: those marks go."""
     if message.html_body is None:
         return None
-    found = _BODY.search(message.html_body)
-    shown = _NOT_SHOWN.sub("", found.group(1) if found is not None else message.html_body)
+    shown = _NOT_SHOWN.sub("", message.html_body)
+    shown = _STYLE_BLOCK.sub(lambda found: found.group(1) + _COMMENT_MARKS.sub("", found.group(2)) + found.group(3), shown)
     return pictures_into(shown, message.attachments)
 
 
+def quote_html(kind: str, intro: str, original: str) -> str:
+    """The quote as one HTML text: Chrono Mail's own lines, then the original, set in for a reply (no space above or below it)."""
+    if kind in ("reply", "reply_all"):
+        return f'{intro}<blockquote style="margin-top:0; margin-bottom:0">{original}</blockquote>'
+    return f"{intro}<div>{original}</div>"
+
+
 def _paragraphs(lines: list[str]) -> str:
-    return "".join(f"<p>{html.escape(line) or '<br />'}</p>" for line in lines)
+    return "".join(f"{OWN_PARAGRAPH}{html.escape(line) or '<br />'}</p>" for line in lines)
 
 
 def _quote(text: str) -> str:
@@ -173,7 +189,7 @@ def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str, quo
         return Draft(
             "forward", (), (), subject_for(message.subject, kind), "\n\n" + "\n".join(header) + "\n\n" + _text_of(message),
             None, (), tuple(suggest_filename(attachment.filename, attachment.content_type, position) for position, attachment in enumerate(message.attachments) if not attachment.inline),
-            _paragraphs(header) + f"<div>{original}</div>" if original is not None else None,
+            _paragraphs(header) if original is not None else None, original,
         )
     from_me = sender is not None and sender.address.lower() == own
     if from_me and message.to_addresses:  # answering a message of mine goes to the people I wrote to
@@ -191,5 +207,6 @@ def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str, quo
         body = f"{intro}\n{_quote(_text_of(message))}\n\n\n"  # the answer goes under the quote
     else:
         body = f"\n\n{intro}\n{_quote(_text_of(message))}\n"
-    quoted = f"{_paragraphs([intro])}<blockquote>{original}</blockquote>" if original is not None and quote != "none" else None
-    return Draft(kind, to, cc, subject_for(message.subject, kind), body, in_reply_to, references, (), quoted)
+    quoting = original is not None and quote != "none"
+    return Draft(kind, to, cc, subject_for(message.subject, kind), body, in_reply_to, references, (), _paragraphs([intro]) if quoting else None,
+                 original if quoting else None)

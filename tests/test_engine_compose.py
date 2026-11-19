@@ -2,13 +2,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from chrono_mail.engine.compose import ComposeKind, build_draft, subject_for
+from chrono_mail.engine.compose import OWN_PARAGRAPH, ComposeKind, build_draft, subject_for
 from chrono_mail.mime import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_compose.py 0.0.42"
+__version__ = "test_engine_compose.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: A quote keeps the original's own style rules; Chrono Mail's own lines have no space around them (D-360)
 # v0.0.42: Settings window with pages for everything
 # v0.0.13: Initial reply and forward draft tests
 
@@ -108,3 +109,21 @@ def test_the_quote_style_of_a_reply() -> None:
     assert none.body == "\n\n" and "> " not in none.body
     forward = build_draft(original, "forward", "me@example.com", "none")
     assert "Forwarded message" in forward.body  # the style is for replies only
+
+
+TIGHT_STYLED = ('<html><head><style><!-- p.MsoNormal {margin:0cm; font-family:Calibri} --></style></head>'
+                  '<body><p class="MsoNormal">Dag Ann,</p><p class="MsoNormal">Tot morgen.</p></body></html>')
+
+
+def test_a_reply_quotes_the_original_with_its_own_style_rules_readable_for_the_editor() -> None:
+    draft = build_draft(message(text_body=None, html_body=TIGHT_STYLED), "reply", ME)
+    assert draft.quote_original is not None and "p.MsoNormal {margin:0cm; font-family:Calibri}" in draft.quote_original
+    assert "<!--" not in draft.quote_original and "-->" not in draft.quote_original  # CSS ignores these marks, the editor's reader does not
+
+
+def test_chrono_mails_own_lines_above_a_quote_have_no_space_around_them() -> None:
+    reply = build_draft(message(text_body=None, html_body=TIGHT_STYLED), "reply", ME)
+    forward = build_draft(message(text_body=None, html_body=TIGHT_STYLED), "forward", ME)
+    assert reply.quote_intro is not None and reply.quote_intro.startswith(f"{OWN_PARAGRAPH}On ")
+    assert forward.quote_intro is not None and forward.quote_intro.count("<p") == forward.quote_intro.count(OWN_PARAGRAPH) >= 4
+    assert reply.quoted_html is not None and '<blockquote style="margin-top:0; margin-bottom:0">' in reply.quoted_html

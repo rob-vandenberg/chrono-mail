@@ -42,7 +42,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12g | Save as .eml, view source, print (0.0.22). | done |
 | 1.12h | Address completion in the composer, from the addresses in the mail (0.0.23, index schema 4). | done |
 | 1.12i | Rich text (HTML) composing (0.0.24). | done |
-| 1.12k | Pictures inside mail: dragged, pasted or chosen into the text, sent unaltered (4.4.621, D-353); replies and forwards with their pictures (4.4.622); the default font (4.4.623, D-354). | done |
+| 1.12k | Pictures inside mail: dragged, pasted or chosen into the text, sent unaltered (4.4.621, D-353); replies and forwards with their pictures (4.4.622); the default font (4.4.623, D-354); a reply keeps the original's style, own text one line high (4.6.631, D-360). | done |
 | 1.12j | The Operations window of send and receive: a row per account with its step and bar, Errors, Log; three settings for when it opens and closes (D-138). | done (0.5.145) |
 | 1.13 | Packaging: .deb and .rpm built here (Nuitka in an Ubuntu 22.04 container, nFPM), tested on bare Ubuntu 22.04, 26.04 and Fedora 43; Flatpak dropped (D-123). Not yet: a test on GNOME. | done (0.5.127) |
 | 1.14 | Windows test run on the Windows computer: the setup.exe recipe (`packaging/build_windows.ps1`, `packaging/chrono-mail.iss`, `packaging/PACKAGING.md`) built a setup.exe there (0.5.128, fixes in 0.5.129); still to test there: the installed program's password store, PACKAGING.md 4.4, 6.2 and 7. | in progress |

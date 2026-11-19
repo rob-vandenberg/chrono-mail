@@ -17,9 +17,10 @@ from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, add_window, answer_open_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_pictures.py 4.4.622"
+__version__ = "test_ui_pictures.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: The answer gives Chrono Mail's own lines and the original apart (D-360)
 # v4.4.622: A reply in rich text shows the quoted picture; a plain-text forward names the original's pictures
 # v4.4.621: Initial tests: pictures dragged, pasted or chosen into the text, sent unaltered; a dropped file attached (D-353)
 
@@ -150,8 +151,9 @@ def test_pasted_text_with_a_picture_that_cannot_be_shown_is_pasted_without_it(wo
 
 
 def answer(kind: str, png: bytes, attachments: tuple[str, ...] = ()) -> ComposeResult:
-    quoted = f'<p>On Tue, Ann wrote:</p><blockquote><p>Look at <b>our</b> garden</p><img src="{data_address("image/png", "garden.png", png)}" /></blockquote>'
-    return ComposeResult(kind, ("ann@example.com",), (), "Re: Our garden", "\n\nOn Tue, Ann wrote:\n> Look at our garden\n", None, (), attachments, None, quoted)
+    original = f'<p>Look at <b>our</b> garden</p><img src="{data_address("image/png", "garden.png", png)}" />'
+    return ComposeResult(kind, ("ann@example.com",), (), "Re: Our garden", "\n\nOn Tue, Ann wrote:\n> Look at our garden\n", None, (), attachments, None,
+                         "<p>On Tue, Ann wrote:</p>", original)
 
 
 def rich_answer(world: World, qtbot: QtBot, draft: ComposeResult, rich: bool = True) -> ComposeWindow:

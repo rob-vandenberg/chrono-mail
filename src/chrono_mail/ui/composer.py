@@ -32,6 +32,7 @@ from chrono_mail.pim.times import moment_at
 from chrono_mail.engine.mailbox import GoneMeanwhile, SentAlready
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.commands_mail import ComposeResult
+from chrono_mail.engine.compose import OWN_PARAGRAPH, quote_html
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.core import ChronoMailError, ConfigurationError, MessageFormatError
 from chrono_mail.engine.commands_drafts import DRAFT_SAVE, DraftKind, DraftOpenResult, DraftSaveParameters, DraftSaveResult
@@ -44,7 +45,7 @@ from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.mime.pictures import data_address, pictures_out_of
-from chrono_mail.ui.richeditor import Picture, RichEditor
+from chrono_mail.ui.richeditor import Picture, RichEditor, with_styles_inside
 from chrono_mail.ui.composertexts import KEYED, TextsInMessage, signature_block, with_sent_from, with_signature
 from chrono_mail.config.model import AccountTexts
 from chrono_mail.engine.commands_signatures import SNIPPET_ALL, NoParameters as SnippetNoParameters, SnippetText
@@ -52,9 +53,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.5.628"
+__version__ = "composer.py 4.6.631"
 
 # --- Version history ----------------------------------------------------
+# v4.6.631: A reply or forward quotes the original with its own style rules, which reach the original only; the own lines around
+#           it have no space above or below (D-360)
 # v4.5.628: A text that cannot be read is left out of the keys and the Signature button (D-358)
 # v4.5.626: Templates and signatures from the library: the account's template and signature when a message opens, Ctrl+1 to
 #           Ctrl+7, the Signature button, a default signature follows From; "Sent from Chrono Mail" when Settings asks for it (B-24, D-358)
@@ -158,8 +161,12 @@ class ComposeOptions:
 
 
 def _paragraphs_of(text: str) -> str:
-    """Plain text as HTML paragraphs, one per line."""
-    return "".join(f"<p>{html.escape(line) or '<br />'}</p>" for line in text.split("\n"))
+    """Plain text as HTML paragraphs, one per line, each one line high with no space around it; an empty line is Qt's empty paragraph
+    (a <br /> in it would be a second line, D-360)."""
+    return "".join(f"{OWN_PARAGRAPH}{html.escape(line)}</p>" if line else _EMPTY_LINE for line in text.split("\n"))
+
+
+_EMPTY_LINE: str = '<p style="margin:0; -qt-paragraph-type:empty"><br /></p>'
 
 
 DRAFT_KINDS: dict[str, DraftKind] = {"new": "new", "reply": "reply", "reply_all": "reply_all", "forward": "forward", "forward_attachment": "forward_attachment"}
@@ -349,19 +356,21 @@ class ComposeWindow(QMainWindow):
         if options.font_size > 0:
             self.set_text_size(options.font_size)
         stored_html = draft.html if isinstance(draft, DraftOpenResult) else None
-        quoted = draft.quoted_html if isinstance(draft, ComposeResult) and resume is None else None
+        answered = draft if isinstance(draft, ComposeResult) and resume is None else None
+        original = answered.quote_original if answered is not None else None
         if stored_html:  # a rich text draft comes back as rich text
             self.set_rich(True, stored_html)
-        elif rich and quoted:  # the original quoted with its formatting and pictures (D-353)
+        elif rich and answered is not None and original:  # the original quoted with its formatting and pictures (D-353)
             below = options.reply_below and self._kind in ("reply", "reply_all")
             own = _paragraphs_of("\n")
+            quoted = quote_html(self._kind, answered.quote_intro or "", with_styles_inside(original))  # its rules reach only itself (D-360)
             self.set_rich(True, quoted + own if below else own + quoted)
             self._quoted_pictures = set(self.rich.pictures)  # the own part has none: these are the original's
             self.rich.edit.moveCursor(self.rich.edit.textCursor().MoveOperation.End if below else self.rich.edit.textCursor().MoveOperation.Start)
         elif rich:
             self.set_rich(True)
-        if quoted and not self.is_rich() and self._kind == "forward":  # a forward in plain text carries the original's pictures as attachments
-            for picture in pictures_out_of(quoted, lambda: "picture", leave_out_bad=True)[1]:
+        if original and not self.is_rich() and self._kind == "forward":  # a forward in plain text carries the original's pictures as attachments
+            for picture in pictures_out_of(original, lambda: "picture", leave_out_bad=True)[1]:
                 self._add_picture(Picture(picture.content_type, picture.name, picture.data))
         self._show_original_names()
         if editing is not None:  # it stays scheduled: Save keeps its time, Schedule… changes it; sending now and drafts are on the page
