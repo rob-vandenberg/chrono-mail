@@ -124,3 +124,4 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-359]] The reference client's signatures and templates come into the library
 - [[D-360]] A reply never changes the original's style; own text is one line high
 - [[D-361]] The office suite's signatures come into Templates and Signatures as they are
+- [[D-362]] The message window shows Reply, Reply all and Forward with their text

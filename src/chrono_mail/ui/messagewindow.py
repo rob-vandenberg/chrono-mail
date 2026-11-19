@@ -3,7 +3,7 @@ from pathlib import Path
 
 from typing import override
 
-from PySide6.QtCore import QSettings, QUrl, Signal
+from PySide6.QtCore import QSettings, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QLabel, QMainWindow, QToolBar, QWidget
 
@@ -21,9 +21,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 4.4.527"
+__version__ = "messagewindow.py 4.6.638"
 
 # --- Version history ----------------------------------------------------
+# v4.6.638: Reply, Reply all and Forward show their text beside the icon, as in the main window (D-362)
 # v4.4.527: a calendar attachment opens as a card by what it is (D-310)
 # v4.4.511: where: what the window shows, for the windows that follow an answer (D-310)
 # v4.4.507: Open attachment on an .ics file asks for its card in a window of its own (calendar_open_requested), D-310 step 4
@@ -66,6 +67,7 @@ class MessageWindow(QMainWindow):
         held = HeldKey(self)  # whether an action was set off by a held key's repeat: Reply and Forward act once per press (D-266)
         toolbar = QToolBar("Message", self)
         toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)  # the text beside the icon, as in the main window (D-362)
         self.addToolBar(toolbar)
         for kind, label, icon, keys in (
             ("reply", "Reply", "mail-reply-sender", "Ctrl+R"), ("reply_all", "Reply all", "mail-reply-all", "Ctrl+Shift+R"), ("forward", "Forward", "mail-forward", "Ctrl+F"),

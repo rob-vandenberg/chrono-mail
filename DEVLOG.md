@@ -4535,3 +4535,7 @@ Tests: 1 new in tests/test_engine_dav_names.py (fails on 4.6.635); 116 related t
 
 ## 2026-11-19, 4.6.637: accountrows.py says why it reads a style option with getattr (D-175)
 The owner (Proceed of 2026-11-18). tests/test_typed_calls.py::test_the_window_reads_the_engines_answers_by_their_fields failed since 4.4.625 on ui/accountrows.py lines 21 and 59, which read a Qt style option's fields (PySide's stubs give them no type), not an engine answer. Both lines now carry "# getattr: PySide's stubs give a style option's fields no type"; the test passes. Comments only: no reviewers.
+
+## 2026-11-19, 4.6.638: the message window shows Reply, Reply all and Forward with their text (D-362)
+The owner (Next work 4, Proceed of 2026-11-19): the window of one opened message showed the three icons without text; its bar now uses Qt's text-beside-icon style, as the main window. Forward gets no arrow there (Q81).
+Tests: 1 new, tests/ui/test_ui_message_window.py (fails on 4.6.637); related window tests pass; Pyrefly 0 on the program (Linux, win32); layer check passes. One review round, nothing real. Found: tests/ui/test_ui_windowstate.py has 2 errors (a ComposeWindow already deleted at teardown), also on 4.6.637; not looked into.
