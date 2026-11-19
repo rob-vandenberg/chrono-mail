@@ -24,9 +24,10 @@ from tests.ui.test_ui_signatures import give_signature
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.5.626"
+__version__ = "test_ui_preferences.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: the way of writing shows as the tick in Format of the three dots; the Plain text button is gone (D-363)
 # v4.5.626: the page Templates and Signatures after Writing; the signature comes from the library of templates and signatures, chosen per account (B-24, D-358; the owner's approval of 2026-11-18); its place in a reply is the account's
 # v4.4.616: Settings has the Calendar page, after Tags (D-352)
 # v4.4.590: Favorites starts with All Messages, then All Inboxes (the owner)
@@ -439,7 +440,7 @@ def test_new_messages_start_in_the_way_of_writing_chosen(world: World, qtbot: Qt
     world.window.composing.new_message()
     wait(qtbot, lambda: len(world.window.composing.composers) == 1)  # noqa: SLF001
     composer = world.window.composing.composers[0]  # noqa: SLF001
-    assert composer.is_rich() is rich and composer.rich_button.text() == ("Rich text" if rich else "Plain text")
+    assert composer.is_rich() is rich and (composer.rich_action if rich else composer.plain_action).isChecked()
 
 
 

@@ -14,9 +14,10 @@ from tests.ui.test_ui_settings import open_settings
 from tests.ui.world import Dialogs, World, add_window, answer_open_file, answer_save_file, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_signatures.py 4.5.628"
+__version__ = "test_ui_signatures.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: the signature is put in with the Signature button's list (pick_signature); Ctrl+1 to Ctrl+7 now add a text at the cursor (D-363)
 # v4.5.628: a swap replaces only the signature; a text that cannot be read is left out and named (D-358)
 # v4.5.627: the account block as the owner drew it: the fields' heading, the first field level with the account list, the tick under it
 # v4.5.626: Initial tests: Settings > Templates and Signatures (the library and the accounts' choices, kept at OK), the window of one
@@ -96,6 +97,13 @@ def composer(world: World, qtbot: QtBot, draft: object | None = None, template: 
     window.show()
     wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - the library arrived
     return window
+
+
+def pick_signature(window: ComposeWindow, place: int) -> None:
+    """A text chosen in the Signature button's list: put in as the signature, in place of the one there (D-363)."""
+    menu = window.signature_button.menu()
+    assert menu is not None
+    menu.actions()[place].trigger()
 
 
 def close(window: ComposeWindow) -> None:
@@ -270,31 +278,31 @@ def test_a_new_message_gets_the_account_s_template_and_signature_unchanged(world
     close(window)
 
 
-def test_the_keys_put_in_one_signature_the_same_key_does_nothing_another_replaces(world: World, qtbot: QtBot) -> None:
+def test_the_signature_button_puts_in_one_signature_the_same_does_nothing_another_replaces(world: World, qtbot: QtBot) -> None:
     keep(world, ("Formal", "<p>Kind regards</p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
-    window._signature_by_key(0)  # noqa: SLF001 - what Ctrl+1 does
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
+    pick_signature(window, 0)
     assert window.body.toPlainText().count("-- \n") == 1 and "Kind regards" in window.body.toPlainText()
-    window._signature_by_key(1)  # noqa: SLF001 - Ctrl+2
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert "Cheers" in text and "Kind regards" not in text and text.count("-- \n") == 1
     assert [action.text().split("\t")[0] for action in window.signature_button.menu().actions()] == ["Formal", "Short"]  # type: ignore[union-attr]
     close(window)
 
 
-def test_in_rich_text_a_key_replaces_the_signature_and_keeps_the_formatting(world: World, qtbot: QtBot) -> None:
+def test_in_rich_text_the_signature_button_replaces_the_signature_and_keeps_the_formatting(world: World, qtbot: QtBot) -> None:
     keep(world, ("Formal", "<p><b>Kind regards</b></p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
     window.rich_action.trigger()
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     assert "Kind regards" in window.rich.toPlainText() and window.rich.has_formatting()
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     assert "Cheers" in window.rich.toPlainText() and "Kind regards" not in window.rich.toPlainText()
     close(window)
 
 
-def test_from_swaps_a_default_signature_but_keeps_one_put_in_by_key(world: World, qtbot: QtBot) -> None:
+def test_from_swaps_a_default_signature_but_keeps_one_put_in_by_the_signature_button(world: World, qtbot: QtBot) -> None:
     from tests.test_engine_commands import add_account
 
     second = add_account(world.engine, world.pop, world.smtp, email="second@example.com")
@@ -310,7 +318,7 @@ def test_from_swaps_a_default_signature_but_keeps_one_put_in_by_key(world: World
     window.from_box.setCurrentIndex(window.from_box.findData(world.account_id))
     window.from_box.setCurrentIndex(window.from_box.findData(second))
     assert "-- \n" not in window.body.toPlainText()
-    window._signature_by_key(0)  # noqa: SLF001 - one put in by key stays
+    pick_signature(window, 0)
     window.from_box.setCurrentIndex(window.from_box.findData(world.account_id))
     assert window.body.toPlainText().count("-- \n") == 1
     close(window)
@@ -347,9 +355,9 @@ def test_sent_from_chrono_mail_ends_every_message_sent_when_ticked(world: World,
 def test_a_signature_the_person_changed_is_still_replaced_not_doubled(world: World, qtbot: QtBot) -> None:
     keep(world, ("Formal", "<p>Kind regards<br>Phone 1</p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     window.body.setPlainText(window.body.toPlainText().replace("Phone 1", "Phone 2"))  # the person fixes a number
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert text.count("-- \n") == 1 and "Cheers" in text and "Phone" not in text
     close(window)
@@ -360,7 +368,7 @@ def test_a_draft_taken_up_again_keeps_one_signature(world: World, qtbot: QtBot) 
     saved = world.call("draft.save", account=world.account_id, subject="x", body="mine\n\n-- \nOld signature\n")
     opened = world.call("draft.open", account=world.account_id, message=saved.message_id)
     window = composer(world, qtbot, opened)
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert text.count("-- \n") == 1 and "Cheers" in text and "Old signature" not in text and text.startswith("mine")
     close(window)
@@ -370,13 +378,13 @@ def test_a_rich_draft_taken_up_again_keeps_one_signature(world: World, qtbot: Qt
     keep(world, ("Formal", "<p>Kind regards</p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
     window.rich_action.trigger()
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     saved = world.call("draft.save", account=world.account_id, subject="x", body=window.rich.toPlainText(), html=window.rich.outgoing_html())
     close(window)
     opened = world.call("draft.open", account=world.account_id, message=saved.message_id)
     again = composer(world, qtbot, opened)
     assert again.is_rich()
-    again._signature_by_key(1)  # noqa: SLF001
+    pick_signature(again, 1)
     assert "Cheers" in again.rich.toPlainText() and "Kind regards" not in again.rich.toPlainText()
     close(again)
 
@@ -385,23 +393,23 @@ def test_a_switch_between_rich_and_plain_text_takes_the_signature_along(world: W
     keep(world, ("Formal", "<p>Kind regards</p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
     window.rich_action.trigger()
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     window.plain_action.trigger()
     assert window.body.toPlainText().count("-- \nKind regards") == 1
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     assert window.body.toPlainText().count("-- \n") == 1 and "Cheers" in window.body.toPlainText()
     window.rich_action.trigger()
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     text = window.rich.toPlainText()
     assert "Kind regards" in text and "Cheers" not in text and "-- " not in text
     close(window)
 
 
-def test_a_key_in_a_new_message_puts_the_signature_after_what_is_written(world: World, qtbot: QtBot) -> None:
+def test_the_signature_button_in_a_new_message_puts_the_signature_after_what_is_written(world: World, qtbot: QtBot) -> None:
     keep(world, ("Formal", "<p>Kind regards</p>"))
     window = composer(world, qtbot)
     window.body.setPlainText("Hello Ann,\n\nSee you tomorrow.")
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     text = window.body.toPlainText()
     assert text.startswith("Hello Ann,") and text.index("See you tomorrow.") < text.index("-- \nKind regards")
     close(window)
@@ -411,9 +419,9 @@ def test_a_signature_with_an_empty_line_is_replaced_whole(world: World, qtbot: Q
     keep(world, ("Long", "<p>Rob</p><p><br></p><p>Example company</p>"), ("Short", "<p>Cheers</p>"))
     drafted = world.call("message.compose", account=world.account_id, folder="Inbox", message=world.call("message.list", account=world.account_id, folder="Inbox").messages[0].message_id, kind="reply")
     window = composer(world, qtbot, drafted)
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     assert "Example company" in window.body.toPlainText()
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert "Cheers" in text and "Example company" not in text and "Rob\n" not in text.split("wrote:")[0] and text.count("-- \n") == 1
     close(window)
@@ -424,8 +432,8 @@ def test_a_forwarded_mail_s_own_signature_is_never_taken_for_yours(world: World,
     drafted = world.call("message.compose", account=world.account_id, folder="Inbox", message=world.call("message.list", account=world.account_id, folder="Inbox").messages[0].message_id, kind="forward")
     window = composer(world, qtbot, drafted)
     window.body.setPlainText("\n\n---------- Forwarded message ----------\nFrom: Ann\n\nSee below.\n-- \nAnn's signature\n")
-    window._signature_by_key(0)  # noqa: SLF001
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 0)
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert "Ann's signature" in text and "Cheers" in text and "Kind regards" not in text
     assert text.index("-- \nCheers") < text.index("Forwarded message")  # yours before the forwarded mail
@@ -469,14 +477,14 @@ def test_a_swap_replaces_only_the_signature_never_text_typed_around_it(world: Wo
     keep(world, ("Formal", "<p>Kind regards<br>Rob</p>"), ("Short", "<p>Cheers</p>"))
     window = composer(world, qtbot)
     window.body.setPlainText("Hello Ann,")
-    window._signature_by_key(0)  # noqa: SLF001
+    pick_signature(window, 0)
     cursor = window.body.textCursor()
     cursor.movePosition(QTextCursor.MoveOperation.End)
     cursor.insertText("\n\nP.S. see you Monday")  # typed below the signature
     text = window.body.toPlainText()
     cursor.setPosition(text.index("Kind") + 4)
     cursor.insertText(" and warm")  # a change inside the signature
-    window._signature_by_key(1)  # noqa: SLF001
+    pick_signature(window, 1)
     text = window.body.toPlainText()
     assert text.startswith("Hello Ann,") and "P.S. see you Monday" in text and "Cheers" in text
     assert "Kind" not in text and "warm" not in text and text.count("-- \n") == 1, text

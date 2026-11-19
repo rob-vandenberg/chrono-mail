@@ -19,9 +19,10 @@ from chrono_mail.ui.toolbar import ToolbarRow
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 4.4.615"
+__version__ = "test_ui_theme.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: the Plain text button below the text is gone (Format is in the three dots of the bar, D-363)
 # v4.4.615: every SP_Dialog and SP_MessageBox icon is the program's own Breeze copy, never the desktop theme's (D-087)
 # v4.4.615: the selection colours are read with the current row scrolled into sight (the Tags block leaves the tree less room, D-334)
 # v4.4.615: in the dark theme the header's bottom line lies directly above a message without files (no band of another colour);
@@ -152,7 +153,7 @@ def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: Worl
     sheet = theme.stylesheet()
     assert composer.objectName() == "composeWindow" and composer.styleSheet() == sheet and "QMainWindow#composeWindow" in sheet
     assert composer.send_button.objectName() == "sendButton" and "QPushButton#sendButton" in sheet
-    assert composer.later_button.objectName() == composer.save_button.objectName() == composer.rich_button.objectName() == "flatButton"
+    assert composer.later_button.objectName() == composer.save_button.objectName() == "flatButton"
     assert composer.rich.toolbar.objectName() == "richToolbar" and composer.is_rich()
     assert composer.send_button.x() < composer.later_button.x() < composer.save_button.x()  # one row, in this order
     assert composer.send_button.y() < composer.from_box.y() < composer.to.y()  # above the fields; From is the first field

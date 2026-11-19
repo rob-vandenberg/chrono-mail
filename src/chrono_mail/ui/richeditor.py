@@ -1,6 +1,7 @@
 from html import unescape
 import mimetypes
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -8,15 +9,18 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QFont, QResizeEvent, QImage, QImageReader, QImageWriter, QKeySequence, QTextCharFormat, QTextDocument, QTextImageFormat, QTextListFormat
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QPlainTextEdit, QTextEdit, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction, QFont, QResizeEvent, QImage, QImageReader, QImageWriter, QKeySequence, QTextCharFormat, QTextDocument, QTextImageFormat, QTextList, QTextListFormat
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget
 
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
+from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.634"
+__version__ = "richeditor.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: The bar of the reference client: B, I, U and the lists as icons, on the right the three dots with Cut, Copy, Paste, Remove
+#           Format, Undo, Redo, Outdent, Indent, Insert Link and Insert Image; what only rich text can do can be greyed (D-363)
 # v4.6.634: PlainEditor: in plain text a dropped file and a pasted picture become attachments, never a path or text typed (D-353)
 # v4.6.631: with_styles_inside writes an HTML text's own style rules onto its paragraphs and text, so they reach nothing else (D-360)
 # v4.4.623: The HTML sent carries the default font and its size (D-354)
@@ -35,7 +39,7 @@ PICTURE_FILTER: str = "Pictures (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
 _QT_META: re.Pattern[str] = re.compile(r"<meta\s+name=\"qrichtext\"[^>]*>\s*", re.IGNORECASE)
 _BODY_STYLE: re.Pattern[str] = re.compile(r"<body\s+style=\"[^\"]*\"\s*>", re.IGNORECASE)
 _HREF: re.Pattern[str] = re.compile(r"href=\"([^\"]*)\"", re.IGNORECASE)
-_FORMATTING: re.Pattern[str] = re.compile(r"font-weight:\s*[6-9]00|font-style:\s*italic|text-decoration:\s*underline|<ul|<ol|<a\s|<img\s", re.IGNORECASE)
+_FORMATTING: re.Pattern[str] = re.compile(r"font-weight:\s*[6-9]00|font-style:\s*italic|text-decoration:\s*underline|<ul|<ol|<a\s|<img\s|-qt-block-indent:\s*[1-9]", re.IGNORECASE)
 
 
 def safe_link(address: str) -> bool:
@@ -66,12 +70,32 @@ def _without_foreign_pictures(html: str) -> str:
     return _IMAGE.sub(lambda match: match.group(0) if _KEPT_IMAGE.match(match.group(0)) else "", html)
 
 
+_STYLE: re.Pattern[str] = re.compile(r'style="([^"]*)"', re.IGNORECASE)
+_BLOCK_INDENT: re.Pattern[str] = re.compile(r"-qt-block-indent:\s*(\d+)", re.IGNORECASE)
+_MARGIN_LEFT: re.Pattern[str] = re.compile(r"margin-left:\s*(\d+)px", re.IGNORECASE)
+INDENT_PIXELS: int = 40  # one step of Indent, Qt's own indent width
+
+
+def _indent_as_margin(match: "re.Match[str]") -> str:
+    """Qt keeps a paragraph's indent in a style only Qt reads (-qt-block-indent): written as the left margin every reader shows."""
+    style = match.group(1)
+    found = _BLOCK_INDENT.search(style)
+    steps = min(int(found.group(1)), 20) if found is not None else 0  # a number from the text: capped
+    if steps == 0:
+        return match.group(0)
+    margin = _MARGIN_LEFT.search(style)
+    pixels = (int(margin.group(1)) if margin is not None else 0) + steps * INDENT_PIXELS
+    style = _MARGIN_LEFT.sub(f"margin-left:{pixels}px", style, count=1) if margin is not None else f"margin-left:{pixels}px; {style}"
+    return f'style="{style}"'
+
+
 def clean_html(html: str) -> str:
     """The HTML part of an outgoing message from the editor's HTML: only pictures that travel inside it (D-353), only web and mail
     links, and no editor-specific font settings on the page, so that the reader's own apply."""
     cleaned = _without_foreign_pictures(html)
     cleaned = _QT_META.sub("", cleaned)
     cleaned = _BODY_STYLE.sub("<body>", cleaned)
+    cleaned = _STYLE.sub(_indent_as_margin, cleaned)
     return _HREF.sub(lambda match: match.group(0) if safe_link(match.group(1)) else 'href=""', cleaned)
 
 
@@ -192,30 +216,39 @@ class RichEditor(QWidget):
         layout.setSpacing(0)
         self.edit = _Editor(self)
         self.edit.setAcceptRichText(True)
-        self.toolbar = QToolBar(self)
+        self.target: Callable[[], QTextEdit | QPlainTextEdit] = lambda: self.edit  # where Cut, Copy, Paste, Undo and Redo act (a message: its editor in use)
+        self.toolbar = QToolBar(self)  # the bar of the reference client (D-363); a message window puts it above its text and adds its own buttons
         self.toolbar.setObjectName("richToolbar")
-        self.bold = self._action("B", "Bold", "Ctrl+B", checkable=True)
-        self.italic = self._action("I", "Italic", "Ctrl+I", checkable=True)
-        self.underline = self._action("U", "Underline", "Ctrl+U", checkable=True)
-        self.bullets = self._action("• List", "Bulleted list", None)
-        self.numbers = self._action("1. List", "Numbered list", None)
-        self.link = self._action("Link…", "Make the selected text a link", "Ctrl+K")
-        self.plain = self._action("Clear", "Remove the formatting of the selected text", None)
-        self.picture = self._action("Picture…", "Insert a picture at the cursor", None)
-        font = QFont(self.bold.font())
-        font.setBold(True)
-        self.bold.setFont(font)
-        font = QFont(self.italic.font())
-        font.setItalic(True)
-        self.italic.setFont(font)
-        font = QFont(self.underline.font())
-        font.setUnderline(True)
-        self.underline.setFont(font)
-        for action in (self.bold, self.italic, self.underline):
+        self.bold = self._action("B", "Bold", "Ctrl+B", checkable=True, icon="format-text-bold")
+        self.italic = self._action("I", "Italic", "Ctrl+I", checkable=True, icon="format-text-italic")
+        self.underline = self._action("U", "Underline", "Ctrl+U", checkable=True, icon="format-text-underline")
+        self.bullets = self._action("Bulleted list", "Bulleted list", None, icon="format-list-unordered")
+        self.numbers = self._action("Numbered list", "Numbered list", None, icon="format-list-ordered")
+        self.cut = self._action("Cut", "Cut the selected text", None, icon="edit-cut")
+        self.copy = self._action("Copy", "Copy the selected text", None, icon="edit-copy")
+        self.paste = self._action("Paste", "Paste at the cursor", None, icon="edit-paste")
+        self.plain = self._action("Remove Format", "Remove the formatting of the selected text", None, icon="edit-clear-all")
+        self.undo = self._action("Undo", "Undo the last change", None, icon="edit-undo")
+        self.redo = self._action("Redo", "Redo what was undone", None, icon="edit-redo")
+        self.outdent = self._action("Outdent", "Move the paragraph to the left", None, icon="format-indent-less")
+        self.indent = self._action("Indent", "Move the paragraph to the right", None, icon="format-indent-more")
+        self.link = self._action("Insert Link", "Make the selected text a link", "Ctrl+K", icon="insert-link")
+        self.picture = self._action("Insert Image", "Insert a picture at the cursor", None, icon="insert-image")
+        self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.bullets, self.numbers, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
+        for action in (self.bold, self.italic, self.underline, self.bullets, self.numbers):
             self.toolbar.addAction(action)
-        self.toolbar.addSeparator()
-        for action in (self.bullets, self.numbers, self.link, self.picture, self.plain):
-            self.toolbar.addAction(action)
+        spacer = QWidget(self.toolbar)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.toolbar.addWidget(spacer)
+        self.more_menu = QMenu(self.toolbar)  # the three dots: what does not fit on the bar (Q71); it belongs to the bar, as its button
+        for action in (self.cut, self.copy, self.paste, self.plain, self.undo, self.redo, self.outdent, self.indent, self.link, self.picture):
+            self.more_menu.addAction(action)
+        self.more = QToolButton(self.toolbar)
+        self.more.setIcon(theme_icon("overflow-menu"))
+        self.more.setToolTip("More")
+        self.more.setMenu(self.more_menu)
+        self.more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.toolbar.addWidget(self.more)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.edit, 1)
         self.bold.triggered.connect(self._toggle_bold)
@@ -223,13 +256,20 @@ class RichEditor(QWidget):
         self.underline.triggered.connect(self._toggle_underline)
         self.bullets.triggered.connect(self._bullets)
         self.numbers.triggered.connect(self._numbers)
+        self.cut.triggered.connect(lambda: self.target().cut())
+        self.copy.triggered.connect(lambda: self.target().copy())
+        self.paste.triggered.connect(lambda: self.target().paste())
+        self.undo.triggered.connect(lambda: self.target().undo())
+        self.redo.triggered.connect(lambda: self.target().redo())
+        self.outdent.triggered.connect(lambda: self._shift(-1))
+        self.indent.triggered.connect(lambda: self._shift(1))
         self.link.triggered.connect(self._ask_link)
         self.plain.triggered.connect(self._clear_formatting)
         self.picture.triggered.connect(self._choose_picture)
         self.edit.currentCharFormatChanged.connect(self._follow_format)
 
-    def _action(self, text: str, tip: str, shortcut: str | None, checkable: bool = False) -> QAction:
-        action = QAction(text, self)
+    def _action(self, text: str, tip: str, shortcut: str | None, checkable: bool = False, icon: str = "") -> QAction:
+        action = QAction(theme_icon(icon), text, self.toolbar) if icon else QAction(text, self.toolbar)
         action.setToolTip(tip)
         action.setCheckable(checkable)
         if shortcut:
@@ -398,6 +438,46 @@ class RichEditor(QWidget):
 
     def _numbers(self) -> None:
         self._list(QTextListFormat.Style.ListDecimal)
+
+    def set_formatting_enabled(self, on: bool) -> None:
+        """Plain text: what only rich text can do is greyed, never hidden (OR-15)."""
+        for action in self.formatting:
+            action.setEnabled(on)
+
+    def _shift(self, step: int) -> None:
+        """Indent or Outdent: the paragraph one step to the right or left, never past the margin; in a list only this item, which joins
+        the list of its new level just above it, or starts one there (sent as a list inside the list)."""
+        cursor = self.edit.textCursor()
+        current = cursor.currentList()
+        if current is not None:
+            level = max(1, current.format().indent() + step)
+            if level == current.format().indent():
+                return
+            block = cursor.block()
+            joined: QTextList | None = None
+            above = block.previous()
+            while above.isValid() and above.textList() is not None:
+                found = above.textList()
+                if found.format().indent() == level:
+                    joined = found
+                    break
+                if found.format().indent() < level:
+                    break
+                above = above.previous()
+            list_format = QTextListFormat(current.format())  # read before the item leaves: a list left empty is gone
+            list_format.setIndent(level)
+            current.remove(block)
+            block_format = cursor.blockFormat()
+            block_format.setIndent(0)  # Qt gives an item that leaves its list that list's indent as its own: it moves by its list alone
+            cursor.setBlockFormat(block_format)
+            if joined is not None:
+                joined.add(block)
+            else:
+                cursor.createList(list_format)
+            return
+        block_format = cursor.blockFormat()
+        block_format.setIndent(max(0, block_format.indent() + step))
+        cursor.setBlockFormat(block_format)
 
     def _clear_formatting(self) -> None:
         cursor = self.edit.textCursor()

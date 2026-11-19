@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -41,7 +42,7 @@ from chrono_mail.ui.addresscompleter import AddressCompleter
 from chrono_mail.ui import scale, theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red_style
-from chrono_mail.ui.icons import application_icon
+from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.mime.pictures import data_address, pictures_out_of
 from chrono_mail.ui.richeditor import Picture, PlainEditor, RichEditor, png_picture, with_styles_inside
@@ -52,9 +53,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.6.634"
+__version__ = "composer.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: The bar of the reference client above the text, in rich and plain text: the paperclip, Signature (the signature, replacing
+#           the one there), Template (added at the cursor, also Ctrl+1 to Ctrl+7), B, I, U, the lists; the three dots with Save and Format;
+#           in plain text what only rich text can do is greyed; Attach a file…, Plain text and Signature below the text are gone (D-363)
 # v4.6.634: In plain text a dropped file and a pasted picture become attachments (D-353)
 # v4.6.633: A reply switched to plain text has no pictures at all, its own neither, also as a draft opened again (D-353)
 # v4.6.631: A reply or forward quotes the original with its own style rules, which reach the original only; the own lines around
@@ -284,15 +288,15 @@ class ComposeWindow(QMainWindow):
         self.editor_stack = QStackedWidget(central)
         self.editor_stack.addWidget(self.body)
         self.editor_stack.addWidget(self.rich)
+        self._build_bar()
+        layout.addWidget(self.rich.toolbar)  # above the text in rich and in plain text (D-363)
         layout.addWidget(self.editor_stack, 1)
 
         files = QHBoxLayout()
         self.attachments = QListWidget(central)
         self.attachments.setMaximumHeight(70)
         side = QVBoxLayout()
-        self.attach_button = QPushButton("Attach a file…", central)
         self.remove_button = QPushButton("Remove", central)
-        side.addWidget(self.attach_button)
         side.addWidget(self.remove_button)
         side.addStretch(1)
         files.addWidget(self.attachments, 1)
@@ -304,25 +308,6 @@ class ComposeWindow(QMainWindow):
 
         buttons = QHBoxLayout()
         self.status = QLabel("", central)
-        self.rich_button = QPushButton("Plain text", central)  # shows the way of writing; its menu chooses the other
-        self.rich_button.setToolTip("Rich text: bold, italic, lists and links, sent as text and as HTML. Plain text: text only.")
-        self.rich_button.setObjectName("flatButton")
-        mode_menu = QMenu(self.rich_button)
-        modes = QActionGroup(mode_menu)
-        self.rich_action = QAction("Rich text", modes)
-        self.plain_action = QAction("Plain text", modes)
-        for action, rich_wanted in ((self.rich_action, True), (self.plain_action, False)):
-            action.setCheckable(True)
-            action.triggered.connect(lambda checked=False, wanted=rich_wanted: self._mode_chosen(wanted))
-            mode_menu.addAction(action)
-        self.plain_action.setChecked(True)
-        self.rich_button.setMenu(mode_menu)
-        buttons.addWidget(self.rich_button)
-        self.signature_button = QPushButton("Signature", central)  # every text of the library, with its key (B-24, D-358)
-        self.signature_button.setObjectName("flatButton")
-        self.signature_button.setMenu(QMenu(self.signature_button))
-        self.signature_button.setEnabled(False)
-        buttons.addWidget(self.signature_button)
         buttons.addWidget(self.status, 1)
         layout.addLayout(buttons)
         self.setCentralWidget(central)
@@ -391,10 +376,10 @@ class ComposeWindow(QMainWindow):
             self._created_here = True
             self._saved_snapshot = ()
 
-        for place in range(KEYED):  # Ctrl+1 to Ctrl+7: the first seven texts of the library as the signature (B-24, D-358)
-            keyed = QAction(f"Signature {place + 1}", self)
+        for place in range(KEYED):  # Ctrl+1 to Ctrl+7: the first seven texts of the library added at the cursor, as Template (D-358, D-363)
+            keyed = QAction(f"Template {place + 1}", self)
             keyed.setShortcut(QKeySequence(f"Ctrl+{place + 1}"))
-            keyed.triggered.connect(lambda checked=False, chosen=place: self._signature_by_key(chosen))
+            keyed.triggered.connect(lambda checked=False, chosen=place: self._template_by_key(chosen))
             self.addAction(keyed)
         for text, shortcut, handler in (
             ("Send", "Ctrl+Return", self._send_clicked), ("Send", "Ctrl+Enter", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked), ("Close", "Esc", self.close),
@@ -408,7 +393,7 @@ class ComposeWindow(QMainWindow):
         self.send_button.clicked.connect(self._send_clicked)
         self.keep_button.clicked.connect(self._keep_clicked)
         self.save_button.clicked.connect(self._save_clicked)
-        self.attach_button.clicked.connect(self._choose_files)
+        self.attach_action.triggered.connect(self._choose_files)
         self.remove_button.clicked.connect(self._remove_selected)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self._autosave)
@@ -447,20 +432,69 @@ class ComposeWindow(QMainWindow):
         """The templates and signatures could not be read: said, so the person knows why none was put in."""
         self._say(f"Your templates and signatures could not be read: {error}")
 
-    def _fill_signature_menu(self) -> None:
-        menu = self.signature_button.menu()
-        assert menu is not None
-        menu.clear()
-        for place, entry in enumerate(self.texts.library):
-            action = menu.addAction(entry.name + (f"\tCtrl+{place + 1}" if place < KEYED else ""))
-            action.triggered.connect(lambda checked=False, chosen=entry.item_id: self.texts.put(chosen))
-        self.signature_button.setEnabled(bool(self.texts.library))
-        self.signature_button.setToolTip("Put in a signature" if self.texts.library else "Make templates and signatures in Settings > Templates and Signatures")
+    def _build_bar(self) -> None:
+        """The bar of the reference client (D-363): in front of the editor's own buttons the paperclip, Signature and Template; in the
+        three dots Save and Format above the editing."""
+        bar = self.rich.toolbar
+        first = bar.actions()[0]
+        self.attach_action = QAction(theme_icon("mail-attachment"), "Attach a file", bar)
+        self.attach_action.setToolTip("Attach a file")
+        bar.insertAction(first, self.attach_action)
+        self.signature_button = self._list_button("draw-freehand", "Signature")
+        self.template_button = self._list_button("quick", "Template")
+        bar.insertWidget(first, self.signature_button)
+        bar.insertWidget(first, self.template_button)
+        bar.insertSeparator(first)
+        menu = self.rich.more_menu
+        top = menu.actions()[0]
+        self.save_action = QAction(theme_icon("document-save"), "Save", bar)
+        self.save_action.triggered.connect(lambda: (self.keep_button if self._editing is not None else self.save_button).click())  # as the window's own save button
+        menu.insertAction(top, self.save_action)
+        format_menu = QMenu("Format", menu)
+        modes = QActionGroup(format_menu)
+        self.rich_action = QAction("Rich text", modes)
+        self.plain_action = QAction("Plain text", modes)
+        for action, rich_wanted in ((self.rich_action, True), (self.plain_action, False)):
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked=False, wanted=rich_wanted: self._mode_chosen(wanted))
+            format_menu.addAction(action)
+        self.plain_action.setChecked(True)
+        menu.insertMenu(top, format_menu)
+        menu.insertSeparator(top)
+        self.rich.target = lambda: self.rich.edit if self.is_rich() else self.body  # Cut, Copy, Paste, Undo and Redo act on the text in use
+        self.rich.set_formatting_enabled(False)  # a new window starts in plain text
 
-    def _signature_by_key(self, place: int) -> None:
+    def _list_button(self, icon: str, name: str) -> QToolButton:
+        button = QToolButton(self.rich.toolbar)
+        button.setIcon(theme_icon(icon))
+        button.setText(name)
+        button.setMenu(QMenu(button))
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setEnabled(False)
+        return button
+
+    def _fill_signature_menu(self) -> None:
+        """Signature and Template show the same list, every text of the library; Signature puts the text in as the signature (replacing the
+        one there), Template adds it at the cursor (D-358, D-363)."""
+        for button, keys in ((self.signature_button, False), (self.template_button, True)):
+            menu = button.menu()
+            assert menu is not None
+            menu.clear()
+            for place, entry in enumerate(self.texts.library):
+                action = menu.addAction(entry.name + (f"\tCtrl+{place + 1}" if keys and place < KEYED else ""))
+                if keys:
+                    action.triggered.connect(lambda checked=False, chosen=entry.item_id: self.texts.add_at_cursor(chosen))
+                else:
+                    action.triggered.connect(lambda checked=False, chosen=entry.item_id: self.texts.put(chosen))
+            button.setEnabled(bool(self.texts.library))
+        none = "Make templates and signatures in Settings > Templates and Signatures"
+        self.signature_button.setToolTip("Signature: put one in, in place of the one there" if self.texts.library else none)
+        self.template_button.setToolTip("Template: add one at the cursor" if self.texts.library else none)
+
+    def _template_by_key(self, place: int) -> None:
         entry = self.texts.keyed(place)
         if entry is not None:
-            self.texts.put(entry.item_id)
+            self.texts.add_at_cursor(entry.item_id)
 
     def _account_changed(self) -> None:
         """Another sender was chosen: a default signature follows it; one put in by key stays (B-24, D-358)."""
@@ -518,8 +552,8 @@ class ComposeWindow(QMainWindow):
     def _show_mode(self) -> None:
         self._show_original_names()
         rich = self.is_rich()
-        self.rich_button.setText("Rich text" if rich else "Plain text")
         (self.rich_action if rich else self.plain_action).setChecked(True)
+        self.rich.set_formatting_enabled(rich)  # what only rich text can do is greyed in plain text (OR-15)
 
     def _mode_chosen(self, rich: bool) -> None:
         """Rich text or Plain text was chosen in the menu of the button."""
@@ -847,7 +881,7 @@ class ComposeWindow(QMainWindow):
 
     def _set_sending(self, sending: bool) -> None:
         self._sending = sending
-        for widget in (self.keep_button, self.send_button, self.later_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.editor_stack, self.rich_button, self.from_box, self.attach_button, self.remove_button):
+        for widget in (self.keep_button, self.send_button, self.later_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.editor_stack, self.rich.toolbar, self.from_box, self.remove_button):
             widget.setEnabled(not sending)
         self._say("Sending…" if sending else "")
         if self._editing is not None:

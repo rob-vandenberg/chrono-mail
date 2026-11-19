@@ -20,9 +20,10 @@ from chrono_mail.engine.commands_signatures import SnippetText
 from chrono_mail.ui.richeditor import PICTURE_MARK, RichEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "composertexts.py 4.5.628"
+__version__ = "composertexts.py 4.6.639"
 
 # --- Version history ----------------------------------------------------
+# v4.6.639: add_at_cursor: Template adds a text where the cursor stands, nothing replaced (D-358, D-363)
 # v4.5.628: A swap replaces only the signature: in plain text it lies between marks Qt moves along as the person types
 # v4.5.626: Initial version: the account's template and signature when a message opens, the keys, the From swap (B-24, D-358)
 
@@ -132,6 +133,22 @@ class TextsInMessage:
         text = plain_of(entry.html)
         body = self.body.toPlainText()
         self.body.setPlainText(f"{body.rstrip(chr(10))}\n\n{text}\n" if self.writing_below and self.kind != "new" else f"{text}\n{body}")
+
+    def add_at_cursor(self, item_id: str) -> None:
+        """Template: this text added where the cursor stands; nothing is replaced, the signature stays as it is (D-358, D-363)."""
+        entry = self.text(item_id)
+        if entry is None:
+            return
+        if self.is_rich():
+            cursor = self.rich.edit.textCursor()
+            cursor.insertHtml(self.rich.absorb(entry.html))
+            self.rich.edit.setTextCursor(cursor)  # the cursor after the text added
+            self.rich.edit.setFocus()
+        else:
+            cursor = self.body.textCursor()
+            cursor.insertText(plain_of(entry.html))
+            self.body.setTextCursor(cursor)
+            self.body.setFocus()
 
     # --- the signature ---------------------------------------------------------------------------------
 
