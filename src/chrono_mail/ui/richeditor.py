@@ -21,9 +21,10 @@ from chrono_mail.ui.fontstyle import FontStyle
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.643"
+__version__ = "richeditor.py 4.6.644"
 
 # --- Version history ----------------------------------------------------
+# v4.6.644: Ctrl+B, Ctrl+I, Ctrl+U and Ctrl+K act while typing: their actions are also the text area's (D-363)
 # v4.6.643: The smiley after Alignment: the emoji panel, the emoji put at the cursor in rich and in plain text (D-363)
 # v4.6.642: The list buttons' arrows choose the style (Disc, Circle, Square; Decimal, Lower and Upper Latin, Lower and Upper Roman);
 #           Alignment after the lists: Left Align, Center, Right Align, Justify (D-363)
@@ -314,6 +315,8 @@ class RichEditor(QWidget):
         self.toolbar.addWidget(self.more)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.edit, 1)
+        for keyed in (self.bold, self.italic, self.underline, self.link):  # their keys act while typing: the text has the focus, never the bar
+            self.edit.addAction(keyed)
         self.bold.triggered.connect(self._toggle_bold)
         self.italic.triggered.connect(self._toggle_italic)
         self.underline.triggered.connect(self._toggle_underline)

@@ -1,6 +1,8 @@
+import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPushButton, QToolButton
+from PySide6.QtWidgets import QInputDialog, QPushButton, QToolButton
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.composer import ComposeWindow
@@ -10,9 +12,10 @@ from tests.ui.test_ui_signatures import close, composer, keep, pick_signature
 from tests.ui.world import World, add_window
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_compose_toolbar.py 4.6.643"
+__version__ = "test_ui_compose_toolbar.py 4.6.644"
 
 # --- Version history ----------------------------------------------------
+# v4.6.644: Ctrl+B, Ctrl+I, Ctrl+U and Ctrl+K act while typing in rich text, not in plain text
 # v4.6.643: the smiley (Emoji) stands after Alignment
 # v4.6.642: Alignment stands after the lists
 # v4.6.641: Paint Format stands between U and A
@@ -189,4 +192,31 @@ def test_indent_in_a_list_moves_only_that_item_and_outdent_brings_it_back(world:
     assert sent.index("<ul") < sent.index("First") < sent.index("<ul", sent.index("First")) < sent.index("Second")  # a list inside the list
     window.rich.outdent.trigger()
     assert document.findBlockByNumber(1).textList() is document.findBlockByNumber(0).textList()  # back in the first list
+    close(window)
+
+
+def test_ctrl_b_i_u_and_k_act_while_typing_and_not_in_plain_text(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+
+    def cancelled(*args: object) -> tuple[str, bool]:
+        asked.append("link")
+        return "", False
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(cancelled))
+    window = composer(world, qtbot)
+    window.activateWindow()
+    qtbot.waitActive(window)
+    window.body.setFocus()
+    for key in (Qt.Key.Key_B, Qt.Key.Key_K):
+        QTest.keyClick(window.body, key, Qt.KeyboardModifier.ControlModifier)
+    assert asked == [] and not window.rich.bold.isChecked()  # plain text: the keys do nothing
+    window.rich_action.trigger()
+    window.rich.edit.setFocus()
+    for key in (Qt.Key.Key_B, Qt.Key.Key_I, Qt.Key.Key_U):
+        QTest.keyClick(window.rich.edit, key, Qt.KeyboardModifier.ControlModifier)
+    QTest.keyClicks(window.rich.edit, "Typed")
+    typed = window.rich.edit.textCursor().charFormat()
+    assert typed.fontWeight() == 700 and typed.fontItalic() and typed.fontUnderline()
+    QTest.keyClick(window.rich.edit, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
+    assert asked == ["link"]
     close(window)
