@@ -4566,3 +4566,6 @@ Tests: tests/ui/test_ui_compose_emoji.py (5, new; fails on 4.6.642); the bar ord
 ## 2026-11-19, 4.6.644: Ctrl+B, Ctrl+I, Ctrl+U and Ctrl+K act while typing (D-363)
 The owner (Q87, Proceed of 2026-11-19). Found while building 4.6.639, already on 4.6.638: the four actions were only the bar's, and their keys act where the focus is, which is never the bar while typing. They are now also the text area's (richeditor), each window on its own text; greyed in plain text, so the keys do nothing there.
 Tests: one new in tests/ui/test_ui_compose_toolbar.py with the real keys in an active window (fails on 4.6.643); 91 related tests pass; Pyrefly 0 on the program (Linux, win32); layer check passes. One review round, nothing real.
+
+## 2026-11-19, 4.6.645: the window size test registers the New message window with add_window
+tests/ui/test_ui_windowstate.py::test_a_composer_remembers_its_size registered the window, which deletes itself when it closes, with plain qtbot.addWidget: "already deleted" at the end of the test (since before 4.6.637). Now add_window. The Settings window's smallest width (933 pixels since 4.5.626, the Templates and Signatures page): the owner, "THIS ISSUE IS CLOSED", "THE CODE IS CORRECT"; the page stays as it is, and the two tests that expect at most 800 pixels stay failing. Test change only: no reviewers.

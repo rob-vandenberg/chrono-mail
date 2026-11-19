@@ -10,12 +10,13 @@ from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from chrono_mail.ui.windowstate import reachable, restore_geometry, save_geometry
 from tests.ui.test_ui_reader import shown
-from tests.ui.world import World, dialogs, world  # noqa: F401
+from tests.ui.world import World, add_window, dialogs, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_windowstate.py 1.9.264"
+__version__ = "test_ui_windowstate.py 4.6.645"
 
 # --- Version history ----------------------------------------------------
+# v4.6.645: the New message window, which deletes itself when it closes, is registered with add_window
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v0.0.83: Initial tests of the remembered size and position of the windows
 
@@ -83,7 +84,7 @@ def test_a_composer_remembers_its_size(world: World, qtbot: QtBot, tmp_path: Pat
 
     def make() -> ComposeWindow:
         window = ComposeWindow(world.window.backend, world.window.mail_state.mail_accounts(), world.account_id, settings=settings)  # noqa: SLF001
-        qtbot.addWidget(window)
+        add_window(qtbot, window)  # the window deletes itself when it closes
         return window
 
     window = make()
