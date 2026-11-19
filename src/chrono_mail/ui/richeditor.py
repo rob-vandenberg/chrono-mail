@@ -20,9 +20,11 @@ from chrono_mail.ui.fontstyle import FontStyle
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.641"
+__version__ = "richeditor.py 4.6.642"
 
 # --- Version history ----------------------------------------------------
+# v4.6.642: The list buttons' arrows choose the style (Disc, Circle, Square; Decimal, Lower and Upper Latin, Lower and Upper Roman);
+#           Alignment after the lists: Left Align, Center, Right Align, Justify (D-363)
 # v4.6.641: Paint Format after U: the format of the selected text given to the next text selected with the mouse, then off (D-363)
 # v4.6.640: Font Style (the A) after U: the font, size and colours of the selected text; a font, size or colour counts as formatting (D-363)
 # v4.6.639: The bar of the reference client: B, I, U and the lists as icons, on the right the three dots with Cut, Copy, Paste, Remove
@@ -76,6 +78,18 @@ def _without_foreign_pictures(html: str) -> str:
     return _IMAGE.sub(lambda match: match.group(0) if _KEPT_IMAGE.match(match.group(0)) else "", html)
 
 
+BULLET_STYLES: tuple[tuple[str, QTextListFormat.Style], ...] = (
+    ("Disc", QTextListFormat.Style.ListDisc), ("Circle", QTextListFormat.Style.ListCircle), ("Square", QTextListFormat.Style.ListSquare),
+)
+NUMBER_STYLES: tuple[tuple[str, QTextListFormat.Style], ...] = (
+    ("Decimal", QTextListFormat.Style.ListDecimal), ("Lower Latin", QTextListFormat.Style.ListLowerAlpha),
+    ("Upper Latin", QTextListFormat.Style.ListUpperAlpha), ("Lower Roman", QTextListFormat.Style.ListLowerRoman),
+    ("Upper Roman", QTextListFormat.Style.ListUpperRoman),
+)
+ALIGNMENTS: tuple[tuple[str, str, Qt.AlignmentFlag], ...] = (
+    ("Left Align", "format-justify-left", Qt.AlignmentFlag.AlignLeft), ("Center", "format-justify-center", Qt.AlignmentFlag.AlignHCenter),
+    ("Right Align", "format-justify-right", Qt.AlignmentFlag.AlignRight), ("Justify", "format-justify-fill", Qt.AlignmentFlag.AlignJustify),
+)
 PAINTED: tuple[QTextFormat.Property, ...] = (  # what Paint Format copies: the look of the text, never its link
     QTextFormat.Property.FontFamilies, QTextFormat.Property.FontPointSize, QTextFormat.Property.FontWeight, QTextFormat.Property.FontItalic,
     QTextFormat.Property.FontUnderline, QTextFormat.Property.TextUnderlineStyle, QTextFormat.Property.ForegroundBrush,
@@ -254,13 +268,34 @@ class RichEditor(QWidget):
         self.indent = self._action("Indent", "Move the paragraph to the right", None, icon="format-indent-more")
         self.link = self._action("Insert Link", "Make the selected text a link", "Ctrl+K", icon="insert-link")
         self.picture = self._action("Insert Image", "Insert a picture at the cursor", None, icon="insert-image")
-        self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.paint_format, self.bullets, self.numbers, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
+        self.align = self._action("Alignment", "Alignment of the paragraph", None, icon="format-justify-left")
+        self.formatting: tuple[QAction, ...] = (self.bold, self.italic, self.underline, self.paint_format, self.bullets, self.numbers, self.align, self.plain, self.outdent, self.indent, self.link, self.picture)  # only for rich text
         for action in (self.bold, self.italic, self.underline, self.paint_format):
             self.toolbar.addAction(action)
         self.font_style = FontStyle(self.edit, self.toolbar)  # the A: font, size and colours (D-363)
         self.toolbar.addWidget(self.font_style)
-        for action in (self.bullets, self.numbers):
-            self.toolbar.addAction(action)
+        self.list_styles: dict[QAction, QTextListFormat.Style] = {}  # each style of the two list buttons' menus
+        for button, styles in ((self.bullets, BULLET_STYLES), (self.numbers, NUMBER_STYLES)):
+            menu = QMenu(self.toolbar)
+            for name, style in styles:
+                choice = menu.addAction(name)
+                choice.triggered.connect(lambda checked=False, chosen=style: self._list_style(chosen))
+                self.list_styles[choice] = style
+            button.setMenu(menu)
+            self.toolbar.addAction(button)  # the button makes or ends the list, its arrow chooses the style
+        align_menu = QMenu(self.toolbar)
+        self.alignments: dict[QAction, Qt.AlignmentFlag] = {}
+        for name, icon, alignment in ALIGNMENTS:
+            choice = align_menu.addAction(theme_icon(icon), name)
+            choice.setCheckable(True)
+            choice.triggered.connect(lambda checked=False, chosen=alignment: self._align(chosen))
+            self.alignments[choice] = alignment
+        align_menu.aboutToShow.connect(self._show_alignment)
+        self.align.setMenu(align_menu)
+        self.toolbar.addAction(self.align)
+        align_button = self.toolbar.widgetForAction(self.align)
+        if isinstance(align_button, QToolButton):
+            align_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)  # the button opens its menu
         spacer = QWidget(self.toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toolbar.addWidget(spacer)
@@ -459,10 +494,34 @@ class RichEditor(QWidget):
         cursor.createList(list_format)
 
     def _bullets(self) -> None:
-        self._list(QTextListFormat.Style.ListDisc)
+        self._toggle_list(BULLET_STYLES)
 
     def _numbers(self) -> None:
-        self._list(QTextListFormat.Style.ListDecimal)
+        self._toggle_list(NUMBER_STYLES)
+
+    def _toggle_list(self, styles: tuple[tuple[str, QTextListFormat.Style], ...]) -> None:
+        """The list button: a list of its kind ends; otherwise one starts (a list of the other kind becomes this kind) in its first style."""
+        current = self.edit.textCursor().currentList()
+        kinds = [style for _, style in styles]
+        self._list(current.format().style() if current is not None and current.format().style() in kinds else kinds[0])
+
+    def _list_style(self, style: QTextListFormat.Style) -> None:
+        """A style from a list button's arrow: the list the cursor is in takes it; elsewhere a list in that style starts."""
+        current = self.edit.textCursor().currentList()
+        if current is None:
+            self._list(style)
+            return
+        list_format = current.format()
+        list_format.setStyle(style)
+        current.setFormat(list_format)
+
+    def _align(self, alignment: Qt.AlignmentFlag) -> None:
+        self.edit.setAlignment(alignment)  # the paragraph, or every paragraph of the selection
+
+    def _show_alignment(self) -> None:
+        here = self.edit.alignment()
+        for choice, alignment in self.alignments.items():
+            choice.setChecked(bool(here & alignment))
 
     def _copy_format(self, on: bool) -> None:
         """Paint Format pressed: the format of the selected text (or at the cursor) is copied; pressed again, nothing is given."""
