@@ -7,9 +7,10 @@ from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleO
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountrows.py 4.4.608"
+__version__ = "accountrows.py 4.6.637"
 
 # --- Version history ----------------------------------------------------
+# v4.6.637: the reads of a style option's fields say why they use getattr (D-175)
 # v4.4.608: Initial: an account in Settings > Accounts on two lines: its name and address, below it smaller and grey what it holds (D-346)
 
 SECOND_LINE_ROLE: int = 257  # the row's second line: what the account holds, "Mail (POP3)", "Google Calendar" (D-346)
@@ -18,7 +19,7 @@ SECOND_LINE_SCALE: float = 0.85  # the second line's font, as part of the first'
 
 def _field[T](option: QStyleOptionViewItem, name: str, kind: type[T]) -> T:
     """A field of a style option; getattr: PySide's stubs give the fields of a style option no type."""
-    value: object = getattr(option, name)
+    value: object = getattr(option, name)  # getattr: PySide's stubs give a style option's fields no type
     if not isinstance(value, kind):
         raise TypeError(f"the style option's {name} is not a {kind.__name__}")
     return value
@@ -56,7 +57,7 @@ class TwoLineRows(QStyledItemDelegate):
         setattr(background, "text", "")  # the background, the selection and the focus only: the two lines are painted below
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, background, painter, widget)
         rect = _field(option, "rect", QRect).adjusted(wpx(6), wpx(3), -wpx(6), -wpx(3))
-        state: object = getattr(option, "state")
+        state: object = getattr(option, "state")  # getattr: PySide's stubs give a style option's fields no type
         selected = isinstance(state, QStyle.StateFlag) and bool(state & QStyle.StateFlag.State_Selected)
         palette = _field(option, "palette", QPalette)
         font = _field(option, "font", QFont)
