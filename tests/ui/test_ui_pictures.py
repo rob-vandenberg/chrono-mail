@@ -17,9 +17,10 @@ from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, add_window, answer_open_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_pictures.py 4.6.631"
+__version__ = "test_ui_pictures.py 4.6.633"
 
 # --- Version history ----------------------------------------------------
+# v4.6.633: A reply switched to plain text has no pictures at all, also as a draft opened again; the question says so (D-353)
 # v4.6.631: The answer gives Chrono Mail's own lines and the original apart (D-360)
 # v4.4.622: A reply in rich text shows the quoted picture; a plain-text forward names the original's pictures
 # v4.4.621: Initial tests: pictures dragged, pasted or chosen into the text, sent unaltered; a dropped file attached (D-353)
@@ -193,7 +194,7 @@ def test_a_forward_in_plain_text_lists_the_pictures_of_the_original_as_attachmen
     assert picture_attachments(switched) == [data_address("image/png", "garden.png", png)] and switched.include_original.text().endswith("(plan.pdf)")
 
 
-def test_a_reply_switched_to_plain_text_leaves_the_quoted_pictures_out_but_keeps_its_own(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_reply_switched_to_plain_text_has_no_pictures_at_all_its_own_neither(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     png = picture_file(tmp_path, "garden.png").read_bytes()
     window = rich_answer(world, qtbot, answer("reply", png))
     window.rich.edit.moveCursor(window.rich.edit.textCursor().MoveOperation.Start)
@@ -201,4 +202,33 @@ def test_a_reply_switched_to_plain_text_leaves_the_quoted_pictures_out_but_keeps
     drop_files(window.rich, mine)
     yes_to_questions(monkeypatch)
     window.plain_action.trigger()
-    assert picture_attachments(window) == [data_address("image/png", "mine.png", mine.read_bytes())]
+    assert picture_attachments(window) == []  # the owner reversed D-353's "keeps its own"
+
+
+def test_a_reply_saved_as_a_draft_and_switched_to_plain_text_has_no_pictures(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    png = picture_file(tmp_path, "garden.png").read_bytes()
+    window = rich_answer(world, qtbot, answer("reply", png))
+    saved = world.call("draft.save", account=world.account_id, subject="Re: Our garden", body=window.rich.toPlainText(), html=window.rich.outgoing_html(), kind="reply")
+    opened = world.call("draft.open", account=world.account_id, message=getattr(saved, "message_id"))  # getattr: the test reads the answer as given
+    again = ComposeWindow(world.backend, [account for account in world.call("account.list") if isinstance(account, AccountSummary)], world.account_id,
+                          opened, None, (str(getattr(saved, "folder")), str(getattr(saved, "message_id"))))  # type: ignore[arg-type]  # getattr: as the program opens a draft
+    add_window(qtbot, again)
+    again.show()
+    assert again.is_rich() and again.rich.pictures_in_text()
+    yes_to_questions(monkeypatch)
+    again.plain_action.trigger()
+    assert picture_attachments(again) == []
+
+
+def test_the_question_of_a_reply_says_its_pictures_are_left_out(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    png = picture_file(tmp_path, "garden.png").read_bytes()
+    window = rich_answer(world, qtbot, answer("reply", png))
+    asked: list[str] = []
+
+    def no(parent: object, title: str, text: str, *rest: object) -> QMessageBox.StandardButton:
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", no)
+    window.plain_action.trigger()
+    assert asked and "The pictures are left out." in asked[0] and "attachments" not in asked[0] and window.is_rich()

@@ -53,9 +53,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.6.631"
+__version__ = "composer.py 4.6.633"
 
 # --- Version history ----------------------------------------------------
+# v4.6.633: A reply switched to plain text has no pictures at all, its own neither, also as a draft opened again (D-353)
 # v4.6.631: A reply or forward quotes the original with its own style rules, which reach the original only; the own lines around
 #           it have no space above or below (D-360)
 # v4.5.628: A text that cannot be read is left out of the keys and the Signature button (D-358)
@@ -365,7 +366,6 @@ class ComposeWindow(QMainWindow):
             own = _paragraphs_of("\n")
             quoted = quote_html(self._kind, answered.quote_intro or "", with_styles_inside(original))  # its rules reach only itself (D-360)
             self.set_rich(True, quoted + own if below else own + quoted)
-            self._quoted_pictures = set(self.rich.pictures)  # the own part has none: these are the original's
             self.rich.edit.moveCursor(self.rich.edit.textCursor().MoveOperation.End if below else self.rich.edit.textCursor().MoveOperation.Start)
         elif rich:
             self.set_rich(True)
@@ -490,9 +490,8 @@ class ComposeWindow(QMainWindow):
                 self.rich.setPlainText(self.body.toPlainText())
             self.editor_stack.setCurrentWidget(self.rich)
         else:
-            answering = self._kind in ("reply", "reply_all")
-            for address, picture in self.rich.pictures_in_text().items():  # nothing put in is lost: the pictures become attachments (D-353)
-                if not (answering and address in self._quoted_pictures):  # the quoted original's pictures: in a plain reply they go (the owner)
+            if self._kind not in ("reply", "reply_all"):  # a reply in plain text has no pictures at all, its own neither (the owner, D-353)
+                for picture in self.rich.pictures_in_text().values():  # a new message or forward: the pictures become attachments
                     self._add_picture(picture)
             self.body.setPlainText(self.rich.toPlainText())
             self.editor_stack.setCurrentWidget(self.body)
@@ -502,7 +501,6 @@ class ComposeWindow(QMainWindow):
         (self.rich if on else self.body).setFocus()
 
     _original_names: tuple[str, ...] = ()  # a forward: the original's attachments (its pictures stand in the text or in the attachment list)
-    _quoted_pictures: set[str] = set()  # the editor's pictures that came with the quoted original  # noqa: RUF012 - replaced, never changed in place
 
     def _show_original_names(self) -> None:
         """What a forward takes along, named on its tick box."""
@@ -524,7 +522,8 @@ class ComposeWindow(QMainWindow):
     def _mode_chosen(self, rich: bool) -> None:
         """Rich text or Plain text was chosen in the menu of the button."""
         if not rich and self.is_rich() and self.rich.has_formatting():
-            pictures = " The pictures become attachments." if self.rich.pictures_in_text() else ""
+            left = " The pictures are left out." if self._kind in ("reply", "reply_all") else " The pictures become attachments."
+            pictures = left if self.rich.pictures_in_text() else ""
             answer = QMessageBox.question(self, "Plain text", f"Changing to plain text removes the formatting (bold, lists, links).{pictures} Continue?")
             if answer != QMessageBox.StandardButton.Yes:
                 self._show_mode()
