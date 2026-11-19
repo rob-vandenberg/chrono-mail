@@ -17,9 +17,10 @@ from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, add_window, answer_open_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_pictures.py 4.6.633"
+__version__ = "test_ui_pictures.py 4.6.634"
 
 # --- Version history ----------------------------------------------------
+# v4.6.634: In plain text a dropped file and a pasted picture become attachments, nothing typed (D-353)
 # v4.6.633: A reply switched to plain text has no pictures at all, also as a draft opened again; the question says so (D-353)
 # v4.6.631: The answer gives Chrono Mail's own lines and the original apart (D-360)
 # v4.4.622: A reply in rich text shows the quoted picture; a plain-text forward names the original's pictures
@@ -232,3 +233,90 @@ def test_the_question_of_a_reply_says_its_pictures_are_left_out(world: World, qt
     monkeypatch.setattr(QMessageBox, "question", no)
     window.plain_action.trigger()
     assert asked and "The pictures are left out." in asked[0] and "attachments" not in asked[0] and window.is_rich()
+
+
+def plain_composer(world: World, qtbot: QtBot) -> ComposeWindow:
+    window = new_composer(world, qtbot)
+    if window.is_rich():
+        window.plain_action.trigger()
+    return window
+
+
+def test_files_dropped_onto_plain_text_are_attached_and_no_path_is_typed(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = plain_composer(world, qtbot)
+    window.body.setPlainText("Hello")
+    picture = picture_file(tmp_path)
+    document = tmp_path / "plan.pdf"
+    document.write_bytes(b"%PDF made-up")
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(picture)), QUrl.fromLocalFile(str(document))])
+    window.body.insertFromMimeData(dropped)
+    assert picture_attachments(window) == [str(picture), str(document)] and window.body.toPlainText() == "Hello"
+
+
+def test_a_picture_pasted_into_plain_text_is_attached_as_a_png_and_nothing_is_typed(world: World, qtbot: QtBot) -> None:
+    window = plain_composer(world, qtbot)
+    window.body.setPlainText("Hello")
+    image = QImage(20, 10, QImage.Format.Format_RGB32)
+    image.fill(QColor("#3366cc"))
+    copied = QMimeData()
+    copied.setImageData(image)
+    window.body.insertFromMimeData(copied)
+    assert len(picture_attachments(window)) == 1 and picture_attachments(window)[0].startswith("data:image/png;name=picture-1.png;base64,")
+    assert window.body.toPlainText() == "Hello"
+
+
+def test_text_pasted_into_plain_text_is_typed_as_before(world: World, qtbot: QtBot) -> None:
+    window = plain_composer(world, qtbot)
+    copied = QMimeData()
+    copied.setText("pasted words")
+    window.body.insertFromMimeData(copied)
+    assert window.body.toPlainText() == "pasted words" and picture_attachments(window) == []
+
+
+def test_cells_copied_with_a_picture_of_them_are_pasted_as_text(world: World, qtbot: QtBot) -> None:
+    window = plain_composer(world, qtbot)
+    image = QImage(20, 10, QImage.Format.Format_RGB32)
+    image.fill(QColor("#3366cc"))
+    copied = QMimeData()  # a spreadsheet puts the cells as text and HTML, and a picture of them
+    copied.setImageData(image)
+    copied.setHtml("<table><tr><td>Apples</td><td>3</td></tr></table>")
+    copied.setText("Apples\t3")
+    window.body.insertFromMimeData(copied)
+    assert "Apples" in window.body.toPlainText() and picture_attachments(window) == []
+
+
+def test_a_picture_copied_from_a_web_page_is_attached(world: World, qtbot: QtBot) -> None:
+    window = plain_composer(world, qtbot)
+    image = QImage(20, 10, QImage.Format.Format_RGB32)
+    image.fill(QColor("#3366cc"))
+    copied = QMimeData()  # a web page's picture comes as the picture and HTML of only that picture
+    copied.setImageData(image)
+    copied.setHtml('<img src="https://example.com/garden.png" alt="">')
+    window.body.insertFromMimeData(copied)
+    assert len(picture_attachments(window)) == 1 and window.body.toPlainText() == ""
+
+
+def test_a_folder_dropped_onto_plain_text_types_nothing(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = plain_composer(world, qtbot)
+    dropped = QMimeData()
+    dropped.setUrls([QUrl.fromLocalFile(str(tmp_path))])
+    window.body.insertFromMimeData(dropped)
+    assert window.body.toPlainText() == "" and picture_attachments(window) == []
+
+
+def test_each_pasted_picture_gets_a_name_no_attachment_has(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = plain_composer(world, qtbot)
+    document = tmp_path / "plan.pdf"
+    document.write_bytes(b"%PDF made-up")
+    window.add_attachment(str(document))
+    image = QImage(20, 10, QImage.Format.Format_RGB32)
+    image.fill(QColor("#3366cc"))
+    copied = QMimeData()
+    copied.setImageData(image)
+    for _ in range(2):
+        window.body.insertFromMimeData(copied)
+    window.attachments.takeItem(1)  # picture-1.png removed
+    window.body.insertFromMimeData(copied)
+    names = [window.attachments.item(row).text().split("  (", 1)[0] for row in range(window.attachments.count())]
+    assert names == ["plan.pdf", "picture-2.png", "picture-1.png"]

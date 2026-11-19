@@ -1,3 +1,4 @@
+from html import unescape
 import mimetypes
 import re
 from dataclasses import dataclass
@@ -8,14 +9,15 @@ from uuid import uuid4
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QFont, QResizeEvent, QImage, QImageReader, QImageWriter, QKeySequence, QTextCharFormat, QTextDocument, QTextImageFormat, QTextListFormat
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QTextEdit, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QPlainTextEdit, QTextEdit, QToolBar, QVBoxLayout, QWidget
 
 from chrono_mail.mime.pictures import MAXIMUM_PICTURE_BYTES, data_address, pictures_out_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 4.6.631"
+__version__ = "richeditor.py 4.6.634"
 
 # --- Version history ----------------------------------------------------
+# v4.6.634: PlainEditor: in plain text a dropped file and a pasted picture become attachments, never a path or text typed (D-353)
 # v4.6.631: with_styles_inside writes an HTML text's own style rules onto its paragraphs and text, so they reach nothing else (D-360)
 # v4.4.623: The HTML sent carries the default font and its size (D-354)
 # v4.4.622: pictures_in_text gives each picture with its address, so the quoted ones can be told apart (D-353)
@@ -86,6 +88,53 @@ def is_picture_file(path: Path) -> bool:
     """A file of a picture type that Qt can show (Qt can also read a PDF as a picture: that is a document, attached)."""
     guessed = mimetypes.guess_type(path.name)[0] or ""
     return guessed.startswith("image/") and QImageReader(str(path)).canRead()
+
+
+_TAG: re.Pattern[str] = re.compile(r"<!--.*?-->|<(script|style)\b.*?</\1\s*>|<[^>]*>", re.IGNORECASE | re.DOTALL)
+
+
+def _readable_text(source: QMimeData) -> bool:
+    """Whether what was copied has text to read besides a picture: the text its HTML shows (a picture copied from a web page comes as
+    HTML of only that picture), else its plain text."""
+    if source.hasHtml():
+        return bool(unescape(_TAG.sub(" ", source.html())).strip())
+    return source.hasText() and bool(source.text().strip())
+
+
+def png_picture(image: QImage, name: str) -> Picture:
+    """A copied picture (a screenshot, a picture of a web page or another program) as a PNG file of this name."""
+    holder = QByteArray()
+    buffer = QBuffer(holder)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    QImageWriter(buffer, b"png").write(image)
+    buffer.close()
+    return Picture("image/png", name, bytes(holder.data()))
+
+
+class PlainEditor(QPlainTextEdit):
+    """The plain text editor: a file dropped onto the text and a pasted picture become attachments, never a path or text typed
+    (the owner: "once converted to plain text, the user can add images, but only as an attachment, not inline", D-353)."""
+
+    files_dropped = Signal(list)  # paths of the files dragged onto the text: to be attached
+    picture_pasted = Signal(QImage)  # a copied picture: to be attached as a PNG
+
+    @override
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:  # noqa: N802 - Qt name
+        return source.hasImage() or source.hasUrls() or super().canInsertFromMimeData(source)
+
+    @override
+    def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802 - Qt name
+        local: list[str] = [url.toLocalFile() for url in source.urls() if url.isLocalFile()] if source.hasUrls() else []
+        if local:  # files and folders from this computer: the files are attached, a folder cannot be; nothing is typed
+            files = [path for path in local if Path(path).is_file()]
+            if files:
+                self.files_dropped.emit(files)
+        elif source.hasImage() and not _readable_text(source):  # only a picture (a screenshot, a picture of a web page)
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self.picture_pasted.emit(image)
+        else:  # text, also when a picture of it comes along (cells of a spreadsheet, styled text)
+            super().insertFromMimeData(source)
 
 
 class _Editor(QTextEdit):
@@ -296,12 +345,7 @@ class RichEditor(QWidget):
 
     def insert_picture_image(self, image: QImage) -> None:
         """Put a copied picture at the cursor, as a PNG file."""
-        holder = QByteArray()
-        buffer = QBuffer(holder)
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        QImageWriter(buffer, b"png").write(image)
-        buffer.close()
-        self._insert(Picture("image/png", f"picture-{len(self.pictures) + 1}.png", bytes(holder.data())), image)
+        self._insert(png_picture(image, f"picture-{len(self.pictures) + 1}.png"), image)
 
     def _choose_picture(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Insert a picture", "", PICTURE_FILTER)

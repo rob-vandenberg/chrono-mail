@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -45,7 +44,7 @@ from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.mime.pictures import data_address, pictures_out_of
-from chrono_mail.ui.richeditor import Picture, RichEditor, with_styles_inside
+from chrono_mail.ui.richeditor import Picture, PlainEditor, RichEditor, png_picture, with_styles_inside
 from chrono_mail.ui.composertexts import KEYED, TextsInMessage, signature_block, with_sent_from, with_signature
 from chrono_mail.config.model import AccountTexts
 from chrono_mail.engine.commands_signatures import SNIPPET_ALL, NoParameters as SnippetNoParameters, SnippetText
@@ -53,9 +52,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.6.633"
+__version__ = "composer.py 4.6.634"
 
 # --- Version history ----------------------------------------------------
+# v4.6.634: In plain text a dropped file and a pasted picture become attachments (D-353)
 # v4.6.633: A reply switched to plain text has no pictures at all, its own neither, also as a draft opened again (D-353)
 # v4.6.631: A reply or forward quotes the original with its own style rules, which reach the original only; the own lines around
 #           it have no space above or below (D-360)
@@ -276,7 +276,9 @@ class ComposeWindow(QMainWindow):
             self.setWindowTitle("New scheduled message")
         layout.addLayout(top)
         layout.addLayout(form)
-        self.body = QPlainTextEdit(central)
+        self.body = PlainEditor(central)
+        self.body.files_dropped.connect(self._attach_dropped)
+        self.body.picture_pasted.connect(self._attach_pasted)
         self.rich = RichEditor(central)
         self.rich.files_dropped.connect(self._attach_dropped)
         self.editor_stack = QStackedWidget(central)
@@ -560,6 +562,12 @@ class ComposeWindow(QMainWindow):
         """A picture of the text as an attachment: it travels as its data, never as a file on this computer."""
         self.attachments.addItem(f"{picture.name}  ({len(picture.data) // 1024 + 1} KB)")
         self.attachments.item(self.attachments.count() - 1).setData(ROLE_PATH, data_address(picture.content_type, picture.name, picture.data))
+
+    def _attach_pasted(self, image: QImage) -> None:
+        """A picture pasted into plain text: an attachment, as a PNG named with the first number no attachment has (D-353)."""
+        taken = {self.attachments.item(row).text().split("  (", 1)[0] for row in range(self.attachments.count())}
+        number = next(number for number in range(1, len(taken) + 2) if f"picture-{number}.png" not in taken)
+        self._add_picture(png_picture(image, f"picture-{number}.png"))
 
     def _attach_dropped(self, paths: list[str]) -> None:
         for path in paths:
