@@ -33,3 +33,4 @@ See also: [[sync-conflicts]] · [[pop3-smtp-sending]]
 - [[D-259]] Hostile input is never fatal
 - [[D-280]] Standard folder names, one language
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
+- [[D-369]] Undo and Redo of folders

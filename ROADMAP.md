@@ -32,7 +32,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12a | Drafts: save, autosave, resume, attachments kept, Outbox messages editable (0.0.16). | done |
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
 | 1.12c | Junk filter: the server's spam verdict and a learning filter on new mail, before the rules (2.1.308, D-238). The $Junk/$NotJunk marks on the server: B-19. | done |
-| 1.12d | Undo and Redo of the actions on mail: Ctrl+Z, Ctrl+Y (B-18 step 1, 2.2.313, D-240); step 3, Calendar, Tasks and Contacts (4.7.656, D-368). Step 2 (folders) open. | done |
+| 1.12d | Undo and Redo of the actions on mail: Ctrl+Z, Ctrl+Y (B-18 step 1, 2.2.313, D-240); step 2, Rename folder and Delete folder (4.7.657, D-369); step 3, Calendar, Tasks and Contacts (4.7.656, D-368). Moving a folder is B-38. | done |
 | 1.12e | Delayed sending (a countdown with Send now and Cancel, or until the next refresh), the scheduled refresh sends and receives, the question on Quit with mail in the Outbox (B-21, B-20, 2.2.314, D-241); one Automatically row with Send only (2.3.315). | done |
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |

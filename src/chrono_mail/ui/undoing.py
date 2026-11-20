@@ -11,9 +11,11 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 4.2.396"
+__version__ = "undoing.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: track: a folder renamed or deleted counts as an action under way; the folder an Undo or Redo brought back is selected and
+#           what its rules did is said (B-18 step 2, D-369)
 # v4.2.396: Undo brings back the messages a Mark as read took out of Unread, Redo takes them out again (D-282)
 # v4.2.394: a held Ctrl+Z (Ctrl+Y) stops the moment it is let go: its repeats that come while an action is under way are thrown away;
 #           a separate press always counts (held_while_busy, also for the marks and tags, D-266)
@@ -57,6 +59,7 @@ class Undoing(QObject):
         self._preparing_redo: bool = False
         backend.progress.connect(self._counting)
         self.is_repeat: Callable[[], bool] = lambda: False  # whether the action acting now was set off by a held key's repeat (the window tells, once)
+        self.select_folder: Callable[[str, str], None] = lambda account, folder: None  # the folder list selects a folder brought back (D-369)
 
     @property
     def busy(self) -> bool:
@@ -78,6 +81,24 @@ class Undoing(QObject):
         self._running += 1
         if self._running == 1:
             self.labels_changed.emit()
+
+    def track[R](self, done: Callable[[R], None], failed: Callable[[ChronoMailError], None]) -> tuple[Callable[[R], None], Callable[[ChronoMailError], None]]:
+        """A command of an action is given now (a folder renamed or deleted): its answers, counted, so an Undo pressed meanwhile waits for it."""
+        self.started()
+
+        def answered(result: R) -> None:
+            try:
+                done(result)
+            finally:
+                self.ended()
+
+        def refused(error: ChronoMailError) -> None:
+            try:
+                failed(error)
+            finally:
+                self.ended()
+
+        return answered, refused
 
     def ended(self) -> None:
         """A command of an action was answered (done or not)."""
@@ -129,11 +150,17 @@ class Undoing(QObject):
         def done(result: UndoResult) -> None:
             self._preparing.stop()
             try:
-                if result.not_done:
+                if result.not_done and result.not_done == result.folders:  # an action of folders, nothing of it done (D-369)
+                    self._status.show(f"Could not {'redo' if redo else 'undo'} {result.action}: {result.reason}")
+                elif result.not_done and result.folders:
+                    self._status.show(f"{'Redone' if redo else 'Undone'}: {result.action}. {result.not_done:,} of {result.folders:,} folders stayed as they are: {result.reason}")
+                elif result.not_done:
                     count = result.not_done + len(result.messages)
                     self._status.show(f"{'Redone' if redo else 'Undone'}: {result.action}. {result.not_done:,} of {count:,} stayed as they are: {result.reason}")
                 else:
-                    self._status.finished(f"{'Redone' if redo else 'Undone'}: {result.action}")
+                    self._status.finished(". ".join((f"{'Redone' if redo else 'Undone'}: {result.action}", *result.rules)))
+                if result.folder:
+                    self.select_folder(result.account, result.folder)
                 self._messages.model.undone(result.messages, redo)  # those a Mark as read took out of Unread (D-282)
                 self._messages.select_messages(result.messages)
             finally:  # always: what waits behind this Undo goes on, once the messages it brought back have their places in the list

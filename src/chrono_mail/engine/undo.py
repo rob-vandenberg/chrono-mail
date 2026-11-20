@@ -1,4 +1,4 @@
-"""Undo and Redo of the person's actions on mail (B-18). An action given with a number notes how each message was before and after
+"""Undo and Redo of the person's actions on mail and on folders (B-18, D-369). An action given with a number notes how each message was before and after
 (UndoRecorder); Undo makes each message as it was before, Redo as it was after. Both are new actions through the mailbox, so on
 IMAP the server first and offline sent later (D-193, D-117); a message that is no longer where the action left it is left alone."""
 
@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from chrono_mail.core import ChronoMailError, MessageRef
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_across import move_across
+from chrono_mail.engine.folderundo import do_folder_steps
 from chrono_mail.engine.junkfilter import set_verdicts
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError
@@ -17,9 +18,10 @@ from chrono_mail.engine.undorecord import folded
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "undo.py 4.1.382"
+__version__ = "undo.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: a folder renamed or deleted is undone and redone (folderundo.py); the answer names the folder to select and what the rules did (D-369)
 # v4.1.382: an Undo or Redo that runs longer than a second says how far it is: "Undoing Move to Trash… 400 of 15,346" (D-266)
 # v3.6.366: a move to another account is undone by moving it back, and redone by moving it again (D-272)
 # v2.2.313: Initial: the steps of an action done again or backwards, mail.undo, mail.redo and mail.undo-labels (B-18)
@@ -210,6 +212,10 @@ class UndoResult:
     messages: tuple[str, ...]  # the messages done, by their ids now (a copy removed is not among them)
     not_done: int = 0  # how many could not be done (each stays as it is)
     reason: str = ""  # why (the first reason)
+    account: str = ""  # an action of folders: the account of the folder to select now ("" for none: it was deleted again)
+    folder: str = ""  # its path
+    rules: tuple[str, ...] = ()  # what the rules that move mail to it did (D-302)
+    folders: int = 0  # an action of folders: how many folders it was about (0: an action on mail)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,14 +229,24 @@ def _run(engine: Engine, redo: bool) -> UndoResult:
     if action is None:
         raise UsageError("Nothing to redo" if redo else "Nothing to undo")
     label = action.label()
+    steps = [step if redo else step.reversed() for step in action.steps]
+    notes: list[str] = []
     try:
-        done, failed = _do(engine, [step if redo else step.reversed() for step in action.steps], f"{'Redoing' if redo else 'Undoing'} {action.name}")
+        if any(step.of_folder for step in steps):
+            failed: list[str] = []
+            done, notes = do_folder_steps(engine, steps, failed)
+        else:
+            done, failed = _do(engine, steps, f"{'Redoing' if redo else 'Undoing'} {action.name}")
     except BaseException:
         engine.undo.put(action, redo=redo)  # a fault of the program: the action stays where it was
         raise
     action.steps = [step if redo else step.reversed() for step in done]
     engine.undo.put(action, redo=not redo)
-    return UndoResult(label, tuple(step.message for step in done if step.kind != "uncopy"), len(failed), failed[0] if failed else "")
+    shown = min((step for step in done if step.of_folder and step.kind != "folder_delete"), key=lambda step: len(step.after), default=None)  # the folder on top
+    return UndoResult(
+        label, tuple(step.message for step in done if step.kind != "uncopy" and not step.of_folder), len(failed), failed[0] if failed else "",
+        shown.account if shown is not None else "", "/".join(shown.after) if shown is not None else "", tuple(notes), sum(step.of_folder for step in steps),
+    )
 
 
 def mail_undo(engine: Engine, parameters: NoParameters) -> UndoResult:

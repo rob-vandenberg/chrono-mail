@@ -10,9 +10,10 @@ from chrono_mail.index.model import Receiving
 from chrono_mail.store import Store, StoredMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "rebuild.py 4.2.417"
+__version__ = "rebuild.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: index_folder: the messages of one folder indexed (a folder brought back by Undo, D-369)
 # v4.2.417: rebuild_index takes the receiver that decides the account that received each message (D-292)
 # v2.0.281: the messages are counted first, so progress says how many of how many; a rebuild can be aborted (RebuildAborted: the new
 #           index is put away, the old one stays); the new index replaces the old one only when the engine allows it (D-229)
@@ -100,6 +101,14 @@ def rebuild_index(
         builder.abandon()
         raise
     return index, RebuildReport(indexed, unreadable, time.monotonic() - started)
+
+
+def index_folder(store: Store, index: Index, folder: tuple[str, ...]) -> tuple[str, ...]:
+    """Index the messages of one folder, each with its tags (a folder brought back by Undo, D-369); returns their ids."""
+    tags = _stored_tags(store)
+    entries = [_entry(store, message, tags)[0] for message in store.list_messages(folder)]
+    index.add_many(entries)
+    return tuple(entry.store_id for entry in entries)
 
 
 def reconcile_index(store: Store, index: Index) -> ReconcileReport:

@@ -7,9 +7,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 3.6.351"
+__version__ = "imap_state.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: send_again ("au"): messages sent to the server before go up once more (a folder brought back by Undo, D-369)
 # v3.6.351: a checkpoint keeps the messages the server would not send yet ("w"), so one such message never keeps its folder from a checkpoint
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v3.6.349: forget_numbering ("z"): a folder synchronised afresh, the person's choices for it kept (RV-195)
@@ -40,6 +41,7 @@ __version__ = "imap_state.py 3.6.351"
 #   {"e": "l", "n": server folder name}                                  the server's list of folders to show has the folder: it follows that list from now on (R-34)
 #   {"e": "r", "n": server folder name, "r": role}                       the person says which standard folder (sent, drafts, trash, junk, archive) this server folder is
 #   {"e": "a", "s": store id}                                           the message was sent to the server (so that it is not sent twice)
+#   {"e": "au", "s": store id}                                          send it to the server again: its folder there was deleted (Undo brought it back)
 #   {"e": "k", "s": store id}                                           the person deleted the message for good here while the server could not be reached
 #   {"e": "w", "f": [old path], "t": [new path], "p": [[old name, new name], ...]}   the person renamed the folder (and those below it) on the server
 #   {"e": "y", "f": [path], "n": server folder name}                     the person deleted the folder on the server: everything known about it is forgotten
@@ -209,6 +211,12 @@ class ImapState:
             if not isinstance(stored, str) or len(stored) != 32:
                 raise ValueError("bad store id")
             self.uploaded.add(stored)
+            return
+        if kind == "au":
+            again = event["s"]
+            if not isinstance(again, str) or len(again) != 32:
+                raise ValueError("bad store id")
+            self.uploaded.discard(again)
             return
         if kind == "k":
             deleted = event["s"]
@@ -443,6 +451,14 @@ class ImapState:
         """Remember that a local message was sent to the server. Call right after the server accepted it."""
         self._append({"e": "a", "s": store_id})
         self.uploaded.add(store_id)
+
+    def send_again(self, store_ids: list[str]) -> None:
+        """These local messages go to the server once more at the next check: they were there before, in a folder that was deleted with
+        them and that Undo brought back here (D-369)."""
+        for store_id in store_ids:
+            if store_id in self.uploaded:
+                self._append({"e": "au", "s": store_id})
+                self.uploaded.discard(store_id)
 
     def note_deleted(self, store_id: str) -> None:
         """The person deleted this message for good here and the server could not be reached: the next sync deletes it there."""

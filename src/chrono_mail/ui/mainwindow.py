@@ -76,9 +76,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.7.656"
+__version__ = "mainwindow.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: the folder list gets the mail's Undo: Rename folder and Delete folder are undone (B-18 step 2, D-369)
 # v4.7.656: Ctrl+Z, Ctrl+Y and the menu's Undo and Redo act on the section shown: Calendar, Tasks and Contacts have their own (B-18 step 3, D-368)
 # v4.6.655: every part of this window at the Main window size (scale.follow_fonts), never the other windows'; a tooltip at the size of the
 #           window that is active (D-367)
@@ -467,7 +468,7 @@ class MainWindow(QMainWindow):
         self.undoing.is_repeat = self.held_key.take
         self.tags = MailTags(backend, state, self.report, self.messages, book, self.open_tags, self.undoing, self)
         self.tags.watch_action = self.held_key.watch  # a held tag shortcut stops when let go (D-266)
-        self.folders = FolderPane(backend, state, self.report, self.prefs, memory, self.tags, self.messages, self)
+        self.folders = FolderPane(backend, state, self.report, self.prefs, memory, self.tags, self.messages, self.undoing, self)
         self.tree, self.tree_model = self.folders.tree, self.folders.model
         self.list_model, self.list_view = self.messages.model, self.messages.view
         self.list_model.role_of = self.mail_state.folder_role_of  # a message that comes back is placed by its folder's role (D-266)

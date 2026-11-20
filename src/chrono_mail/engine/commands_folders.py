@@ -7,6 +7,8 @@ from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRe
 from chrono_mail.config import AccountSettings
 from chrono_mail.engine.changes import RENAMING_FOLDER, Change, RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters, account_label
+from chrono_mail.engine.folderundo import rules_on, switched_off
+from chrono_mail.engine.undohistory import UndoStep
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, index_lock, rebuild_abort, talks_to_servers
@@ -17,9 +19,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.4.615"
+__version__ = "commands_folders.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: folder.rename and folder.delete given with the number of the person's action (undo) can be undone and redone (B-18 step 2, D-369)
 # v4.4.615: a deleted folder's files are erased 30 days after the delete (the owner, D-072)
 # v4.4.539: the steps after an upgrade are counted from how many there were: the removal of the old rows is one of them (D-314)
 # v4.4.538: folder.rename tells that the folder is being renamed (working), for the status line
@@ -87,11 +90,15 @@ def folder_create(engine: Engine, parameters: FolderParameters) -> FolderResult:
         return FolderResult("/".join(created.path))
 
 
+UNDO_FOLDER: str = "The number of the person's action, so Undo can put it back (0: it is not undone)"
+
+
 @dataclass(frozen=True, slots=True)
 class FolderRenameParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(metadata=option("The folder to rename (with everything below it)"))
     new_name: str = field(metadata=option("Its new path, for example Archive/Old"))
+    undo: int = field(default=0, metadata=option(UNDO_FOLDER))
 
 
 def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderResult:
@@ -99,6 +106,8 @@ def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderR
         engine.report(Change("working", mailbox.store.account_id, parameters.folder, notes=(RENAMING_FOLDER,)))
         old, new = mailbox.folder(parameters.folder), parse_folder(parameters.new_name)
         mailbox.rename_folder(old, new)
+        if old != new:
+            engine.undo.record(parameters.undo, "Rename folder", [UndoStep(parameters.account, "", old, new, kind="folder_rename")], old[-1])
         return FolderResult("/".join(new), tuple(mailbox.rule_notes))
 
 
@@ -108,6 +117,7 @@ class FolderDeleteParameters:
     folder: str = field(metadata=option("The folder to delete"))
     with_messages: bool = field(default=False, metadata=option("Also delete the folder when it still holds messages"))
     include_subfolders: bool = field(default=False, metadata=option("Delete the folders below it as well"))
+    undo: int = field(default=0, metadata=option(UNDO_FOLDER))
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,11 +148,18 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
                 if mailbox.store.list_messages(path):
                     raise StorageError("The folder is not empty")
         removed = 0
-        with mailbox.together():  # one hold on the account: no check runs between the look and the deletes
-            if len(targets) > 1:
-                mailbox.refuse_unseen(targets)  # all of them looked at before any is deleted (RV-176)
-            for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
-                removed += mailbox.delete_folder(path, require_empty=not parameters.with_messages)
+        steps: list[UndoStep] = []
+        try:
+            with mailbox.together():  # one hold on the account: no check runs between the look and the deletes
+                if len(targets) > 1:
+                    mailbox.refuse_unseen(targets)  # all of them looked at before any is deleted (RV-176)
+                for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
+                    rules: dict[str, bool] = rules_on(engine) if parameters.undo > 0 else {}
+                    count, kept = mailbox.delete_folder(path, require_empty=not parameters.with_messages)
+                    removed += count
+                    steps.append(UndoStep(parameters.account, "", path, (), kind="folder_delete", kept=kept, rules=switched_off(rules, rules_on(engine)) if rules else ()))
+        finally:  # what was deleted can be brought back, also when a later folder of the tree failed
+            engine.undo.record(parameters.undo, "Delete folder", steps, folder[-1])
         return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets), tuple(mailbox.rule_notes))
 
 

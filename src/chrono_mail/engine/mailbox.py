@@ -24,6 +24,7 @@ from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import Index, entry_from_raw, facts_lost, facts_told, told_at_once
 from chrono_mail.store import SENT_LETTER, MessageNotFoundError, Store, clean_tags
+from chrono_mail.sync import index_folder
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.imap_sync import imap_waiting
 from chrono_mail.sync.mailconflicts import MailConflict
@@ -33,9 +34,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.4.615"
+__version__ = "mailbox.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: delete_folder also gives the name its files have in .deleted; bring_back_folder: Undo of a delete, the folder back where it
+#           was with its mail, on an IMAP server first (D-369)
 # v4.4.615: a deleted folder's files are erased 30 days after the delete (the owner, D-072)
 # v4.2.453: the rules follow a folder renamed or moved and are switched off when it is deleted, before the fact is told; rules_changed
 #           with what they did, and rule_notes for the command's answer; a folder only hidden here changes no rule (D-302)
@@ -1047,20 +1050,53 @@ class Mailbox:
                 for path in on_server:
                     server.refuse_unseen(path)
 
-    def delete_folder(self, path: tuple[str, ...], require_empty: bool) -> int:
+    def delete_folder(self, path: tuple[str, ...], require_empty: bool) -> tuple[int, str]:
         """Take one folder out of the store (its files are kept in .deleted for 30 days); in an IMAP account it is deleted on the
-        server first, with its mail, and only while the server can be reached. Returns the messages removed from the index."""
+        server first, with its mail, and only while the server can be reached. Returns the messages removed from the index and the
+        name its files have in .deleted (Undo brings it back from there, D-369)."""
         if not self._on_server(path):
-            self.store.delete_folder(path, require_empty=require_empty)
+            kept = self.store.delete_folder(path, require_empty=require_empty)
             removed = self.index.remove_folder(path)
         else:
             with self._server() as server:
                 commit = server.delete_folder(path)
-                self.store.delete_folder(path, require_empty=require_empty)
+                kept = self.store.delete_folder(path, require_empty=require_empty)
                 removed = self.index.remove_folder(path)
                 commit()
         self._tell(Change("folder_deleted", self._place, "/".join(path)))
-        return removed
+        return removed, kept
+
+    def bring_back_folder(self, path: tuple[str, ...], kept: str) -> tuple[str, ...]:
+        """Undo of a delete (D-369): the folder comes back where it was from the store's .deleted, with every message as it was (the same
+        messages, their marks and tags). In an IMAP account the folder is made on the server first; its mail goes up at the next check, as
+        that of a folder made there again after a sync conflict (R-30). A delete made offline that still waits is given up instead: the
+        server never lost the folder, and the next check matches its mail with the copies here. Returns the messages brought back."""
+        if path in {folder.path for folder in self.store.list_folders()}:
+            raise StorageError("a folder with that name exists now")
+        self.store.kept_folder(kept, path)  # erased meanwhile: refused before the server is asked
+        if not self._on_server(path):
+            if not is_imap(self.settings):
+                for length in range(1, len(path)):
+                    self._made(self.store.ensure_folder(path[:length]))  # mail kept here: the folders above it are folders of their own (D-285)
+            return self._brought_back(path, kept)
+        with self._server() as server:
+            waiting = server.state.pending.get(path)
+            given_up = waiting is not None and waiting.kind == "delete"
+            if given_up:
+                server.state.pending_done(path)  # the server still has the folder and its mail
+            else:
+                server.make_folder(path)  # when the server cannot be reached the next check makes it
+            back = self._brought_back(path, kept)
+            if not given_up:
+                server.state.send_again(list(back))  # the next check sends its mail up again, also what was sent up before
+        return back
+
+    def _brought_back(self, path: tuple[str, ...], kept: str) -> tuple[str, ...]:
+        folder = self.store.bring_back_folder(kept, path)
+        back: list[tuple[str, ...]] = []
+        self._index(lambda: back.append(index_folder(self.store, self.index, path)))
+        self._tell(Change("folder_made", self._place, "/".join(path), role=folder.role.value))
+        return back[0] if back else tuple(message.ref.store_id for message in self.store.list_messages(path))
 
     def empty_folder(self, path: tuple[str, ...]) -> int:
         """Delete every message of the folder for good; in an IMAP account the server folder as a whole first. Told as one

@@ -1,5 +1,5 @@
-"""What Undo and Redo can do (B-18): the person's last actions on mail, each message's change from before to after. Only the
-record; doing it is in undo.py. Kept with the engine for as long as the program runs."""
+"""What Undo and Redo can do (B-18): the person's last actions on mail, each message's change from before to after, and the folders
+renamed or deleted (D-369). Only the record; doing it is in undo.py. Kept with the engine for as long as the program runs."""
 
 import threading
 from dataclasses import dataclass, field, replace
@@ -8,13 +8,18 @@ from typing import Literal
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "undohistory.py 3.6.366"
+__version__ = "undohistory.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: folder steps: a folder renamed ("folder_rename"), deleted ("folder_delete", its files kept in .deleted) and brought back
+#           ("folder_back"); an action of folders names its folder ("Rename folder “Projects”", B-18 step 2, D-369)
 # v3.6.366: an "across" step: a message moved to another account under its own id; its reverse moves it back (D-272)
 # v2.2.313: Initial: the steps of Undo and Redo for mail, the actions kept until the program quits (B-18)
 
 MAXIMUM_ACTIONS: int = 100  # kept for Undo; the oldest go first
+
+type StepKind = Literal["change", "copy", "uncopy", "across", "folder_rename", "folder_delete", "folder_back"]
+FOLDER_KINDS: frozenset[str] = frozenset({"folder_rename", "folder_delete", "folder_back"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,13 +35,15 @@ class Notes:
 class UndoStep:
     """One message's change by an action, from before to after. Doing the step makes it so; its reverse undoes it.
     kind: "change" (moved, marks, tags, notes, verdict), "copy" (a copy of original made), "uncopy" (that copy removed for good), "across"
-    (moved from account to other, under the same id: D-272)."""
+    (moved from account to other, under the same id: D-272); a folder (message ""): "folder_rename" (before: its path, after: the new one),
+    "folder_delete" (before: its path, after: (); kept: its directory's name in the store's .deleted, rules: the rules the delete switched
+    off) and "folder_back" (after: its path again), D-369."""
 
     account: str  # the account the action was given for (the mailbox it opens)
     message: str  # its store id, the same in every folder (a copy: the copy's)
     before: tuple[str, ...]  # the folder it was in (copy: the original's folder; uncopy: the copy's)
     after: tuple[str, ...]  # the folder it is in after (copy: the copy's folder; uncopy: the original's)
-    kind: Literal["change", "copy", "uncopy", "across"] = "change"
+    kind: StepKind = "change"
     flags_added: frozenset[MessageFlag] = frozenset()
     flags_removed: frozenset[MessageFlag] = frozenset()
     tags_added: tuple[str, ...] = ()
@@ -45,12 +52,22 @@ class UndoStep:
     verdict: tuple[str | None, str | None] | None = None  # the junk filter's verdict (before, after) when the action changed it
     original: str = ""  # copy and uncopy: the message it is a copy of
     other: str = ""  # across: the account it went to (before is a folder of account, after a folder of other)
+    kept: str = ""  # folder_delete and folder_back: the name its directory has in the store's .deleted
+    rules: tuple[str, ...] = ()  # folder_delete and folder_back: the ids of the rules the delete switched off
+
+    @property
+    def of_folder(self) -> bool:
+        return self.kind in FOLDER_KINDS
 
     def reversed(self) -> "UndoStep":
         """The step that undoes this one."""
         if self.kind == "across":  # back from the other account
             return replace(self, account=self.other, other=self.account, before=self.after, after=self.before)
-        kind: Literal["change", "copy", "uncopy", "across"] = "uncopy" if self.kind == "copy" else "copy" if self.kind == "uncopy" else "change"
+        if self.kind == "folder_rename":
+            return replace(self, before=self.after, after=self.before)
+        if self.kind in ("folder_delete", "folder_back"):
+            return replace(self, before=self.after, after=self.before, kind="folder_back" if self.kind == "folder_delete" else "folder_delete")
+        kind: StepKind = "uncopy" if self.kind == "copy" else "copy" if self.kind == "uncopy" else "change"
         return replace(
             self, before=self.after, after=self.before, kind=kind, flags_added=self.flags_removed, flags_removed=self.flags_added,
             tags_added=self.tags_removed, tags_removed=self.tags_added, notes=None if self.notes is None else (self.notes[1], self.notes[0]),
@@ -65,9 +82,12 @@ class UndoAction:
     number: int  # the window's count of actions: their order
     name: str  # "Move to Trash"
     steps: list[UndoStep] = field(default_factory=list[UndoStep])
+    folder: str = ""  # an action of folders: the name of the folder it was given for ("Projects"), D-369
 
     def label(self) -> str:
-        """"Move to Trash (3 messages)"."""
+        """"Move to Trash (3 messages)"; an action of folders: "Rename folder “Projects”"."""
+        if self.folder:
+            return f"{self.name} “{self.folder}”"
         count = len(self.steps)
         return f"{self.name} ({count:,} message{'' if count == 1 else 's'})"
 
@@ -80,14 +100,15 @@ class UndoHistory:
     _undone: list[UndoAction] = field(default_factory=list[UndoAction])
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def record(self, number: int, name: str, steps: list[UndoStep]) -> None:
-        """Steps of the action with this number (an action on several folders comes in several commands). A new action ends what can be redone."""
+    def record(self, number: int, name: str, steps: list[UndoStep], folder: str = "") -> None:
+        """Steps of the action with this number (an action on several folders comes in several commands). A new action ends what can be redone.
+        folder: an action of folders names the folder it was given for."""
         if number <= 0 or not steps:
             return
         with self._lock:
             action = next((action for action in self._done if action.number == number), None)
             if action is None:
-                action = UndoAction(number, name)
+                action = UndoAction(number, name, folder=folder)
                 self._done.append(action)
                 self._done.sort(key=lambda kept: kept.number)
                 self._undone.clear()

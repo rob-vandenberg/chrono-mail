@@ -20,9 +20,10 @@ from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 4.4.615"
+__version__ = "store.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: delete_folder gives back the name the folder has in .deleted; bring_back_folder puts it back where it was, for Undo (D-369)
 # v4.4.615: delete_folder names the folder in .deleted with the moment of its deletion; purge_deleted_folders(older_than_days) erases only
 #           the folders deleted longer ago, gives one set aside without that moment the present one first, and takes the folder lock
 #           only to choose them: each is renamed to <name>.purging under the lock and erased after it (a large folder never holds it up)
@@ -489,16 +490,17 @@ class Store:
             self._folders[target] = _FolderEntry(entry.directory, renamed)
             self._checkpoint("rename-folder:after-folder")
 
-    def delete_folder(self, path: tuple[str, ...], require_empty: bool = True) -> None:
+    def delete_folder(self, path: tuple[str, ...], require_empty: bool = True) -> str:
         """Take a folder out of the store. Its files go to .deleted under a name that carries the moment of the deletion
-        (<directory>.<seconds>), so purge_deleted_folders() knows their age also after a restart."""
+        (<directory>.<seconds>), so purge_deleted_folders() knows their age also after a restart. Returns that name."""
         with _folder_lock(self.root):  # never between a purge's look at .deleted and its choice of the folders to erase
             entry = self._entry(path)
             if require_empty and self.list_messages(path):
                 raise StorageError("The folder is not empty")
             self._checkpoint("delete-folder:before-move")
+            kept = f"{entry.directory}.{int(time.time())}"
             try:
-                os.rename(self.root / "folders" / entry.directory, self.root / ".deleted" / f"{entry.directory}.{int(time.time())}")
+                os.rename(self.root / "folders" / entry.directory, self.root / ".deleted" / kept)
                 if self._durable:
                     fsync_directory(self.root / "folders")
                     fsync_directory(self.root / ".deleted")
@@ -506,6 +508,43 @@ class Store:
                 raise StorageError(f"The folder could not be deleted: {error.strerror}") from None
             del self._folders[path]
             self._checkpoint("delete-folder:after-move")
+            return kept
+
+    def kept_folder(self, kept: str, path: tuple[str, ...]) -> FolderRole:
+        """The role of the folder kept in .deleted under this name, which was deleted at this path. Raises StorageError when it was erased
+        meanwhile (30 days after the delete) or cannot be read."""
+        directory = kept.rpartition(".")[0]
+        if not directory or "/" in kept or "\\" in kept or kept.startswith("."):
+            raise StorageError("its files could not be read")
+        try:
+            found, role = folder_description((self.root / ".deleted" / kept / "folder.json").read_text("utf-8"))
+        except FileNotFoundError:
+            raise StorageError("it was erased since: a deleted folder is kept for 30 days") from None
+        except (OSError, ValueError, KeyError, TypeError):
+            raise StorageError("its files could not be read") from None
+        if found != path:
+            raise StorageError("its files could not be read")
+        return role
+
+    def bring_back_folder(self, kept: str, path: tuple[str, ...]) -> Folder:
+        """Undo of a delete (D-369): the folder kept in .deleted under this name comes back where it was, with every message as it was,
+        in one rename. Refused when it was erased meanwhile (30 days after the delete), or a folder has its path now."""
+        with _folder_lock(self.root):  # never while a purge chooses what to erase
+            self.refresh()
+            if path in self._folders:
+                raise StorageError("a folder with that name exists now")
+            role = self.kept_folder(kept, path)
+            source, directory = self.root / ".deleted" / kept, kept.rpartition(".")[0]
+            try:
+                os.rename(source, self.root / "folders" / directory)
+                if self._durable:
+                    fsync_directory(self.root / ".deleted")
+                    fsync_directory(self.root / "folders")
+            except OSError as error:
+                raise StorageError(f"The folder could not be brought back: {error.strerror}") from None
+            folder = Folder(self.account_id, path, role)
+            self._folders[path] = _FolderEntry(directory, folder)
+            return folder
 
     def purge_deleted_folders(self, older_than_days: float = 0.0) -> int:
         """Erase the folders in .deleted that were deleted more than this many days ago (0: all of them, an explicit purge). Returns the

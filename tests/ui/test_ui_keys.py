@@ -13,16 +13,17 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_keys.py 4.2.399"
+__version__ = "test_ui_keys.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: Ctrl+Shift+O (Operations, 4.6.649) acts anywhere in the main window, also in the folder list, as D-366 says
 # v4.2.399: F2 on the Inbox renames nothing: a standard folder's Rename folder is greyed (D-269)
 # v2.2.313: Undo and Redo (B-18): window-wide in Mail and in the read-only text of a message, never in a text field, whose own undo they are
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.7.262: Initial (R-43): every key of the window pressed in every part (the folder list, the message list, the search field, the reading
 #           pane, a section's sidebar) starts the command of that part, or nothing: never one that acts on a selection elsewhere (D-217)
 
-NO_TARGET = {"new", "refresh", "settings", "open_menu", "search", "advanced", "toggle_folders", "about", "section_mail", "section_calendar", "section_contacts", "section_tasks"}
+NO_TARGET = {"new", "refresh", "settings", "operations", "open_menu", "search", "advanced", "toggle_folders", "about", "section_mail", "section_calendar", "section_contacts", "section_tasks"}
 MESSAGE_COMMANDS = {"reply", "reply_all", "forward", "save_as", "source", "print", "junk", "read", "unread", "move_to", "copy_to"}  # can only mean messages (D-217)
 UNDO_KEYS = {"undo", "redo", "redo_other"}  # greyed until there is something to undo; a text field keeps them for its typing (B-18)
 MESSAGE_KEYS = {"archive", "snooze", "toggle_read", "quick_move", "quick_copy", "next_unread", "previous_unread", "next_message", "previous_message", "go_to_folder", "toggle_flag"}

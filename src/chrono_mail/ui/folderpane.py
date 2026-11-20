@@ -7,7 +7,9 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QMenu, QMessageBox, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.commands_folders import FOLDER_CREATE, FOLDER_DELETE, FOLDER_RENAME, FolderDeleteParameters, FolderParameters, FolderRenameParameters
+from chrono_mail.engine.commands_folders import (
+    FOLDER_CREATE, FOLDER_DELETE, FOLDER_RENAME, FolderDeleteParameters, FolderDeleteResult, FolderParameters, FolderRenameParameters, FolderResult,
+)
 from chrono_mail.engine.commands_sidebar import (
     FAVORITE_PIN, FAVORITE_RENAME, FAVORITE_REORDER, FAVORITE_SHOW, FAVORITE_UNPIN, GROUP_ADD, GROUP_ASSIGN, GROUP_REMOVE, GROUP_RENAME, AssignParameters, GroupAddParameters,
     GroupParameters, GroupRenameParameters, PinnedParameters, PinParameters, RenamePinParameters, ReorderParameters, VisibleParameters,
@@ -35,12 +37,15 @@ from chrono_mail.ui.scale import px
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, TASKS
 from chrono_mail.ui.sidebarpage import startup_forces
 from chrono_mail.ui.statusreport import StatusReport
+from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.4.617"
+__version__ = "folderpane.py 4.7.657"
 
 # --- Version history ----------------------------------------------------
+# v4.7.657: Rename folder and Delete folder are actions of the person that Undo takes back; a folder an Undo or Redo brings back is
+#           selected (B-18 step 2, D-369)
 # v4.4.617: Show on startup changed to All Inboxes is saved through ui/prefs.py (D-211)
 # v4.4.615: the Delete folder question asks only that: no word about the store's .deleted directory, from where nothing brings a folder back
 # v4.4.596: a folder that only holds folders (Gmail's [Gmail]) is never what the list shows: a click opens or closes it, the keyboard moves past it (FolderTree.moveCursor); Show on startup lists it as a heading
@@ -104,7 +109,7 @@ class FolderPane(QObject):
 
     def __init__(
         self, backend: Backend, state: MailState, status: StatusReport, prefs_in_use: InUse, memory: Remembered, tags: MailTags, messages: MessageListPane,
-        parent: QWidget,
+        undoing: Undoing, parent: QWidget,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -142,6 +147,8 @@ class FolderPane(QObject):
         self._delete_key: DeleteKey = DeleteKey(self.tree, self._delete_key_pressed)  # Delete in the folder list is the folder's, never the messages'
         tags.arrived.connect(self._tags_arrived)
         messages.unread_elsewhere = self.unread_in_another_folder
+        self._undoing: Undoing = undoing
+        undoing.select_folder = self.select_folder  # a folder an Undo or Redo brought back is selected, as a click on it (D-369)
 
     def use_menu(self, menu: FolderMenu) -> None:
         self.menu = menu
@@ -516,6 +523,12 @@ class FolderPane(QObject):
                 self.tree.setCurrentIndex(index)
                 self._messages.view.setFocus()
 
+    def select_folder(self, account: str, folder: str) -> None:
+        """Select a folder as a click on it does (one an Undo or Redo brought back, D-369); nothing when the list does not show it."""
+        index = self.find_item((account, "folder", folder))
+        if index is not None:
+            self.tree.setCurrentIndex(index)
+
     def unread_in_another_folder(self, step: int) -> bool:
         """The next (or previous) folder of the account shown that has unread mail, in the order of the folder list (subfolders too,
         also of an account in a group), from the folder shown (also opened through its pin or its account's row), never that folder
@@ -827,7 +840,12 @@ class FolderPane(QObject):
         if not ok or not name or name == current or not self._folder_name_allowed(name):
             return
         path = f"{parent}/{name}" if parent else name  # the folder stays where it is
-        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path), lambda result: self._status.show(with_rules("Folder renamed", result.rules)), lambda error: self._status.report("Could not rename the folder", error), owner=self)
+
+        def renamed(result: FolderResult) -> None:
+            self._status.show(with_rules("Folder renamed", result.rules))
+
+        done, failed = self._undoing.track(renamed, lambda error: self._status.report("Could not rename the folder", error))
+        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path, undo=self._undoing.new_action()), done, failed, owner=self)
 
     def _folder_name_allowed(self, name: str) -> bool:
         """A folder's name is one name: "/" nests folders, so it would quietly make folders the person did not ask for."""
@@ -851,7 +869,13 @@ class FolderPane(QObject):
         answer = QMessageBox.question(self._parent, "Delete folder", f"Delete the folder “{view.folder}”, its subfolders and all the messages in them?")
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._backend.ask(FOLDER_DELETE, FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True), lambda result: self._status.show(with_rules("Folder deleted", result.rules)), lambda error: self._status.report("Could not delete the folder", error), owner=self)
+
+        def deleted(result: FolderDeleteResult) -> None:
+            self._status.show(with_rules("Folder deleted", result.rules))
+
+        done, failed = self._undoing.track(deleted, lambda error: self._status.report("Could not delete the folder", error))
+        parameters = FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True, undo=self._undoing.new_action())
+        self._backend.ask(FOLDER_DELETE, parameters, done, failed, owner=self)
 
 
 def _only_holds_folders(index: QModelIndex) -> bool:
