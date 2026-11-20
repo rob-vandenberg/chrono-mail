@@ -31,9 +31,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.4.563"
+__version__ = "messagelistpane.py 4.6.651"
 
 # --- Version history ----------------------------------------------------
+# v4.6.651: the row above the list (Sorted by, Filter, the count) is list_header, sized with the message list (D-367)
 # v4.4.563: a new local day (by the engine's clock) asks the list's day headings again, draws what is on screen again and keeps the message at
 #           the top of the screen where it was (DayWatch, D-321)
 # v4.4.562: the view asks for messages with the same value in the order Secondary sort sets, and follows a change of it in place (D-320)
@@ -90,6 +91,8 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
 )
 RECIPIENT_ROLES: tuple[str, ...] = RECIPIENT_VIEWS  # the folders (and Favorites) where From / To shows who a message went to: the engine's, so the Contact sort judges the same
 MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to", "to_shown": "to"}  # Sender and To, however shown (D-291)
+
+HEADER_MARGINS: tuple[int, int, int, int] = (10, 6, 10, 6)  # around the row above the list, at the message list's size (scale.lpx)
 
 
 
@@ -185,6 +188,7 @@ class MessageListPane(QObject):
         self.view.installEventFilter(self._repeats)
         self._build_view()
         self.pane: QWidget = QWidget(parent)
+        self.list_header: QWidget = QWidget(self.pane)  # the row above the list: Sorted by, Filter, the count; at the message list's size (D-367)
         self.header_layout: QHBoxLayout = QHBoxLayout()
         self.sort_button: QToolButton = QToolButton(parent)
         self.sort_menu: QMenu = QMenu(self.sort_button)
@@ -270,9 +274,10 @@ class MessageListPane(QObject):
         layout = QVBoxLayout(self.pane)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        header = QWidget(self.pane)
+        header = self.list_header
+        header.setObjectName("listHeader")
         header.setLayout(self.header_layout)
-        self.header_layout.setContentsMargins(10, 6, 10, 6)
+        self.header_layout.setContentsMargins(*HEADER_MARGINS)
         self.sort_button.setParent(header)
         self.sort_button.setObjectName("sortButton")
         self.sort_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)

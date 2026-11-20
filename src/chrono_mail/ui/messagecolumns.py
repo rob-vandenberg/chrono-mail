@@ -18,13 +18,14 @@ from chrono_mail.ui.columnsetup import (
 from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelist import YES_NO_SORTS
-from chrono_mail.ui.messagelistpane import MessageListPane
+from chrono_mail.ui.messagelistpane import HEADER_MARGINS, MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 4.4.615"
+__version__ = "messagecolumns.py 4.6.651"
 
 # --- Version history ----------------------------------------------------
+# v4.6.651: apply_list_look: the row above the list (Sorted by, Filter, the count) gets the message list's size too (D-367)
 # v4.4.615: the Size column is never narrower than its widest text ("1023.9 MB", bold as on an unread row) with the cell's margins,
 #           measured by the style the way the list paints the cell (cell_width); it was cut at the 50 pixels of every text column
 #           and a dragged column line stops there too (drag takes the same smallest widths as fit)
@@ -595,5 +596,10 @@ class MessageColumns(QObject):
         view.header().setStyleSheet(f"QHeaderView::section {{ font-size: {font.pointSizeF()}pt; }}")  # the style rules of the header draw with their own font otherwise
         view.header().setMinimumSectionSize(scale.lpx(MINIMUM_ICON))  # icon columns may be narrower at a small size
         self._messages.column_delegate.row_height = COLUMN_ROW_HEIGHTS[self._prefs.read().list_density]
+        header = self._messages.list_header  # Sorted by, Filter and the count belong to the list (D-367)
+        header.setFont(font)
+        for widget in header.findChildren(QWidget):
+            widget.setFont(font)  # each part, also one with style rules of its own
+        self._messages.header_layout.setContentsMargins(*(scale.lpx(margin) for margin in HEADER_MARGINS))
         view.doItemsLayout()
         self.fit_columns()
