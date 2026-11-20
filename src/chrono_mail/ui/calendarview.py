@@ -50,15 +50,16 @@ from chrono_mail.ui.splitter import SideSplitter
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown
 from chrono_mail.ui.toolbar import view_button
-from chrono_mail.ui import weekstart
+from chrono_mail.ui import scale, weekstart
 from chrono_mail.ui.prefs import Preferences, read_preferences
 from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.6.652"
+__version__ = "calendarview.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the title keeps its share when the sizes change (scale.FONT_SHARE_PROPERTY, D-367)
 # v4.6.652: _size_changed: the title, the hours, the all-day row, Month and Agenda follow the Calendar's size (D-367)
 # v4.4.616: Settings > Calendar (D-352): the n weeks view (named by its weeks), Upcoming of a chosen number of days from the day shown (the
 #           arrows move by them), week numbers, short events as 30 minutes, past events less bright, Start week on (also the small month)
@@ -373,6 +374,7 @@ class CalendarPage(PimPage):
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() * 1.15)
         self.title.setFont(font)
+        self.title.setProperty(scale.FONT_SHARE_PROPERTY, 1.15)  # it keeps this share of the row it is in (D-367)
 
     @override
     def _size_changed(self) -> None:

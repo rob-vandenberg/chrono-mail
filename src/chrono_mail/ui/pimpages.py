@@ -17,9 +17,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 4.6.652"
+__version__ = "pimpages.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the content is marked as having a size of its own (scale.OWN_SIZE_PROPERTY, D-367)
 # v4.6.652: apply_size: everything right of the sidebar (content) at the view's own size, Settings > Appearance > Sizes (D-367)
 # v4.4.568: The status line says where new items go when the blue plus moved by itself (D-326)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -88,6 +89,7 @@ class PimPage(SectionPage):
         """Everything right of the sidebar and below the top bar at this size (a factor of the system's text size, D-367): the text,
         then the parts of a fixed size (_size_changed). The top bar, the sidebar and the status line keep the Main window's size."""
         scale.set_view(self.size_name, factor)
+        self.content.setProperty(scale.OWN_SIZE_PROPERTY, True)  # its own slider's: the Main window slider leaves it alone
         app = QApplication.instance()
         system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
         font = QFont(QApplication.font())

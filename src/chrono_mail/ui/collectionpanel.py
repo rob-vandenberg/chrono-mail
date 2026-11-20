@@ -38,11 +38,13 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.newcollection import NewCollectionDialog
 from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
+from chrono_mail.ui import scale
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.4.615"
+__version__ = "collectionpanel.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the heading keeps its share of the sidebar's size (D-367)
 # v4.4.615: the delete question of a collection names no store directory or days (OR-18); Sync conflicts is a window, Menu > Sync conflicts…
 # v4.4.608: Rename sends nothing when the name is left as shown: a calendar named only by an address shows a name it does not have (D-346)
 # v4.4.604: Rename of a Google calendar is a name only for you; empty gives Google's name back (D-343)
@@ -191,6 +193,7 @@ class CollectionPanel(QWidget):
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() * 1.1)
         self.title.setFont(font)
+        self.title.setProperty(scale.FONT_SHARE_PROPERTY, 1.1)  # it stays this share larger than the sidebar when the size changes (D-367)
         self.title.setContentsMargins(10, 8, 10, 6)
         layout.addWidget(self.title)
         self.tree = QTreeWidget(self)

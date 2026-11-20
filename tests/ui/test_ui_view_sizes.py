@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from PySide6.QtCore import QModelIndex, QSettings
-from PySide6.QtWidgets import QApplication, QLabel, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QStyleOptionViewItem, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance, prefs, scale
@@ -13,9 +15,11 @@ from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_view_sizes.py 4.6.654"
+__version__ = "test_ui_view_sizes.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the Main window slider sizes every part of the main window and nothing else; Other windows leaves the main window alone;
+#           the shares stay; a plain text message follows Text of messages only; tooltips follow the active window
 # v4.6.654: the row of day names and the column left of the days follow the Calendar size
 # v4.6.653: Month: the weekday row and a day's top follow the Calendar size, in clicks too
 # v4.6.652: Calendar, Contacts and Tasks: the rows of Sizes, each slider its own view only, Cancel, the first start (D-367)
@@ -210,3 +214,104 @@ def test_the_row_of_day_names_and_the_column_left_of_it_follow_the_calendar_size
         header.render(image)  # drawn at that size without trouble
     finally:
         scale.set_view("calendar", 1.0)
+
+
+def _inside_own_size(widget: QWidget) -> bool:
+    part: QWidget | None = widget
+    while part is not None:
+        if part.property(scale.OWN_SIZE_PROPERTY):
+            return True
+        part = part.parentWidget()
+    return False
+
+
+def _main_parts(world: World) -> dict[str, float]:
+    window = world.window
+    buttons = [button for button in window.findChildren(QToolButton) if button.window() is window and button.isVisibleTo(window)
+               and not _inside_own_size(button)]  # a button of the top bar or the sidebar, not the Sorted by of the message list
+    return {"tree": window.tree.font().pointSizeF(), "button": buttons[0].font().pointSizeF(), "status": window.report.label.font().pointSizeF(),
+            "subject": window.reader._subject.font().pointSizeF()}  # noqa: SLF001
+
+
+def _own_parts(world: World) -> dict[str, float]:
+    window = world.window
+    return {"list": window.list_view.font().pointSizeF(), "calendar": window.pages[CALENDAR].content.font().pointSizeF(),
+            "contacts": window.pages[CONTACTS].content.font().pointSizeF(), "message": window.reader._text.font().pointSizeF()}  # noqa: SLF001
+
+
+def test_the_main_window_slider_sizes_every_part_of_the_main_window_and_nothing_else(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    window.show()
+    own = _own_parts(world)
+    try:
+        window.try_interface_scale(2.0)
+        main = round(_system_points() * 2.0, 2)
+        parts = _main_parts(world)
+        assert parts == {"tree": main, "button": main, "status": main, "subject": round(main * 1.35, 2)}
+        assert _own_parts(world) == own  # the message list, the views and the content of a message keep their sizes
+        later = QLabel("made later", window.tree.parentWidget())
+        later.show()
+        qtbot.wait(10)
+        assert later.font().pointSizeF() == main  # a part made after the change takes the size of the part it is in
+    finally:
+        window.try_interface_scale(1.0)
+    assert _main_parts(world)["tree"] == round(_system_points(), 2)
+
+
+def test_the_other_windows_slider_leaves_the_main_window_alone(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    window = world.window
+    window.start()
+    window.show()
+    before, own = _main_parts(world), _own_parts(world)
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    inside = QLabel("in a dialog", dialog)
+    try:
+        window.try_windows_scale(2.0)
+        assert _main_parts(world) == before and _own_parts(world) == own
+        dialog.show()
+        qtbot.wait(10)
+        assert inside.font().pointSizeF() == round(_system_points() * 2.0, 2)  # the other windows do grow
+    finally:
+        window.try_windows_scale(1.0)
+
+
+def test_a_plain_text_message_follows_text_of_messages_only(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    try:
+        window.try_windows_scale(2.0)
+        window.try_interface_scale(1.5)
+        window.try_reading_scale(1.25)
+        assert window.reader._text.font().pointSizeF() == max(6.0, _system_points() * 1.25)  # noqa: SLF001
+    finally:
+        window.try_windows_scale(1.0)
+        window.try_interface_scale(1.0)
+        window.try_reading_scale(1.0)
+
+
+def test_a_tooltip_takes_the_size_of_the_window_that_is_active(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QDialog, QToolTip
+
+    window = world.window
+    window.start()
+    original = QToolTip.font()
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    try:
+        window.try_interface_scale(2.0)
+        window.try_windows_scale(0.75)
+        monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: window))
+        window._tooltip_font()  # noqa: SLF001
+        assert QToolTip.font().pointSizeF() == round(_system_points() * 2.0, 2)
+        monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: dialog))
+        window._tooltip_font()  # noqa: SLF001
+        assert QToolTip.font().pointSizeF() == round(_system_points() * 0.75, 2)
+    finally:
+        monkeypatch.undo()
+        window.try_interface_scale(1.0)
+        window.try_windows_scale(1.0)
+        QToolTip.setFont(original)

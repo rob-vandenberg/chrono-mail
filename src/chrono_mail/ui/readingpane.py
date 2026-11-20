@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.615"
+__version__ = "readingpane.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: keep_text_size: the content of a message keeps its size when the main window's style sheet is set again (D-367)
 # v4.4.615: open_window_of: a message already read is not marked read again (no command, no Undo step)
 # v4.4.572: wire_reader: a reader outside the reading pane gets the calendar card's actions; the message window and the Tag overview use it (D-328)
 # v4.4.558: Decline from the calendar goes as on a card, with no choice of calendar
@@ -325,6 +326,12 @@ class ReadingPane(QObject):
     def try_reading_scale(self, factor: float) -> None:
         for reader in self.readers():
             reader.set_zoom(round(factor * 100))
+
+    def keep_text_size(self) -> None:
+        """The content of each message at the size it has (Text of messages): setting the main window's style sheet again gives every part the
+        program's font, also the content (D-367)."""
+        for reader in self.readers():
+            reader.set_zoom(reader.zoom)
 
     def _set_reader_preferences(self, reader: ReaderWidget) -> None:
         chosen = self._prefs.read()

@@ -8,9 +8,11 @@ from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleHintRetur
 from chrono_mail.ui.icons import bundled_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "scale.py 4.6.652"
+__version__ = "scale.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: follow_fonts: every part of the main window takes the size of the part it is in (the style sheet keeps Qt from passing it on),
+#           also a part made later (polish); a part with a slider of its own (OWN_SIZE_PROPERTY) is left alone (D-367)
 # v4.6.652: a size factor for each of Calendar, Contacts and Tasks, the part of the view right of the sidebar (view, set_view, vpx, D-367)
 # v4.4.615: The buttons of dialogs and message boxes always have icons, and these (and the icons of message boxes) are the program's own
 #           Breeze copies in the colour of button text, on every computer and in every theme; never the desktop's icon theme (D-087, D-158)
@@ -58,6 +60,10 @@ STANDARD_ICONS: dict[QStyle.StandardPixmap, str] = {
     QStyle.StandardPixmap.SP_MessageBoxQuestion: "dialog-question",
 }
 MAIN_WINDOW_PROPERTY: str = "chronoMainWindow"  # set on the main window: it and its menus follow the factor of the main window
+OWN_SIZE_PROPERTY: str = "chronoOwnSize"  # a part with a slider of its own (the message list, Calendar, Contacts, Tasks, the content of a message):
+# the Main window slider leaves it alone, and the parts inside it follow it (D-367)
+FONT_SHARE_PROPERTY: str = "chronoFontShare"  # a part a fixed share larger than the part it is in (a subject 1.35): it keeps that share
+SIZE_RESOLVED: int = 0x0002  # QFont::SizeResolved: the font has a size of its own (PySide does not name it)
 _PIXELS = re.compile(r"(?<![\w.#-])(\d+(?:\.\d+)?)px")
 
 
@@ -105,6 +111,34 @@ def owning_window(widget: QWidget | None) -> QWidget | None:
 def in_main_window(widget: QWidget | None) -> bool:
     window = owning_window(widget)
     return window is not None and bool(window.property(MAIN_WINDOW_PROPERTY))
+
+
+def follow_parent_font(widget: QWidget) -> None:
+    """A part of the main window at the size of the part it is in (times its share), with its own bold, italic and typeface. With the
+    theme's style sheet Qt gives every part the program's font (the size of the other windows) instead (D-367). A window, and a part with a
+    slider of its own, are left alone."""
+    parent = widget.parentWidget()
+    if parent is None or widget.isWindow() or widget.property(OWN_SIZE_PROPERTY):
+        return
+    share = widget.property(FONT_SHARE_PROPERTY)
+    size = round(parent.font().pointSizeF() * (float(share) if isinstance(share, (int, float)) else 1.0), 2)
+    font = QFont(widget.font())
+    own = bool(font.resolveMask() & SIZE_RESOLVED)
+    if size > 0 and (font.pointSizeF() != size or not own):  # also when it matches: a size of its own, or the program's font would replace it
+        font.setPointSizeF(size)
+        widget.setFont(font)
+
+
+def follow_fonts(root: QWidget) -> None:
+    """Every part inside root (the main window) follows the part it is in, each part before the parts inside it; other windows are left
+    alone (D-367)."""
+    waiting = [child for child in root.children() if isinstance(child, QWidget)]
+    while waiting:
+        widget = waiting.pop()
+        if widget.isWindow():
+            continue
+        follow_parent_font(widget)
+        waiting.extend(child for child in widget.children() if isinstance(child, QWidget))
 
 
 def factor_for(widget: QWidget | None) -> float:
@@ -191,6 +225,7 @@ class ScaledStyle(QProxyStyle):
         self.factor: float = factor
         self.windows_factor: float = windows_factor
         self.main_font: QFont | None = None  # the text of the main window: its menus and popups get it when they are polished
+        self.switching: bool = False  # the program is being given this style: a font set now would crash Qt; the main window sizes every part after it
         self.base_name: str = name
         base = self.baseStyle()
         self.setObjectName(base.objectName() if base is not None else name)
@@ -211,6 +246,8 @@ class ScaledStyle(QProxyStyle):
             super().polish(target)
             if self.main_font is not None and target.isWindow() and target.windowType() == Qt.WindowType.Popup and in_main_window(target):
                 target.setFont(self.main_font)
+            elif not self.switching and not target.isWindow() and in_main_window(target):
+                follow_parent_font(target)  # a part of the main window made later: the size of the part it is in (D-367)
         else:
             super().polish(target)
 

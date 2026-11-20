@@ -19,9 +19,10 @@ from chrono_mail.ui.formatting import avatar_colour, initials
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactdetail.py 4.6.652"
+__version__ = "contactdetail.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the name keeps its share when the sizes change (scale.FONT_SHARE_PROPERTY, D-367)
 # v4.6.652: apply_size: the name, the photo and the margins follow the Contacts size (D-367)
 # v3.6.349: the dates of a contact's mail on this computer's clock through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.10.277: The groups a contact is in, under Contact information (R-39)
@@ -137,6 +138,7 @@ class ContactDetail(QWidget):
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() * 1.5)
         self.name.setFont(font)
+        self.name.setProperty(scale.FONT_SHARE_PROPERTY, 1.5)  # it keeps this share of the details' size (D-367)
         if self._current is not None:
             self.photo.setPixmap(avatar_pixmap(self._current.name, scale.vpx("contacts", AVATAR), self._current.photo_base64))
 

@@ -29,11 +29,13 @@ from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.prefs import InUse, Remembered
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui import scale
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.6.651"
+__version__ = "messagelistpane.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the list and the row above it are marked as having a size of their own (scale.OWN_SIZE_PROPERTY, D-367)
 # v4.6.651: the row above the list (Sorted by, Filter, the count) is list_header, sized with the message list (D-367)
 # v4.4.563: a new local day (by the engine's clock) asks the list's day headings again, draws what is on screen again and keeps the message at
 #           the top of the screen where it was (DayWatch, D-321)
@@ -189,6 +191,8 @@ class MessageListPane(QObject):
         self._build_view()
         self.pane: QWidget = QWidget(parent)
         self.list_header: QWidget = QWidget(self.pane)  # the row above the list: Sorted by, Filter, the count; at the message list's size (D-367)
+        for own in (self.view, self.list_header):
+            own.setProperty(scale.OWN_SIZE_PROPERTY, True)  # the Message list slider's: the Main window slider leaves them alone (D-367)
         self.header_layout: QHBoxLayout = QHBoxLayout()
         self.sort_button: QToolButton = QToolButton(parent)
         self.sort_menu: QMenu = QMenu(self.sort_button)

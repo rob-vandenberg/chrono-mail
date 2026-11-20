@@ -11,9 +11,10 @@ from chrono_mail.ui.prefs import COLOR_SCHEMES, read_preferences
 from chrono_mail.ui.colours import menu_palette_of, palette_of, set_accents, theme_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 4.4.623"
+__version__ = "appearance.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: while the program gets a new style no part of the main window is given a font (scale.ScaledStyle.switching, D-367)
 # v4.4.623: compose_family and compose_points: the default font of new messages, chosen or the program's own (D-354)
 # v1.2.253: The colour scheme and the accents come from the one settings object (R-12)
 # v1.1.182: The accent colour of each theme comes from the settings (accent_dark, accent_light, D-164)
@@ -142,7 +143,10 @@ def apply(app: QApplication, settings: QSettings, interface_factor: float | None
             isinstance(current, scale.ScaledStyle) and current.base_name.lower() == FUSION.lower()
             and current.factor == scale.interface() and current.windows_factor == scale.windows()
         ):
-            app.setStyle(scale.ScaledStyle(FUSION, scale.interface(), scale.windows()))  # the icons and tick boxes at the factor of their window
+            new_style = scale.ScaledStyle(FUSION, scale.interface(), scale.windows())
+            new_style.switching = True  # no font is set while every part gets the style (scale.follow_fonts does it after, D-367)
+            app.setStyle(new_style)  # the icons and tick boxes at the factor of their window
+            new_style.switching = False
         style = app.style()
         if isinstance(style, scale.ScaledStyle):
             style.main_font = main_font(app)  # for the menus and popups of the main window

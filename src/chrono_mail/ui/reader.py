@@ -49,11 +49,13 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
+from chrono_mail.ui import appearance, scale
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.615"
+__version__ = "reader.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the content of a message keeps its own size (Text of messages), a plain text one from the system's size only; the subject keeps its share (D-367)
 # v4.4.615: The row of files is the header's last part: a frame of its own (readerFiles) in the header's colour with the header's bottom
 #           line under it, so the line lies directly above the message and no band of the window's colour shows between them
 # v4.4.527: calendar_parts: which attachments open as a card, whatever their name (D-310)
@@ -1033,6 +1035,7 @@ class ReaderWidget(QWidget):
         subject_font.setPointSizeF(subject_font.pointSizeF() * 1.35)
         subject_font.setBold(True)
         self._subject.setFont(subject_font)
+        self._subject.setProperty(scale.FONT_SHARE_PROPERTY, 1.35)  # it stays this share larger than the header when the size changes (D-367)
         self._subject.setTextFormat(Qt.TextFormat.PlainText)  # a subject is hostile input: never markup
         self._subject.setTextInteractionFlags(self._subject.textInteractionFlags().TextSelectableByMouse)
         self._avatar = QLabel(self._header)
@@ -1112,12 +1115,14 @@ class ReaderWidget(QWidget):
         self._placeholder.setAlignment(self._placeholder.alignment().AlignCenter)
         self._placeholder.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self._text = PlainTextView(self._stack)
+        self._text.setProperty(scale.OWN_SIZE_PROPERTY, True)  # the content of a message: Text of messages, never the Main window slider (D-367)
         self._text.setOpenLinks(False)
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.anchorClicked.connect(self.link_activated)
         self._text.highlighted.connect(self._text_hovered)
         self._text.menu_requested.connect(self._message_menu)
         self._web, self._page, self._blocker, self._content = make_safe_view(self._stack)
+        self._web.setProperty(scale.OWN_SIZE_PROPERTY, True)  # the same for a message in HTML
         self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # only a picture of the message and a link have a menu (D-236, D-281)
         self._web.customContextMenuRequested.connect(self._page_menu)
         self._picture_positions: dict[str, int] = {}  # the address a picture is shown by -> its place among the attachments
@@ -1516,7 +1521,9 @@ class ReaderWidget(QWidget):
         if self.banner_visible():
             self._reserve_banner_room(self._banner.height())
         font = QFont(self.font())
-        font.setPointSizeF(max(6.0, font.pointSizeF() * self._zoom / 100) if font.pointSizeF() > 0 else 10.0 * self._zoom / 100)
+        app = QApplication.instance()
+        system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        font.setPointSizeF(max(6.0, system * self._zoom / 100))  # Text of messages only: never the size of a window around it (D-367)
         self._text.setFont(font)
 
     @property

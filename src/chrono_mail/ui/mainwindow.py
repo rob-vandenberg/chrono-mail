@@ -6,7 +6,7 @@ from typing import override
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QLayout, QMainWindow, QMenu, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QLabel, QLayout, QMainWindow, QMenu, QSizePolicy, QStackedWidget, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from chrono_mail.core import ChronoMailError
@@ -75,9 +75,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.6.652"
+__version__ = "mainwindow.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: every part of this window at the Main window size (scale.follow_fonts), never the other windows'; a tooltip at the size of the
+#           window that is active (D-367)
 # v4.6.652: Calendar, Contacts and Tasks at their own sizes: stored at the first start from the Main window's (Q122), tried while a slider
 #           moves, back on Cancel, kept on OK (D-367)
 # v4.6.649: View > Operations… is an action with the key Ctrl+Shift+O; a click on a mail check's error line opens the Errors tab (D-366)
@@ -400,8 +402,12 @@ class MainWindow(QMainWindow):
         self._for_update: bool = False  # closing after an update: no questions (quit_for_update)
         self.out_of_sight: bool = False  # started minimized at login and not opened since (D-284): Wayland never says a window is minimized
         self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
+        app_now = QApplication.instance()
+        if isinstance(app_now, QApplication):
+            app_now.focusChanged.connect(self._tooltip_font)  # another window active: the tooltips at its size (D-367)
         self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())  # only this window: a stylesheet on the application would hide the style from appearance.py
+        scale.follow_fonts(self)  # after the style sheet: setting it gives every part the program's font again (D-367)
         self._build_parts()
         self._build_actions()
         self._default_shortcuts: dict[str, str] = {name: action.shortcut().toString() for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
@@ -1317,6 +1323,8 @@ class MainWindow(QMainWindow):
             appearance.apply(app, self.settings)  # the colours and the sizes take effect at once
             self._apply_main_font()
             self.setStyleSheet(theme.stylesheet())  # the colours in it come from the palette: ask for them again
+            scale.follow_fonts(self)  # after the style sheet, which gives every part the program's font again (D-367)
+            self.reading.keep_text_size()  # and so does the content of a message: back at Text of messages
             self.report.restyle()  # the red of an error follows the colours
             self._apply_scaled_parts()
             self.reading.restyle_message_windows()
@@ -1384,6 +1392,8 @@ class MainWindow(QMainWindow):
         appearance.apply(app, self.settings, self._tried_interface, self._tried_windows)  # a size not being tried out is the saved one
         self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())
+        scale.follow_fonts(self)  # after the style sheet, which gives every part the program's font again (D-367)
+        self.reading.keep_text_size()  # and so does the content of a message: back at Text of messages
         self._apply_scaled_parts()
         self.columns.apply_list_look(scale.message_list())  # the list keeps the size it shows (also one being tried out, not saved yet)
         self._apply_view_sizes({view: scale.view(view) for view in scale.VIEWS})  # so do Calendar, Contacts and Tasks
@@ -1416,6 +1426,17 @@ class MainWindow(QMainWindow):
         for child in self.findChildren(QWidget):
             if child.isWindow() and child.windowType() == Qt.WindowType.Popup:
                 child.setFont(font)  # menus made already; new ones get it when they are first shown (appearance.MainWindowPopups)
+        scale.follow_fonts(self)  # every part at this size: the style sheet keeps Qt from passing it on (D-367)
+        self._tooltip_font()
+
+    def _tooltip_font(self, _old: QWidget | None = None, _new: QWidget | None = None) -> None:
+        """A tooltip at the size of the window that is active: this window's over this window, the other windows' over another (D-367).
+        Qt has one tooltip font for the whole program, so it changes when another window becomes active."""
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        active = app.activeWindow()
+        QToolTip.setFont(appearance.main_font(app) if active is None or active is self else app.font())
 
     def _fix_minimum_width(self) -> None:
         """One minimum width for every section: 768 px, or what the contents need at a larger size factor (they need

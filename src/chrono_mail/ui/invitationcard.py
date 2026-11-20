@@ -20,11 +20,13 @@ from chrono_mail.ui.infomark import InfoMark
 from chrono_mail.ui.linkhint import linkify
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
+from chrono_mail.ui import scale
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.557"
+__version__ = "invitationcard.py 4.6.655"
 
 # --- Version history ----------------------------------------------------
+# v4.6.655: the title keeps its share of the card's size (D-367)
 # v4.4.557: The answers are greyed while the event is Cancelled in your calendar, until Restore or a newer version (D-310)
 # v4.4.554: The mail of a declined event says where it is hidden; Change my answer on it brings back the four answers (D-310)
 # v4.4.534: the four answer buttons are gradients (Accept green, Tentative orange, Delegate blue, Decline red) and stand in that order (D-310)
@@ -630,6 +632,7 @@ class InvitationCard(QFrame):
         title_font.setPointSizeF(title_font.pointSizeF() * 1.45)
         title_font.setBold(True)
         self.title.setFont(title_font)
+        self.title.setProperty(scale.FONT_SHARE_PROPERTY, 1.45)  # it stays this share larger than the card when the size changes (D-367)
 
     def clear(self) -> None:
         """Nothing of the message before stays: its card and its attendees go."""
