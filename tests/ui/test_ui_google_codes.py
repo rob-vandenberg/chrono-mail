@@ -1,18 +1,22 @@
 import dataclasses
 
+import pytest
+
 from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
-from chrono_mail.engine.commands_accounts import AccountSummary
+from chrono_mail.engine.commands_accounts import AccountSummary, StoredSecrets
 from chrono_mail.ui.accountedit import AccountEditDialog
+from chrono_mail.ui.passwordfield import STORED
 from tests.test_account_names_google import CALDAV, CARDDAV, google
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_google_codes.py 4.6.646"
+__version__ = "test_ui_google_codes.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: the stored client secret shows as 16 dots; Save without typing keeps it; dots typed back are ignored (D-365)
 # v4.6.646: Initial tests: a Google account's window shows Client ID and Client secret on its General tab, below Google account; Save
 #           changes them for both accounts of the Google address (B-34, D-364)
 
@@ -46,7 +50,7 @@ def test_a_google_accounts_general_tab_shows_its_client_id_and_a_secret_field_be
     assert rows == [rows[0], rows[0] + 1, rows[0] + 2]
     assert label_of(general, dialog.google_client_id) == "Client ID" and label_of(general, dialog.google_client_secret) == "Client secret"
     assert dialog.google_client_id.text() == "old-id"
-    assert dialog.google_client_secret.text() == "" and dialog.google_client_secret.placeholderText() == "(unchanged)"  # never shown (OR-19)
+    wait(qtbot, lambda: dialog.google_client_secret is not None and dialog.google_client_secret.text() == STORED)  # stored: 16 dots, never the secret (D-365)
     assert dialog.google_client_secret.echoMode() == QLineEdit.EchoMode.Password
 
 
@@ -92,3 +96,32 @@ def test_an_emptied_client_id_is_refused_and_the_window_stays(world: World, qtbo
     dialog.save_button.click()
     wait(qtbot, lambda: "must not be empty" in dialog.result_label.text())
     assert dialog.result() != QDialog.DialogCode.Accepted and world.engine.config().find(calendar.account_id).google_client_id == "old-id"
+
+
+def test_the_dots_of_the_stored_secret_are_never_sent_and_an_account_without_one_shows_an_empty_field(
+    world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calendar, contacts = google_pair(world)
+    world.engine.passwords.delete(contacts.account_id, ServerRole.GOOGLE_SECRET)  # as on a computer where it was never entered
+    answered: list[StoredSecrets] = []
+    shown = AccountEditDialog._show_stored  # pyright: ignore[reportPrivateUsage]
+
+    def noted(self: AccountEditDialog, stored: StoredSecrets) -> None:
+        answered.append(stored)
+        shown(self, stored)
+
+    monkeypatch.setattr(AccountEditDialog, "_show_stored", noted)
+    empty = AccountEditDialog(world.backend, contacts)
+    qtbot.addWidget(empty)
+    assert empty.google_client_secret is not None
+    wait(qtbot, lambda: bool(answered))
+    assert not answered[0].google_secret and empty.google_client_secret.text() == ""
+    dialog = AccountEditDialog(world.backend, calendar)
+    qtbot.addWidget(dialog)
+    assert dialog.google_client_id is not None and dialog.google_client_secret is not None
+    wait(qtbot, lambda: dialog.google_client_secret is not None and dialog.google_client_secret.text() == STORED)
+    dialog.google_client_id.setText("new-id")
+    dialog.google_client_secret.setText(STORED + STORED)  # dots of any number are never a secret
+    dialog.save_button.click()
+    wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
+    assert world.engine.passwords.get(calendar.account_id, ServerRole.GOOGLE_SECRET) == "old-secret"

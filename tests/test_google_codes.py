@@ -14,9 +14,10 @@ from tests.test_engine_commands import call
 from tests.test_google_sign_in import CLIENT, CODES, google_answers, servers, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_codes.py 4.6.646"
+__version__ = "test_google_codes.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: account.stored-secrets says which passwords and secrets are stored, never what they are (D-365)
 # v4.6.646: Initial tests: each Google account keeps the client ID and client secret the person typed, the secret only in the credential
 #           store; account.edit changes them for both accounts of one Google address; removing an account removes its secret; the one copy
 #           of the former file's codes (B-34, D-364)
@@ -192,3 +193,15 @@ def test_a_credential_store_that_refuses_leaves_the_copy_for_the_next_start(
     assert all(engine.config().find(each).google_client_id == "" for each in accounts)  # never a client ID without its secret
     monkeypatch.setattr(store, "set", kept)
     assert len(call(engine, "google.copy-codes").names) == 2
+
+
+def test_the_window_is_told_which_secrets_are_stored_never_what_they_are(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: tuple[FakeDav, FakeDav],
+) -> None:
+    engine = make_engine(tmp_path)
+    account = added(engine, monkeypatch)[0]
+    stored = call(engine, "account.stored-secrets", account=account)
+    assert (stored.incoming, stored.outgoing, stored.dav, stored.google_secret) == (True, False, True, True)  # the sign-in is its one password
+    assert CLIENT.client_secret not in repr(stored) and "refresh-1" not in repr(stored)
+    engine.passwords.delete(account, ServerRole.GOOGLE_SECRET)
+    assert not call(engine, "account.stored-secrets", account=account).google_secret

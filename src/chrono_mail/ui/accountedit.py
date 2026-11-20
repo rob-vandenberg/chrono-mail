@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import AccountKind, CertificateError, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
-    ACCOUNT_CHECK, ACCOUNT_EDIT, ACCOUNT_FORGET_CERTIFICATE, ACCOUNT_FORGET_CERTIFICATES, ACCOUNT_TRUST_CERTIFICATE, AccountCheckResult, AccountEditParameters, AccountParameters, AccountSummary,
-    TrustParameters,
+    ACCOUNT_CHECK, ACCOUNT_EDIT, ACCOUNT_FORGET_CERTIFICATE, ACCOUNT_FORGET_CERTIFICATES, ACCOUNT_STORED_SECRETS, ACCOUNT_TRUST_CERTIFICATE, AccountCheckResult,
+    AccountEditParameters, AccountParameters, AccountSummary, StoredSecrets, TrustParameters,
 )
 from chrono_mail.engine.commands_dav import ACCOUNT_SET_DAV, SetDavParameters
 from chrono_mail.engine.commands_google import GOOGLE_CANCEL_SIGN_IN, GOOGLE_SIGN_IN, CancelParameters, SignInParameters, SignInResult
@@ -40,15 +40,16 @@ from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FolderTicks
-from chrono_mail.ui.passwordfield import make_password_field
+from chrono_mail.ui.passwordfield import EDITED, make_password_field, show_stored, typed
 from chrono_mail.ui.serverfields import ServerFields, kind_of, policy_of, security_of, start_values_of, test_result_text
 from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.6.646"
+__version__ = "accountedit.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: a stored password or client secret shows as 16 dots, which are never sent; nothing stored: an empty field (D-365)
 # v4.6.646: a Google account: Client ID and Client secret on the General tab, below Google account; Save changes them for every Google
 #           account of the same Google address (B-34, D-364)
 # v4.5.626: The old signature field is gone: templates and signatures are chosen per account on Settings > Templates and Signatures (B-24, D-358)
@@ -144,8 +145,7 @@ class AccountEditDialog(QDialog):
             self.google_client_id = QLineEdit(account.google_client_id)
             self.google_client_id.setToolTip("The client ID of your Google project" + shared)
             self.google_client_secret = QLineEdit()
-            self.google_client_secret.setPlaceholderText("(unchanged)")
-            self.google_client_secret.setToolTip("The client secret of your Google project; left empty, the stored one stays" + shared)
+            self.google_client_secret.setToolTip("The client secret of your Google project; the dots stand for the stored one, which stays unless you type another" + shared)
             make_password_field(self.google_client_secret)
             general.insertRow(2, "Client ID", self.google_client_id)
             general.insertRow(3, "Client secret", self.google_client_secret)
@@ -179,8 +179,6 @@ class AccountEditDialog(QDialog):
         elif account.incoming_username:  # the incoming mail's sign-in name, named (D-342)
             self.dav_username.setPlaceholderText(f"(the same as for incoming mail: {account.incoming_username})")
         self.dav_password: QLineEdit = part(form, QLineEdit, "davPassword")
-        if calendars_only:
-            self.dav_password.setPlaceholderText("(unchanged)")
         make_password_field(self.dav_password)
         self.dav_result: QLabel = part(form, QLabel, "davResult")
         self.dav_result.setTextFormat(Qt.TextFormat.RichText)
@@ -268,6 +266,16 @@ class AccountEditDialog(QDialog):
         self.forget_certificates_button.clicked.connect(self._forget_certificates)
         self.policy.currentIndexChanged.connect(self._policy_changed)
         self._policy_changed()
+        self._backend.ask(ACCOUNT_STORED_SECRETS, AccountParameters(account.account_id), self._show_stored, lambda _error: None, owner=self)  # unknown: the fields stay empty
+
+    def _show_stored(self, stored: StoredSecrets) -> None:
+        """16 dots in each field whose password or secret is stored, an empty field where none is (D-365); a field typed in meanwhile is left as it is."""
+        pairs = [(self.password, stored.incoming), (self.outgoing_password, stored.outgoing), (self.dav_password, stored.dav)]
+        if self.google_client_secret is not None:
+            pairs.append((self.google_client_secret, stored.google_secret))
+        for field, held in pairs:
+            if not field.property(EDITED):
+                show_stored(field, held)
 
     def _server_fields(self, parent: QWidget) -> QWidget:
         """The incoming and outgoing server boxes (shared with Add account), made at their place in the form."""
@@ -320,7 +328,7 @@ class AccountEditDialog(QDialog):
         self.dav_check_button.setEnabled(False)
         self.dav_result.setText("Loading the folders from the server…" if loading else "Looking…")
         account_id = self._account.account_id
-        username, password = self.dav_username.text().strip(), self.dav_password.text() or None
+        username, password = self.dav_username.text().strip(), typed(self.dav_password) or None
 
         def again() -> None:
             self._find_dav_folders(loading)
@@ -353,18 +361,18 @@ class AccountEditDialog(QDialog):
             return None
         account = self._account
         username = self.dav_username.text().strip()
-        same_server = url == account.dav_url and username == account.dav_username and not self.dav_password.text()
+        same_server = url == account.dav_url and username == account.dav_username and not typed(self.dav_password)
         if same_server and not self.dav_folders.changed():
             return None
-        return LinkParameters(account.account_id, url, self.dav_folders.left_out(), found.pin, username, self.dav_password.text() or None)
+        return LinkParameters(account.account_id, url, self.dav_folders.left_out(), found.pin, username, typed(self.dav_password) or None)
 
     def _dav_values(self) -> SetDavParameters | None:
         """The values for account.set-dav when something about the server changed."""
         account = self._account
         url, username = self.dav_url.text().strip(), self.dav_username.text().strip()
-        if url == account.dav_url and username == account.dav_username and not self.dav_password.text():
+        if url == account.dav_url and username == account.dav_username and not typed(self.dav_password):
             return None
-        return SetDavParameters(account.account_id, url, username, self.dav_password.text() or None)
+        return SetDavParameters(account.account_id, url, username, typed(self.dav_password) or None)
 
     # --- layout -------------------------------------------------------------------------------------------
 
@@ -434,12 +442,12 @@ class AccountEditDialog(QDialog):
             account_name=differing(self.account_name.text().strip(), account.account_name),
             email_address=differing(self.email.text().strip(), account.email_address),
             username=differing(self.username.text().strip(), account.incoming_username),
-            password=self.password.text() or None,
+            password=typed(self.password) or None,
             incoming_host=differing(self.incoming_host.text().strip(), account.incoming_host),
             incoming_port=differing(self.incoming_port.value(), account.incoming_port),
             incoming_security=differing(security_of(self.incoming_security.currentData()), account.incoming_security),
             outgoing_username=differing(self.outgoing_username.text().strip(), account.outgoing_username),
-            outgoing_password=self.outgoing_password.text() or None,
+            outgoing_password=typed(self.outgoing_password) or None,
             outgoing_host=differing(self.outgoing_host.text().strip(), account.outgoing_host),
             outgoing_port=differing(self.outgoing_port.value(), account.outgoing_port),
             outgoing_security=differing(security_of(self.outgoing_security.currentData()), account.outgoing_security),
@@ -451,7 +459,7 @@ class AccountEditDialog(QDialog):
             invitation_answers=self._answers_value(),
             reminder_emails=self._reminders_value(),
             google_client_id=differing(self.google_client_id.text().strip(), account.google_client_id) if self.google_client_id is not None else None,
-            google_client_secret=(self.google_client_secret.text().strip() or None) if self.google_client_secret is not None else None,
+            google_client_secret=(typed(self.google_client_secret).strip() or None) if self.google_client_secret is not None else None,
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
 

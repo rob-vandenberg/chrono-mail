@@ -1,4 +1,5 @@
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QDialog, QLineEdit, QToolButton
 from pytestqt.qtbot import QtBot
@@ -6,13 +7,14 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
-from chrono_mail.ui.passwordfield import HIDE_TEXT, SHOW_TEXT, PasswordBox, make_password_field, run_password_box
+from chrono_mail.ui.passwordfield import DOT, HIDE_TEXT, SHOW_TEXT, STORED, PasswordBox, make_password_field, run_password_box, show_stored, typed
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_password_eye.py 4.2.439"
+__version__ = "test_ui_password_eye.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: the eye only while the field is edited; 16 dots for what is stored, never sent; text of only dots is never a password (D-365)
 # v4.2.439: the calendar part is in the Add window (D-298)
 # v4.2.437: Initial tests: the eye in every password field (UR-03, D-296)
 
@@ -45,7 +47,8 @@ def test_the_eye_greys_with_its_field(qtbot: QtBot) -> None:
     field = QLineEdit()
     qtbot.addWidget(field)
     make_password_field(field)
-    buttons = field.findChildren(QToolButton)
+    qtbot.keyClicks(field, "secret")  # the eye is there only while the field is edited (D-365)
+    buttons = [button for button in field.findChildren(QToolButton) if button.isVisibleTo(field)]
     assert buttons and all(button.isEnabled() for button in buttons)
     field.setEnabled(False)
     assert not any(button.isEnabled() for button in buttons)
@@ -97,3 +100,48 @@ def test_the_password_box_answers_not_accepted_on_cancel(qtbot: QtBot, monkeypat
 
     monkeypatch.setattr(PasswordBox, "exec", cancelled)
     assert run_password_box(None, "Backup password", "The backup password of backup.cmz:") == ("", False)
+
+
+def test_the_eye_is_there_only_while_the_person_edits_the_field(qtbot: QtBot) -> None:
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    eye = make_password_field(field)
+    field.show()
+    assert not eye.isVisible()
+    field.setText("put in by the program")
+    assert not eye.isVisible()
+    field.clear()
+    qtbot.keyClicks(field, "se")
+    assert eye.isVisible()
+    eye.trigger()  # shown
+    field.selectAll()
+    qtbot.keyClick(field, Qt.Key.Key_Backspace)
+    assert not eye.isVisible() and field.echoMode() == QLineEdit.EchoMode.Password  # emptied: hidden again, what comes next is never shown unasked
+
+
+def test_what_is_stored_shows_as_16_dots_that_are_never_sent(qtbot: QtBot) -> None:
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    eye = make_password_field(field)
+    show_stored(field, True)
+    assert field.text() == STORED and len(field.text()) == 16 and typed(field) == "" and not eye.isVisible()
+    field.setCursorPosition(16)
+    qtbot.keyClicks(field, "n")  # the first key over the dots takes them all away
+    assert field.text() == "n" and typed(field) == "n"
+    show_stored(field, True)
+    field.setCursorPosition(16)
+    qtbot.keyClick(field, Qt.Key.Key_Backspace)
+    assert field.text() == "" and typed(field) == ""
+    show_stored(field, False)
+    assert field.text() == "" and typed(field) == ""
+
+
+def test_text_of_only_dots_is_never_a_password(qtbot: QtBot) -> None:
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    make_password_field(field)
+    for text in (DOT, DOT * 3, "\u2022" * 40, DOT + "\u2022"):
+        field.setText(text)
+        assert typed(field) == ""
+    field.setText(DOT + "a")
+    assert typed(field) == DOT + "a"

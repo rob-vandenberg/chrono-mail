@@ -12,12 +12,13 @@ from chrono_mail.engine.commands_accounts import AccountCheckParameters, Kind, P
 from chrono_mail.ui import forms
 from chrono_mail.ui.colours import green, red
 from chrono_mail.ui.forms import part
-from chrono_mail.ui.passwordfield import make_password_field
+from chrono_mail.ui.passwordfield import make_password_field, typed
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 4.4.608"
+__version__ = "serverfields.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: no "(unchanged)" any more: a stored password shows as 16 dots, never sent; only what was typed is (D-365)
 # v4.4.608: account_line: the name and address, and what the account holds, as the two lines of Settings > Accounts (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.2.444: account_line: an account's row text in one place, for Settings > Accounts and the For list of a calendar server
@@ -115,8 +116,7 @@ class ServerFields:
             port.setValue(value)
         for password, label in ((self.password, "passwordLabel"), (self.outgoing_password, "outgoingPasswordLabel")):
             make_password_field(password)
-            if editing:
-                password.setPlaceholderText("(unchanged)")
+            if editing:  # what is stored shows as 16 dots, set by the window once the engine said so (D-365)
                 part(form, QLabel, label).setText("New password")
         self.incoming_group.setTitle(incoming_title(kind))
         self._incoming_was: str = start.incoming_security
@@ -177,9 +177,9 @@ class ServerFields:
         own_login = not self.same_login.isChecked()
         return AccountCheckParameters(
             username=self.username.text().strip(), incoming_host=self.incoming_host.text().strip(), outgoing_host=self.outgoing_host.text().strip(),
-            password=self.password.text(), incoming_port=self.incoming_port.value(), incoming_security=security_of(self.incoming_security.currentData()),
+            password=typed(self.password), incoming_port=self.incoming_port.value(), incoming_security=security_of(self.incoming_security.currentData()),
             outgoing_port=self.outgoing_port.value(), outgoing_security=security_of(self.outgoing_security.currentData()),
-            outgoing_username=self.outgoing_username.text().strip() if own_login else None, outgoing_password=(self.outgoing_password.text() or None) if own_login else None,
+            outgoing_username=self.outgoing_username.text().strip() if own_login else None, outgoing_password=(typed(self.outgoing_password) or None) if own_login else None,
             kind=mail_kind_of(self.kind), trusted_certificate=trusted, account=account,
         )
 

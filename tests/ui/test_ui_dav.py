@@ -18,9 +18,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.4.608"
+__version__ = "test_ui_dav.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: a separate account's password has the eye only once the person types in it (D-365)
 # v4.4.608: a calendars-only account in Settings > Accounts: its name, below it what it holds (D-346)
 # v4.4.605: Refresh in the sections is Send and Receive (D-344): no line of its own without a calendar server
 # v4.2.497: Link to: the fields stay greyed after a failed Add, the password always as dots; No mail account brings back what was typed;
@@ -260,7 +261,10 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         assert fields.url.text() == f"https://{mail.incoming_host}/" and fields.username.text() == mail.incoming_username
         assert fields.password.text() and not fields._eye.isVisible()  # dots only, never the stored password  # noqa: SLF001
         fields.target.setCurrentIndex(0)
-        assert all(field.isEnabled() and not field.text() for field in (fields.url, fields.username, fields.password)) and fields._eye.isVisible()  # noqa: SLF001
+        assert all(field.isEnabled() and not field.text() for field in (fields.url, fields.username, fields.password)) and not fields._eye.isVisible()  # noqa: SLF001 - the eye only while editing (D-365)
+        qtbot.keyClicks(fields.password, "x")
+        assert fields._eye.isVisible()  # noqa: SLF001
+        fields.password.clear()
         fields.target.setCurrentIndex(1)
         fields.url.setText(server.url)
         fields.find_button.click()

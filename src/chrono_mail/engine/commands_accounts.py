@@ -56,9 +56,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.6.646"
+__version__ = "commands_accounts.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: account.stored-secrets: which passwords and secrets of an account are stored, never what they are, so its window shows them as dots (D-365)
 # v4.6.646: AccountSummary.google_client_id; account.edit changes the client ID and client secret of every Google account of the same
 #           Google address, which share one sign-in; removing an account removes its client secret (B-34, D-364)
 # v4.5.626: AccountSummary.texts in place of the old signature; account.edit no longer takes a signature (B-24, D-358)
@@ -700,6 +701,28 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     return _summary(config.find(account.account_id))
 
 
+@dataclass(frozen=True, slots=True)
+class StoredSecrets:
+    """Which of an account's passwords and secrets the credential store holds; never what they are (D-365)."""
+    incoming: bool
+    outgoing: bool
+    dav: bool  # the calendar and contacts server's own, or the one password of an account of calendars and contacts only
+    google_secret: bool
+
+
+def account_stored_secrets(engine: Engine, parameters: AccountParameters) -> StoredSecrets:
+    settings = engine.resolve_account(parameters.account)
+    account_id = settings.account.account_id
+
+    def stored(role: ServerRole) -> bool:
+        return bool(engine.passwords.get(account_id, role))
+
+    incoming = stored(ServerRole.INCOMING)
+    calendars_only = settings.account.kind is AccountKind.DAV  # its one password is kept as the incoming one
+    return StoredSecrets(incoming, stored(ServerRole.OUTGOING), stored(ServerRole.DAV) or (calendars_only and incoming),
+                         settings.google and stored(ServerRole.GOOGLE_SECRET))
+
+
 # --- keys -------------------------------------------------------------------------------------------
 
 
@@ -1010,6 +1033,7 @@ CERTIFICATE_TRUST_FOR_RUN: TypedCommand[RunTrustParameters, RunTrustResult] = Ty
 ACCOUNT_ADD: TypedCommand[AccountAddParameters, AccountAddResult] = TypedCommand("account.add", AccountAddParameters, AccountAddResult)
 ACCOUNT_CHECK: TypedCommand[AccountCheckParameters, AccountCheckResult] = TypedCommand("account.check", AccountCheckParameters, AccountCheckResult)
 ACCOUNT_EDIT: TypedCommand[AccountEditParameters, AccountSummary] = TypedCommand("account.edit", AccountEditParameters, AccountSummary)
+ACCOUNT_STORED_SECRETS: TypedCommand[AccountParameters, StoredSecrets] = TypedCommand("account.stored-secrets", AccountParameters, StoredSecrets)
 ACCOUNT_LIST: TypedCommand[NoParameters, tuple[AccountSummary, ...]] = TypedCommand("account.list", NoParameters, tuple)  # every element is a AccountSummary
 ACCOUNT_REMOVE: TypedCommand[AccountParameters, AccountRemoveResult] = TypedCommand("account.remove", AccountParameters, AccountRemoveResult)
 KEY_STATUS: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.status", NoParameters, KeyStatus)
@@ -1083,6 +1107,8 @@ def register(registry: CommandRegistry) -> None:
     registry.register(ACCOUNT_CHECK.id, "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check, doing="Testing the connection to the servers")
     registry.register(ACCOUNT_EDIT.id, "Change the name, address, servers, passwords or server-copy policy of an account", AccountEditParameters, account_edit, doing="Saving the account's settings")
     registry.register(ACCOUNT_LIST.id, "List the accounts", NoParameters, account_list, doing="Reading the accounts")
+    registry.register(ACCOUNT_STORED_SECRETS.id, "Which passwords and secrets of an account are stored (never what they are)", AccountParameters,
+                      account_stored_secrets, doing="Looking which passwords are stored")
     registry.register(ACCOUNT_REMOVE.id, "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True, doing="Removing an account")
     registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy, doing="Saving what happens to mail on the server")
     registry.register(KEY_STATUS.id, "Show the data key id and whether the credential store has it", NoParameters, key_status, doing="Checking the encryption key")

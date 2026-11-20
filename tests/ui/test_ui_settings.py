@@ -15,9 +15,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.5.626"
+__version__ = "test_ui_settings.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: the password fields have no hint: a stored password shows as 16 dots (D-365)
 # v4.5.626: the signature is no longer in Edit account: templates and signatures are on their own Settings page (B-24, D-358; the owner's approval of 2026-11-18)
 # v4.4.608: an account on two lines: its name and address, below it what it holds (D-346)
 # v4.4.603: the labels Shown as and Sign-in name (D-342)
@@ -156,7 +157,7 @@ def test_both_account_windows_have_the_same_server_boxes(world: World, qtbot: Qt
         login_moved = ("Sign-in name", "Password") if adding is add.servers.incoming_group else ()  # on the Add window's Account tab (D-336)
         assert [row.replace("New password", "Password") for row in server_rows(editing) if row.replace("New password", "Password") not in login_moved] == server_rows(adding)
     assert server_rows(edit.servers.outgoing_group) == ["Server", "Security", "Port", "Use the same sign-in name and password as for incoming mail", "Sign-in name", "New password"]
-    assert edit.password.placeholderText() == "(unchanged)" and add.password.placeholderText() == ""
+    assert edit.password.placeholderText() == "" and add.password.placeholderText() == ""  # a stored password shows as 16 dots, no hint (D-365)
     edit.outgoing_port.setValue(2525)  # typed: stays
     edit.outgoing_security.setCurrentIndex(edit.outgoing_security.findData("tls"))
     assert edit.outgoing_port.value() == 2525

@@ -37,3 +37,4 @@ See also: [[mail-window]]
 - [[D-346]] An account and a calendar are named by what the person and Google know
 - [[D-352]] Settings > Calendar and the n weeks view
 - [[D-354]] The default font of new messages
+- [[D-365]] A stored password shows as 16 dots; the eye only while editing

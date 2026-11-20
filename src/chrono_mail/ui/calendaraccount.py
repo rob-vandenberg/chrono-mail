@@ -16,14 +16,15 @@ from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
-from chrono_mail.ui.passwordfield import make_password_field
+from chrono_mail.ui.passwordfield import eye_wanted, make_password_field
 from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.4.608"
+__version__ = "calendaraccount.py 4.6.648"
 
 # --- Version history ----------------------------------------------------
+# v4.6.648: the eye of a separate account's password only while the person edits it (D-365)
 # v4.4.608: For names each mail account by its name and address and what it holds, as Settings > Accounts does (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.2.497: a linked account's fields stay greyed after a failed Add and its password always shows dots; back to No mail account brings
@@ -114,7 +115,6 @@ class CalendarFields(QWidget):
             self._eye.trigger()  # only dots for a linked account, also when the eye showed what was typed before
         for field in (self.account_name, self.url, self.username, self.password):
             field.setEnabled(new)
-        self._eye.setVisible(new)
         if new:
             url, username, password = self._typed if not self._was_new else (self.url.text(), self.username.text(), self.password.text())
         else:
@@ -123,6 +123,7 @@ class CalendarFields(QWidget):
         self.url.setText(url)
         self.username.setText(username)
         self.password.setText(password)
+        self._eye.setVisible(new and eye_wanted(self.password))  # never on a linked account's dots; on a separate one only while edited (D-365)
         self._was_new = new
         self._forget_found()
 
