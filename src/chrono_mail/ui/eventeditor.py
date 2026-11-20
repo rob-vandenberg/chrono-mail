@@ -22,6 +22,7 @@ from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.collectionpanel import grey_read_only
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventattendees import AttendeesDialog, Person
 from chrono_mail.ui.eventreminders import ReminderList
@@ -35,9 +36,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.4.616"
+__version__ = "eventeditor.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: a Save of an appointment that exists is one action Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.602: Add tag… offers the tags of the appointment's Google calendar too, each as "Rood (Esther)"; one added is its colour tag (D-341)
 # v4.4.576: Every appointment opens ready to change; only one of a read-only calendar is just read, with the reason and Close; no Edit button (the owner)
@@ -95,6 +97,7 @@ class EventEditor(QDialog):
         self._settings: QSettings | None = settings
         self._original: EventInfo | None = event
         self._item: str | None = None if event is None else event.item
+        self.undoing: SectionUndo | None = None  # the Calendar's Undo: a Save of an appointment that exists is one action Ctrl+Z undoes (D-368)
         self._occurrence: str = occurrence
         self._reading: bool = reading  # an appointment of a read-only calendar: it can only be read (the others open ready to change)
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
@@ -514,5 +517,7 @@ class EventEditor(QDialog):
 
         if self._item is None:
             self._backend.ask(EVENT_ADD, carried(values, EventAdd, calendar=str(self.calendar.currentData())), done, self._refused, owner=self)
+        elif self.undoing is not None:
+            self.undoing.ask(EVENT_EDIT, replace(values, undo=self.undoing.new_action()), done, self._refused, self)
         else:
             self._backend.ask(EVENT_EDIT, values, done, self._refused, owner=self)

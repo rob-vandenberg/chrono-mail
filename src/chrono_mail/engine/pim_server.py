@@ -5,11 +5,12 @@ told. A collection of this computer only is the truth itself: written here at on
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 
-from chrono_mail.core import CollectionInfo
+from chrono_mail.core import CollectionInfo, CollectionKind, StorageError
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path
-from chrono_mail.engine.google_colours import sync_colours
+from chrono_mail.engine.google_colours import google_name, shown_colours, sync_colours
 from chrono_mail.engine.pimaccess import account_name
+from chrono_mail.engine.pimundohistory import PimSide, note, noting
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pim.itip import with_organizer
@@ -18,9 +19,10 @@ from chrono_mail.sync.davitems import CONFLICT, DONE, WAITING, ItemGateway, Outc
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 4.4.615"
+__version__ = "pim_server.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: every write of an action of the person is noted, its item before and after, so Undo can put it back (B-18 step 3, D-368)
 # v4.4.615: a refused meeting and a clash name Menu > Sync conflicts…, a window, not a page of Settings
 # v4.4.602: put takes what follows a save the server took (a Google calendar tag chosen for the event), so a refused save changes nothing on Google (D-341)
 # v4.4.598: An event the server of a Google calendar took gets its colour tag sent to Google right after it (D-337)
@@ -43,6 +45,47 @@ class ItemWriter:
         self._gateway: ItemGateway | None = None
         self.waiting: int = 0
         self.conflicts: int = 0
+        self._inside: int = 0  # a write made by another write of this writer: only the outer one is noted for Undo
+
+    # --- noting for Undo (D-368) ----------------------------------------------------------------------------------------------------------
+
+    def _side(self, collection: str, item: str) -> PimSide:
+        """The item as it is here now; item "" or gone: it does not exist."""
+        found = self.store.index.get(item) if item else None
+        if found is None:
+            return PimSide(collection)
+        try:
+            text = self.store.get(found.collection, item)
+        except StorageError:
+            return PimSide(found.collection, item)
+        google = ""
+        settings = self.engine.config().find(self.account) if found.uid else None
+        if settings is not None and settings.google and found.kind is CollectionKind.EVENTS:
+            google = google_name(shown_colours(self.engine, settings), found.collection, found.uid, None)
+        return PimSide(found.collection, item, text, google)
+
+    def _before(self, info: CollectionInfo, item: str | None) -> PimSide | None:
+        """What a write of the person's action starts from; None: nothing is noted (no action, or a write inside another write)."""
+        if self._inside or not noting():
+            return None
+        return self._side(info.collection_id, item or "")
+
+    def _after(self, before: PimSide | None, info: CollectionInfo, item: str) -> None:
+        if before is not None:
+            note(self.account, info.kind, before, self._side(info.collection_id, item))
+
+    def put(self, info: CollectionInfo, text: str, item: str | None = None, mailed: bool = False, then: Callable[[str], None] | None = None) -> str:
+        """Save an item (new when item is None); returns its id here. A copy that waits to go silently goes on doing so, unless mailed: the server is to mail this write (D-310).
+        then: what follows the save once the server took it (or it waits here to go, offline), before its colour goes to Google: a refused save
+        does not reach it (D-341)."""
+        before = self._before(info, item)
+        self._inside += 1
+        try:
+            saved = self._put(info, text, item, mailed, then)
+        finally:
+            self._inside -= 1
+        self._after(before, info, saved)
+        return saved
 
     def _server(self, info: CollectionInfo) -> ItemGateway | None:
         if not on_server(info):
@@ -63,10 +106,7 @@ class ItemWriter:
             self.conflicts += 1
         return outcome.item
 
-    def put(self, info: CollectionInfo, text: str, item: str | None = None, mailed: bool = False, then: Callable[[str], None] | None = None) -> str:
-        """Save an item (new when item is None); returns its id here. A copy that waits to go silently goes on doing so, unless mailed: the server is to mail this write (D-310).
-        then: what follows the save once the server took it (or it waits here to go, offline), before its colour goes to Google: a refused save
-        does not reach it (D-341)."""
+    def _put(self, info: CollectionInfo, text: str, item: str | None, mailed: bool, then: Callable[[str], None] | None) -> str:
         gateway = self._server(info)
         if gateway is None:
             saved = self.store.put(info.collection_id, text, item)
@@ -103,6 +143,16 @@ class ItemWriter:
     def put_organizer_last(self, info: CollectionInfo, text: str, item: str | None = None) -> str:
         """Save an item a server may mail nothing about, whatever it is told: first without its organizer, then with it. Measured on Kerio: a first save with an
         organizer mails, these two do not (D-310). Offline the synchronisation sends both, in that order."""
+        before = self._before(info, item)
+        self._inside += 1
+        try:
+            saved = self._put_organizer_last(info, text, item)
+        finally:
+            self._inside -= 1
+        self._after(before, info, saved)
+        return saved
+
+    def _put_organizer_last(self, info: CollectionInfo, text: str, item: str | None) -> str:
         gateway = self._server(info)
         bare = with_organizer(text, "")
         if gateway is None or bare is None:
@@ -120,6 +170,15 @@ class ItemWriter:
         return saved
 
     def delete(self, info: CollectionInfo, item: str, before: str = "") -> None:
+        was = self._before(info, item)
+        self._inside += 1
+        try:
+            self._delete(info, item, before)
+        finally:
+            self._inside -= 1
+        self._after(was, info, item)
+
+    def _delete(self, info: CollectionInfo, item: str, before: str) -> None:
         gateway = self._server(info)
         if gateway is None:
             self.store.delete(info.collection_id, item)
@@ -131,7 +190,16 @@ class ItemWriter:
 
     def restore(self, info: CollectionInfo, text: str, item: str) -> None:
         """An item back to this text after the server refused its delete. The server refuses that too: the text stays here and a sync conflict
-        waits until the person fixed the server and settled it (D-310)."""
+        waits until the person fixed the server and settled it (D-310). Noted for Undo too: put back, the action changed nothing of it."""
+        before = self._before(info, item)
+        self._inside += 1
+        try:
+            self._restore(info, text, item)
+        finally:
+            self._inside -= 1
+            self._after(before, info, item)
+
+    def _restore(self, info: CollectionInfo, text: str, item: str) -> None:
         gateway = self._server(info)
         if gateway is None:
             self.store.put(info.collection_id, text, item)
@@ -147,6 +215,16 @@ class ItemWriter:
                              "when the server works again, you can settle it in Menu > Sync conflicts…") from None
 
     def move(self, source: CollectionInfo, item: str, target: CollectionInfo) -> str:
+        before = self._before(source, item)
+        self._inside += 1
+        try:
+            moved = self._move(source, item, target)
+        finally:
+            self._inside -= 1
+        self._after(before, target, moved)
+        return moved
+
+    def _move(self, source: CollectionInfo, item: str, target: CollectionInfo) -> str:
         gateway = self._server(source)
         if gateway is None or not on_server(target):
             return self.store.move(source.collection_id, item, target.collection_id)

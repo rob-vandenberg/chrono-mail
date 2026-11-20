@@ -30,3 +30,4 @@ See also: [[mail-window]] · [[look]]
 - [[D-322]] The calendar and the tasks follow the day
 - [[D-324]] An appointment's title is edited in place
 - [[D-325]] An appointment stays selected and shows its change at once
+- [[D-368]] Undo and Redo in Calendar, Tasks and Contacts

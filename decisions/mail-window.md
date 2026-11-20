@@ -93,6 +93,7 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-114]] Alt+M opens the Menu
 - [[D-239]] Busy bar says what runs
 - [[D-240]] Undo and Redo on mail
+- [[D-368]] Undo and Redo in Calendar, Tasks and Contacts
 - [[D-138]] Operations window
 - [[D-139]] When the Operations window opens
 - [[D-166]] Settings page order

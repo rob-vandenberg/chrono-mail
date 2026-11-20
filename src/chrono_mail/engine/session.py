@@ -19,12 +19,13 @@ from chrono_mail.config import (
     load_config,
     save_config,
 )
-from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, CryptoError, FolderRole, StorageError
+from chrono_mail.core import AccountKind, ChronoMailError, CollectionKind, ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.engine.changes import Change, RebuildStep
 from chrono_mail.engine.junkwords import JunkHolder
 from chrono_mail.engine.receiving import Receiver
+from chrono_mail.engine.pimundohistory import PimUndoHistory, pim_histories
 from chrono_mail.engine.undohistory import UndoHistory
 from chrono_mail.index import Index
 from chrono_mail.protocols.hangup import hang_up_all
@@ -35,9 +36,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.4.608"
+__version__ = "session.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: pim_undo: what Undo and Redo can do in Calendar, Tasks and Contacts, one list per section (B-18 step 3, D-368)
 # v4.4.608: contact_names: the names of contacts found for an address, kept until a contact or an address book changes (D-346)
 # v4.4.542: hang_up and sends: the end of the program waits for no server, only for a mail being sent
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
@@ -418,6 +420,7 @@ class Engine:
     _told_once_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     junk: JunkHolder = field(default_factory=JunkHolder, init=False, repr=False)  # the junk filter's words, loaded once (D-238)
     undo: UndoHistory = field(default_factory=UndoHistory, init=False, repr=False)  # what Undo and Redo can do, while the program runs (B-18)
+    pim_undo: dict[CollectionKind, PimUndoHistory] = field(default_factory=pim_histories, init=False, repr=False)  # the same in Calendar, Tasks and Contacts (D-368)
     outbox_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # one message at a time is put in, taken out or sent (B-21)
     sends: int = field(default=0, init=False, repr=False)  # the commands that send mail now
     sends_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)

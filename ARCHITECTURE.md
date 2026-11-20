@@ -146,7 +146,7 @@ Calendars, tasks and contacts next to mail, for every kind of account: local (no
 
 ### 7.3 Modules
 
-`core.pim` (L0, kinds and references), `pim` (L1, parsing, recurrence, time zones; wraps `icalendar` and `recurring-ical-events`), `pimstore` (L2.5), `protocols/dav.py` (L2, D-078), `sync/davsync.py` (L3, both ways, D-079), commands `pim.enable`, `collection.*`, `contact.*`, `contact-group.*` (contact groups are cards of their address book, D-227), `event.*`, `task.*`, `tag.*` (L4, D-073), the four sections (L5).
+`core.pim` (L0, kinds and references), `pim` (L1, parsing, recurrence, time zones; wraps `icalendar` and `recurring-ical-events`), `pimstore` (L2.5), `protocols/dav.py` (L2, D-078), `sync/davsync.py` (L3, both ways, D-079), commands `pim.enable`, `collection.*`, `contact.*`, `contact-group.*` (contact groups are cards of their address book, D-227), `event.*`, `task.*`, `tag.*` (L4, D-073), the four sections (L5). Undo and Redo per section (D-368): a command of the person's action runs with its number in `recording` (`engine/pimundohistory.py`), every `ItemWriter` write in it is noted (each item's text before and after); `pim.undo` and `pim.redo` (`engine/pimundo.py`) write the other side back through the `ItemWriter`, server first, quietly; `ui/pimundoing.py` numbers the actions of each section.
 
 ### 7.4 Storage (D-072)
 

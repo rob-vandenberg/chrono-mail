@@ -1,4 +1,5 @@
 import html
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Literal
 
@@ -33,12 +34,14 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.eventreminders import ReminderList
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 4.4.616"
+__version__ = "taskeditor.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: a Save of a task that exists is one action Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Tasks,
 #           Remove tag and Delete; no radio buttons, a tag colours no task (the owner, D-332)
@@ -126,6 +129,7 @@ class TaskEditor(QDialog):
         self._original: TaskInfo | None = task
         self._repeat_before: str = ""  # the repeat choice as the task had it: sent only when changed (RV-19)
         self._item: str | None = None if task is None else task.item
+        self.undoing: SectionUndo | None = None  # Tasks' Undo: a Save of a task that exists is one action Ctrl+Z undoes (D-368)
         self.setWindowTitle("New task" if task is None else f"Task: {task.summary}")
         self.tag_box = TagBox(colour_choice=False)  # a tag colours no task: no radio buttons (D-332)
         form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent), "tagBox": self._place_tag_box})  # D-276
@@ -226,5 +230,7 @@ class TaskEditor(QDialog):
 
         if self._item is None:
             self._backend.ask(TASK_ADD, carried(values, TaskAdd, list=str(self.list.currentData())), done, failed, owner=self)
+        elif self.undoing is not None:
+            self.undoing.ask(TASK_EDIT, replace(values, undo=self.undoing.new_action()), done, failed, self)
         else:
             self._backend.ask(TASK_EDIT, values, done, failed, owner=self)

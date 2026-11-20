@@ -56,9 +56,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.6.655"
+__version__ = "calendarview.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: the title typed in place, Delete, Cancel, Restore and the appointment window's Save are actions Ctrl+Z undoes; what an Undo brought back is selected (B-18 step 3, D-368)
 # v4.6.655: the title keeps its share when the sizes change (scale.FONT_SHARE_PROPERTY, D-367)
 # v4.6.652: _size_changed: the title, the hours, the all-day row, Month and Agenda follow the Calendar's size (D-367)
 # v4.4.616: Settings > Calendar (D-352): the n weeks view (named by its weeks), Upcoming of a chosen number of days from the day shown (the
@@ -226,6 +227,7 @@ class CalendarPage(PimPage):
         self._day_shown: date = self.anchor  # the today the shown days were asked with; another day after midnight is asked again
         self.entries: list[Entry] = []
         self.selected: Entry | None = None
+        self._select_when_there: str = ""  # an event an Undo brought back: selected when its blocks come (D-368)
         self.first_weekday: int = weekstart.first_weekday()  # Settings > Calendar's Start week on (D-352)
         chosen = read_preferences(settings)
         self.upcoming_days: int = chosen.calendar_upcoming_days  # the other choices of Settings > Calendar (D-352), taken in by take_in
@@ -625,6 +627,17 @@ class CalendarPage(PimPage):
     def _nothing_clicked(self) -> None:
         self._entry_clicked(None)
 
+    @override
+    def select_back(self, items: tuple[str, ...]) -> None:
+        """What an Undo or Redo brought back is selected: now when its blocks are shown, else when they come (D-368)."""
+        if not items:
+            return
+        shown = next((entry for entry in self.entries if entry.row.item == items[0]), None)
+        if shown is None:
+            self._select_when_there = items[0]
+        elif shown is not self.selected:
+            self._entry_clicked(shown)
+
     def _selection_changed(self) -> None:
         self.selected = self._same(self.selected)
         self.act_edit.setEnabled(self.selected is not None and not self.selected.row.cancelled)  # a Cancelled event is Restored first (D-310)
@@ -674,6 +687,7 @@ class CalendarPage(PimPage):
     def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "", reading: bool = False) -> None:
         editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings, reading)
         editor.saved.connect(self._saved)
+        editor.undoing = self.undoing  # its Save is one action for Undo (D-368)
         editor.mail_ready.connect(self.mail_ready)
         editor.exec()
 
@@ -788,7 +802,7 @@ class CalendarPage(PimPage):
             self._repaint_views()
             self._failed(error)
 
-        self._backend.ask(EVENT_EDIT, EventEdit(item=row.item, occurrence=row.occurrence, summary=title), done, refused, owner=self)
+        self.undoing.ask(EVENT_EDIT, EventEdit(item=row.item, occurrence=row.occurrence, summary=title, undo=self.undoing.new_action()), done, refused, self)
 
     def _forget_titles(self, item: str) -> None:
         """Titles typed for this event that the server said yes to (one still waiting keeps its clock until the answer)."""
@@ -885,7 +899,7 @@ class CalendarPage(PimPage):
             if result.draft.message:
                 self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message, note)
 
-        self._backend.ask(EVENT_DELETE, values, deleted, self._failed, owner=self)
+        self.undoing.ask(EVENT_DELETE, dataclasses.replace(values, undo=self.undoing.new_action()), deleted, self._failed, self)
 
     def _status_wanted(self, entry: Entry, verb: str) -> None:
         """Cancel or Restore: a repeating event asks which."""
@@ -922,7 +936,7 @@ class CalendarPage(PimPage):
             if result.draft.message:
                 self.mail_ready.emit(result.draft.account, result.draft.folder, result.draft.message, note)
 
-        self._backend.ask(EVENT_CANCEL if verb == "Cancel" else EVENT_RESTORE, values, done, self._failed, owner=self)
+        self.undoing.ask(EVENT_CANCEL if verb == "Cancel" else EVENT_RESTORE, dataclasses.replace(values, undo=self.undoing.new_action()), done, self._failed, self)
 
     def _saved(self, item: str) -> None:
         """An event was saved or deleted: its blocks followed the fact (D-146)."""
@@ -962,8 +976,12 @@ class CalendarPage(PimPage):
             self.entries = sorted(kept + arriving, key=lambda entry: (entry.start, entry.summary.casefold()))
             if moved is not None and self.selected is None:  # moved to another calendar shown: it is selected again, its own date (D-325)
                 self.selected = next((entry for entry in arriving if entry.row.occurrence == moved.row.occurrence and entry.first_day == moved.first_day), None)
+            back = self._select_when_there == wanted and bool(arriving)
+            if back:  # brought back by Undo or Redo: selected (D-368)
+                self._select_when_there = ""
+                self.selected = arriving[0]
             self._show_data(keep=True)  # the Agenda keeps its selected event and its place too
-            if moved is not None and self.selected is not None:
+            if (moved is not None or back) and self.selected is not None:
                 for widget in (self.grid.header, self.grid.canvas, self.month):
                     widget.select(self.selected)
             if result.cut:

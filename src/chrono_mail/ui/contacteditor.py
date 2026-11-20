@@ -1,4 +1,5 @@
 import html
+from dataclasses import replace
 
 from collections.abc import Callable
 
@@ -29,14 +30,16 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagbox import TagBox, TagEditing
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 4.4.616"
+__version__ = "contacteditor.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: a Save of a contact that exists is one action Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.4.616: The date picker's weeks start on the day Settings > Calendar chose (D-352)
 # v4.4.581: Tags as in the appointment window: each tag a label in its colour on its own line, Add tag… with the tags shown in Contacts,
 #           Remove tag and Delete; no radio buttons, a tag colours no contact (the owner, D-332)
@@ -171,6 +174,7 @@ class ContactEditor(QDialog):
         self._backend: Backend = backend
         self._original: ContactInfo | None = contact
         self._item: str | None = None if contact is None else contact.item
+        self.undoing: SectionUndo | None = None  # Contacts' Undo: a Save of a contact that exists is one action Ctrl+Z undoes (D-368)
         self.setWindowTitle("New contact" if contact is None else f"Contact: {contact.name}")
         lists = {
             "emails": ("E-mail addresses", EMAIL_TYPES, "name@example.com"), "phones": ("Phone numbers", PHONE_TYPES, "+31 6 12345678"),
@@ -356,6 +360,8 @@ class ContactEditor(QDialog):
 
         if self._item is None:
             self._backend.ask(CONTACT_ADD, carried(values, ContactAdd, collection=str(self.book.currentData())), done, failed, owner=self)
+        elif self.undoing is not None:
+            self.undoing.ask(CONTACT_EDIT, replace(values, undo=self.undoing.new_action()), done, failed, self)
         else:
             self._backend.ask(CONTACT_EDIT, values, done, failed, owner=self)
 

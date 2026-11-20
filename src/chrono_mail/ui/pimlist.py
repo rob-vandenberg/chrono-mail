@@ -18,9 +18,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagname import ask_tag_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimlist.py 4.4.615"
+__version__ = "pimlist.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: Delete and Move of the selected items are one action for Undo; what an Undo brought back is selected (B-18 step 3, D-368)
 # v4.4.615: Delete asks the plain question, and says that an item of a server goes there too; no store directory or days (OR-18);
 #           which items go to a server follows the selected items' own lists or address books, never every one shown (a mix says so calmly)
 # v4.4.602: New tag… takes no vertical bar: a typed one is refused with a calm line, a pasted one left out (D-341)
@@ -192,6 +193,16 @@ class PimListPage(PimPage):
     # --- the actions -------------------------------------------------------------------------------------------------
 
     @override
+    def select_back(self, items: tuple[str, ...]) -> None:
+        """What an Undo or Redo brought back is selected, alone, now or when its row has come (D-368)."""
+        if items:
+            self._view().selectionModel().clearSelection()  # the item selected after the Delete is not what came back
+            self._after_save(items[0])
+
+    def _after_save(self, item: str) -> None:
+        """A saved item is selected (subclasses)."""
+
+    @override
     def delete_selected(self) -> None:
         items = self._selected_items()
         if not items:
@@ -206,8 +217,20 @@ class PimListPage(PimPage):
         if QMessageBox.question(self.content, "Delete", text) != QMessageBox.StandardButton.Yes:
             return
         self._take_away(items)
+        number = self.undoing.new_action()  # one press, one Undo (D-368)
         for item in items:
-            self._delete_step(item).start(self._backend, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
+            done, failed = self._tracked(item)
+            self._delete_step(item, number).start(self._backend, done, failed, owner=self)
+
+    def _tracked(self, item: str) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
+        """The answers of one item's command of an action: an Undo pressed meanwhile waits for them (D-368)."""
+        def done(result: object) -> None:
+            self._ended(item)
+
+        def failed(error: ChronoMailError) -> None:
+            self._failed_for(item, error)
+
+        return self.undoing.track(done, failed)
 
     def _on_server(self, collection: str) -> bool:
         """Whether this list or address book is kept in step with a server: then an item of it is deleted there too (D-197)."""
@@ -217,14 +240,16 @@ class PimListPage(PimPage):
     def _move_selected(self, target: str) -> None:
         items = self._selected_items()
         self._take_away(items)
+        number = self.undoing.new_action()
         for item in items:
-            self._move_step(item, target).start(self._backend, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
+            done, failed = self._tracked(item)
+            self._move_step(item, target, number).start(self._backend, done, failed, owner=self)
 
-    def _delete_step(self, item: str) -> AnyStep[object]:
+    def _delete_step(self, item: str, number: int) -> AnyStep[object]:
         """The delete of one item, as this section's engine command (task.delete, contact.delete)."""
         raise NotImplementedError
 
-    def _move_step(self, item: str, target: str) -> AnyStep[object]:
+    def _move_step(self, item: str, target: str, number: int) -> AnyStep[object]:
         """The move of one item to another list or address book, as this section's engine command (task.move, contact.move)."""
         raise NotImplementedError
 

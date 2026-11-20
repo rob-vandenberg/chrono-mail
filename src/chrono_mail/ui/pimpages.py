@@ -13,13 +13,15 @@ from chrono_mail.ui import appearance, scale
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks
 from chrono_mail.ui.collectionpanel import CollectionPanel
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 4.6.655"
+__version__ = "pimpages.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: each section has its own Undo and Redo (undoing); select_back: what an Undo brought back is selected (B-18 step 3, D-368)
 # v4.6.655: the content is marked as having a size of its own (scale.OWN_SIZE_PROPERTY, D-367)
 # v4.6.652: apply_size: everything right of the sidebar (content) at the view's own size, Settings > Appearance > Sizes (D-367)
 # v4.4.568: The status line says where new items go when the blue plus moved by itself (D-326)
@@ -76,6 +78,8 @@ class PimPage(SectionPage):
         self.toolbar.add_left(self.act_refresh)
         self.panel.changed.connect(self.selection_changed)
         self.pending: set[str] = set()  # items with an action under way: greyed, no second action (D-146)
+        self.undoing = SectionUndo(backend, self.kind, self._say, self)  # Ctrl+Z and Ctrl+Y in this section (D-368)
+        self.undoing.items_back = self.select_back
         self._refetching: bool = False
         self._refetch_again: bool = False
         self.marks: SyncMarks | None = None  # set by the window (use_marks)
@@ -163,6 +167,9 @@ class PimPage(SectionPage):
         for clicked in self.conflict_sources():
             clicked.connect(self.conflict_requested.emit)
         self._marks_changed()
+
+    def select_back(self, items: tuple[str, ...]) -> None:
+        """What an Undo or Redo brought back or changed is selected (D-325); the subclasses know how."""
 
     def _say(self, text: str) -> None:
         self.status(text)

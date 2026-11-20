@@ -62,9 +62,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.6.652"
+__version__ = "tasksview.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: Done, tags, Delete, Move and the task window's Save are actions Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.6.652: the rows, headings and round marks follow the Tasks size (D-367)
 # v4.4.615: _collection_of: the list a selected task is in (Delete says whether it goes to a server by the task's own list)
 # v4.4.584: The Tags block without "All tasks": a click turns a tag filter on and off (D-334)
@@ -820,11 +821,13 @@ class TasksPage(PimListPage):
 
         def opened(result: TaskInfo) -> None:
             editor = TaskEditor(self._backend, self._lists(), self._tags_known, result, result.collection, self.content, self.colours)
+            editor.undoing = self.undoing  # its Save is one action for Undo (D-368)
             editor.saved.connect(self._after_save)
             editor.exec()
 
         self._backend.ask(TASK_SHOW, TaskItem(item), opened, self._failed, owner=self)
 
+    @override
     def _after_save(self, item: str) -> None:
         """A task was saved: its row follows the fact; it is selected (now, or when its fact has come)."""
         if not item:
@@ -888,11 +891,12 @@ class TasksPage(PimListPage):
         if not rows:
             return
         reopen = all(row.done for row in rows)
+        number = self.undoing.new_action()  # one press, one Undo (D-368)
         for row in rows:  # each task's fact changes its row (D-146)
             if reopen:
-                self._backend.ask(TASK_REOPEN, TaskItem(row.item), lambda result: None, self._failed, owner=self)
+                self.undoing.ask(TASK_REOPEN, TaskItem(row.item, undo=number), lambda result: None, self._failed, self)
             else:
-                self._backend.ask(TASK_COMPLETE, TaskItem(row.item), lambda result: None, self._failed, owner=self)
+                self.undoing.ask(TASK_COMPLETE, TaskItem(row.item, undo=number), lambda result: None, self._failed, self)
 
     def _fill_tag_menu(self) -> None:
         self.tag_menu.clear()
@@ -915,16 +919,17 @@ class TasksPage(PimListPage):
         self.tag_menu.addAction("Remove all tags", lambda: self._edit_selected(clear=("tag",)))
 
     def _edit_selected(self, add_tag: tuple[str, ...] = (), remove_tag: tuple[str, ...] = (), clear: tuple[str, ...] = ()) -> None:
+        number = self.undoing.new_action()
         for item in self._selected_items():  # each task's fact changes its row (D-146)
-            self._backend.ask(TASK_EDIT, TaskEdit(item=item, add_tag=add_tag, remove_tag=remove_tag, clear=clear), lambda result: None, self._failed, owner=self)
+            self.undoing.ask(TASK_EDIT, TaskEdit(item=item, add_tag=add_tag, remove_tag=remove_tag, clear=clear, undo=number), lambda result: None, self._failed, self)
 
     @override
-    def _delete_step(self, item: str) -> AnyStep[object]:
-        return Step(TASK_DELETE, TaskItem(item))
+    def _delete_step(self, item: str, number: int) -> AnyStep[object]:
+        return Step(TASK_DELETE, TaskItem(item, undo=number))
 
     @override
-    def _move_step(self, item: str, target: str) -> AnyStep[object]:
-        return Step(TASK_MOVE, TaskMove(item, target))
+    def _move_step(self, item: str, target: str, number: int) -> AnyStep[object]:
+        return Step(TASK_MOVE, TaskMove(item, target, undo=number))
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()

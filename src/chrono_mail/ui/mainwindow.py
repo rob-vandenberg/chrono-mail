@@ -70,14 +70,16 @@ from chrono_mail.engine.commands_signatures import SNIPPET_TAKE_OLD, TakeOldPara
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.6.655"
+__version__ = "mainwindow.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: Ctrl+Z, Ctrl+Y and the menu's Undo and Redo act on the section shown: Calendar, Tasks and Contacts have their own (B-18 step 3, D-368)
 # v4.6.655: every part of this window at the Main window size (scale.follow_fonts), never the other windows'; a tooltip at the size of the
 #           window that is active (D-367)
 # v4.6.652: Calendar, Contacts and Tasks at their own sizes: stored at the first start from the Main window's (Q122), tried while a slider
@@ -527,6 +529,7 @@ class MainWindow(QMainWindow):
             calendar_page.mail_ready.connect(self.composing.send_calendar_mail)
             calendar_page.answer_wanted.connect(self.reading.answer_event)
             calendar_page.delegate_wanted.connect(self.reading.delegate_event)
+        self.reading.calendar_undo = self.pages[CALENDAR].undoing  # an answer, from mail or from Calendar, is undone in Calendar (D-368)
         self.tag_overviews: dict[str, TagOverviewWindow] = {}  # the Tag overview windows open, by their tag in lower case (D-328)
         self.mail_tags.overview_wanted.connect(self.show_tag_overview)
         self.contacts_page.tag_overview_wanted.connect(self.show_tag_overview)
@@ -583,9 +586,9 @@ class MainWindow(QMainWindow):
         self.act_not_junk = self._action(NOT_JUNK, lambda: actions.junk_selected(False), None, "mail-mark-notjunk")
         self.act_cancel_snooze = self._action("Cancel snooze", actions.cancel_snooze_selected)
         self.act_not_junk.setEnabled(False)
-        self.act_undo = self._action("Undo", self.undoing.undo, "Ctrl+Z")  # the text says what it would undo; a text field keeps Ctrl+Z for its typing
-        self.act_redo = self._action("Redo", self.undoing.redo, "Ctrl+Y")
-        self.act_redo_other = self._action("Redo (second key)", self.undoing.redo, "Ctrl+Shift+Z")  # the other usual key, not in the menu
+        self.act_undo = self._action("Undo", lambda: self._shown_undo().undo(), "Ctrl+Z")  # of the section shown (D-368); the text says what it would undo; a text field keeps Ctrl+Z
+        self.act_redo = self._action("Redo", lambda: self._shown_undo().redo(), "Ctrl+Y")
+        self.act_redo_other = self._action("Redo (second key)", lambda: self._shown_undo().redo(), "Ctrl+Shift+Z")  # the other usual key, not in the menu
         for action in (self.act_undo, self.act_redo, self.act_redo_other):
             action.setEnabled(False)
         self.act_next_unread = self._action("Next unread message", lambda: messages.go_to_unread(1), "N")
@@ -874,6 +877,9 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.section_bar.chosen.connect(self.switch_section)
         self.undoing.labels_changed.connect(self._show_undo)
+        for page in self.pages.values():  # Calendar, Tasks and Contacts each have their own Undo (D-368)
+            page.undoing.labels_changed.connect(self._show_undo)
+            page.undoing.is_repeat = self.held_key.take
         self.contacts_page.compose_requested.connect(self.composing.compose_to)
         self.contacts_page.mail_accounts_source = self.mail_state.accounts_with_mail
         self.folders.entry_chosen.connect(self._open_entry)
@@ -1117,14 +1123,18 @@ class MainWindow(QMainWindow):
                 button.showMenu()
                 return
 
+    def _shown_undo(self) -> Undoing | SectionUndo:
+        page = self.pages.get(self._section)
+        return page.undoing if page is not None else self.undoing
+
     def _show_undo(self) -> None:
-        """Undo and Redo say what they would do ("Undo Move to Trash (3 messages)"); greyed when there is nothing, and outside Mail.
+        """Undo and Redo of the section shown say what they would do ("Undo Move to Trash (3 messages)"), greyed when there is nothing.
         Undo stays usable while an action is under way: it waits for it, then undoes it."""
-        undoing, mail = self.undoing, self._section == MAIL
+        undoing = self._shown_undo()
         self.act_undo.setText(f"Undo {undoing.undo_label}" if undoing.undo_label else "Undo")
         self.act_redo.setText(f"Redo {undoing.redo_label}" if undoing.redo_label else "Redo")
-        self.act_undo.setEnabled(mail and (bool(undoing.undo_label) or undoing.busy))
-        self.act_redo.setEnabled(mail and (bool(undoing.redo_label) or undoing.busy))  # pressed while busy it waits in turn, as Undo
+        self.act_undo.setEnabled(bool(undoing.undo_label) or undoing.busy)
+        self.act_redo.setEnabled(bool(undoing.redo_label) or undoing.busy)  # pressed while busy it waits in turn, as Undo
         self.act_redo_other.setEnabled(self.act_redo.isEnabled())
 
     KEY_NAMES: dict[str, str] = {"undo": "Undo", "redo": "Redo", "not_junk": NOT_JUNK}  # their text says what they would do, or shows another

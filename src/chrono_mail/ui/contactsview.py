@@ -61,9 +61,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.6.652"
+__version__ = "contactsview.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: tags, Delete, Move, the groups and the contact window's Save are actions Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.6.652: the count, the rows, the circles and the details follow the Contacts size (D-367)
 # v4.4.615: _collection_of: the address book a selected contact is in (Delete says whether it goes to a server by the contact's own book)
 # v4.4.587: A tick box per address book: the list shows the ticked ones together, a group its members; new contacts go to the book with the blue plus (D-334)
@@ -583,6 +584,7 @@ class ContactsPage(PimListPage):
 
                 def show(tag_names: list[str]) -> None:
                     editor = ContactEditor(self._backend, books, tag_names, result, result.collection, self.content, self.colours)
+                    editor.undoing = self.undoing  # its Save is one action for Undo (D-368)
                     editor.saved.connect(self._after_save)
                     editor.exec()
 
@@ -593,6 +595,7 @@ class ContactsPage(PimListPage):
 
         self._backend.ask(CONTACT_SHOW, ContactItem(item), opened, self._failed, owner=self)
 
+    @override
     def _after_save(self, item: str) -> None:
         """A contact was saved: its row followed the fact; it is selected; the tags list shows the new numbers."""
         self.reload_tags()
@@ -724,7 +727,7 @@ class ContactsPage(PimListPage):
     def rename_group(self, group: GroupRow) -> None:
         name, ok = QInputDialog.getText(self.content, "Rename", "New name:", text=group.name)
         if ok and name.strip() and name.strip() != group.name:
-            self._backend.ask(CONTACT_GROUP_RENAME, GroupRenameParameters(group.item, name.strip()), lambda row: None, self._failed, owner=self)  # the fact renames it
+            self.undoing.ask(CONTACT_GROUP_RENAME, GroupRenameParameters(group.item, name.strip(), self.undoing.new_action()), lambda row: None, self._failed, self)  # the fact renames it
 
     def delete_group(self, group: GroupRow) -> None:
         """Delete a group (it asks first): its card only, never its members."""
@@ -733,7 +736,7 @@ class ContactsPage(PimListPage):
         if book is not None and book.server:
             text += "\n\nEvery program that synchronises with the server will remove the group too."
         if QMessageBox.question(self.content, "Delete", text) == QMessageBox.StandardButton.Yes:
-            self._backend.ask(CONTACT_GROUP_DELETE, GroupItem(group.item), lambda result: None, self._failed, owner=self)  # the fact takes it away
+            self.undoing.ask(CONTACT_GROUP_DELETE, GroupItem(group.item, self.undoing.new_action()), lambda result: None, self._failed, self)  # the fact takes it away
 
     def write_to_group(self, group: GroupRow) -> None:
         """A new message to every member of the group (their preferred addresses in To)."""
@@ -777,7 +780,7 @@ class ContactsPage(PimListPage):
         contacts = tuple(items if items is not None else self._selected_items())
         if contacts:
             command = CONTACT_GROUP_ADD_MEMBERS if on else CONTACT_GROUP_REMOVE_MEMBERS
-            self._backend.ask(command, GroupMembersParameters(group, contacts), lambda row: None, self._failed, owner=self)  # the facts follow
+            self.undoing.ask(command, GroupMembersParameters(group, contacts, self.undoing.new_action()), lambda row: None, self._failed, self)  # the facts follow
 
     def remove_from_group(self) -> None:
         """The selected contacts out of the group shown; they stay in the address book."""
@@ -819,12 +822,12 @@ class ContactsPage(PimListPage):
         self.tag_menu.addAction("Remove all tags", lambda: self._edit_selected(clear=("tag",)))
 
     @override
-    def _delete_step(self, item: str) -> AnyStep[object]:
-        return Step(CONTACT_DELETE, ContactItem(item))
+    def _delete_step(self, item: str, number: int) -> AnyStep[object]:
+        return Step(CONTACT_DELETE, ContactItem(item, undo=number))
 
     @override
-    def _move_step(self, item: str, target: str) -> AnyStep[object]:
-        return Step(CONTACT_MOVE, ContactMove(item, target))
+    def _move_step(self, item: str, target: str, number: int) -> AnyStep[object]:
+        return Step(CONTACT_MOVE, ContactMove(item, target, undo=number))
 
     @override
     def _items(self) -> PimItemModel:
@@ -859,8 +862,9 @@ class ContactsPage(PimListPage):
             if remaining["count"] == 0:
                 self.reload_tags()  # the rows followed their facts; the tags list shows the new numbers
 
+        number = self.undoing.new_action()  # one press, one Undo (D-368)
         for item in items:
-            self._backend.ask(CONTACT_EDIT, ContactEdit(item=item, add_tag=add_tag, remove_tag=remove_tag, clear=clear), done, self._failed, owner=self)
+            self.undoing.ask(CONTACT_EDIT, ContactEdit(item=item, add_tag=add_tag, remove_tag=remove_tag, clear=clear, undo=number), done, self._failed, self)
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()

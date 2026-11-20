@@ -71,3 +71,4 @@ See also: [[sync-conflicts]]
 - [[D-348]] A server's lasting "no" to an item is said once; a passing failure of Google's colours is said only when it lasts
 - [[D-352]] Settings > Calendar and the n weeks view
 - [[D-356]] A server name never has an @
+- [[D-368]] Undo and Redo in Calendar, Tasks and Contacts

@@ -16,6 +16,7 @@ from chrono_mail.engine.invitations import InvitationInfo, answering, asks_nothi
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
+from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import DEFAULT_COLLECTIONS, account_name, ensure_local_pim, located, open_pim, pim_account_ids, shown_collection_name
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -33,9 +34,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.608"
+__version__ = "commands_invitations.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: an answer takes the number of the person's action, so Undo puts the calendar back as it was; the answer mail stays sent (B-18 step 3, D-368)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.558: From the calendar an answer is refused in a read-only calendar, on a Cancelled event and when given already; an answer on one date of a series declined in Local Folders moves the whole series as one record (D-310)
 # v4.4.557: A Cancelled event takes no answer and no delegate until it is Restored, a newer version of the organizer does (D-310)
@@ -137,6 +139,7 @@ class AnswerParameters(SourceParameters):
     mail: bool = field(default=True, metadata=option("When Chrono Mail mails the answer: make it (a draft to send); false: no answer mail"))
     to: str = field(default="", metadata=option("An invitation that names no organizer: the address the answer goes to"))
     dry: bool = field(default=False, metadata=option("Change nothing: only check the answer and say who would mail it"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1244,5 +1247,5 @@ def register(registry: CommandRegistry) -> None:
                       doing="Passing the invitation on")
     registry.register(INVITATION_ORGANIZE.id, "Your meeting: take an attendee's answer, accept or decline a proposal, send the latest version",
                       OrganizeParameters, invitation_organize, doing="Changing your meeting")
-    registry.register(INVITATION_ANSWER.id, "Accept, accept tentatively or decline an invitation", AnswerParameters, invitation_answer,
+    registry.register(INVITATION_ANSWER.id, "Accept, accept tentatively or decline an invitation", AnswerParameters, undoable(invitation_answer, "Answer", "appointment"),
                       doing="Answering the invitation")

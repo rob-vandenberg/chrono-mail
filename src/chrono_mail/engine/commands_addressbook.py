@@ -6,6 +6,7 @@ from chrono_mail.core.tagnames import BAR, BAR_REFUSED
 from chrono_mail.engine.groups import groups_of_book, leave_groups, member_uids, uid_key
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
+from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
@@ -13,9 +14,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 4.4.602"
+__version__ = "commands_addressbook.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: edit, delete and move take the number of the person's action, so Undo can put them back (B-18 step 3, D-368)
 # v4.4.602: A tag given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v4.4.587: contact.list takes several address books (collections), the ones ticked in Contacts (D-334)
 # v3.6.349: each earlier phone, address or other entry is matched once: two with the same value and first kind stay two (RV-191)
@@ -225,6 +227,7 @@ CONTACT_LIST: TypedCommand[ListParameters, ContactList] = TypedCommand("contact.
 @dataclass(frozen=True, slots=True)
 class ItemParameters:
     item: str = field(metadata=option("The contact id (see contact.list)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def contact_show(engine: Engine, parameters: ItemParameters) -> ContactInfo:
@@ -426,6 +429,7 @@ class EditParameters(FieldParameters):
     clear: tuple[str, ...] = field(default=(), metadata=option("Lists to empty: nickname, email, phone, url, address, tag (repeat)"))
     add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
     remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def contact_edit(engine: Engine, parameters: EditParameters) -> ContactInfo:
@@ -466,6 +470,7 @@ def contact_delete(engine: Engine, parameters: ItemParameters) -> ItemParameters
 class MoveParameters:
     item: str = field(metadata=option("The contact id"))
     collection: str = field(metadata=option("The address book to move it to"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def contact_move(engine: Engine, parameters: MoveParameters) -> ContactInfo:
@@ -569,8 +574,8 @@ def register(registry: CommandRegistry) -> None:
     registry.register(CONTACT_SHOW.id, "Show a contact", ItemParameters, contact_show, doing="Loading a contact")
     registry.register(CONTACT_ADDRESSES.id, "List the e-mail addresses of all contacts", AddressesParameters, contact_addresses, doing="Reading the addresses of the contacts")
     registry.register(CONTACT_ADD.id, "Add a contact", AddParameters, contact_add, doing="Adding a contact")
-    registry.register(CONTACT_EDIT.id, "Change a contact", EditParameters, contact_edit, doing="Saving a contact")
-    registry.register(CONTACT_DELETE.id, "Delete a contact", ItemParameters, contact_delete, destructive=True, doing="Deleting a contact")
-    registry.register(CONTACT_MOVE.id, "Move a contact to another address book of the same account", MoveParameters, contact_move, doing="Moving a contact")
+    registry.register(CONTACT_EDIT.id, "Change a contact", EditParameters, undoable(contact_edit, "Edit", "contact"), doing="Saving a contact")
+    registry.register(CONTACT_DELETE.id, "Delete a contact", ItemParameters, undoable(contact_delete, "Delete", "contact"), destructive=True, doing="Deleting a contact")
+    registry.register(CONTACT_MOVE.id, "Move a contact to another address book of the same account", MoveParameters, undoable(contact_move, "Move", "contact"), doing="Moving a contact")
     registry.register(CONTACT_IMPORT.id, "Import contacts from vCard text", ImportParameters, quiet_command(contact_import), doing="Importing contacts")
     registry.register(CONTACT_EXPORT.id, "Export a contact or an address book as vCard text", ExportParameters, contact_export, doing="Exporting contacts")

@@ -8,6 +8,7 @@ from chrono_mail.engine.commands_calendar import MOST_REMINDERS, ReminderInfo, _
 from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
+from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
@@ -16,9 +17,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 4.4.608"
+__version__ = "commands_tasklist.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: edit, done, not done, delete and move take the number of the person's action, so Undo can put them back (B-18 step 3, D-368)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A tag given holds no vertical bar: the bar marks a tag of a Google calendar (D-341)
 # v4.4.547: a task says its reminders whole, as an event does; at most 5 given, by e-mail too, and keep: for one that stays as it is (D-316)
@@ -273,6 +275,7 @@ TASK_PLACES: TypedCommand[PlacesParameters, TaskPlaces] = TypedCommand("task.pla
 @dataclass(frozen=True, slots=True)
 class ItemParameters:
     item: str = field(metadata=option("The task id (see task.list)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def task_show(engine: Engine, parameters: ItemParameters) -> TaskInfo:
@@ -400,6 +403,7 @@ def task_add(engine: Engine, parameters: AddParameters) -> TaskInfo:
 class EditParameters(TaskFields):
     item: str = field(metadata=option("The task id"))
     clear: tuple[str, ...] = field(default=(), metadata=option("Lists to empty: reminder, tag (repeat)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
     add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
     remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
 
@@ -482,6 +486,7 @@ def task_delete(engine: Engine, parameters: ItemParameters) -> ItemParameters:
 class MoveParameters:
     item: str = field(metadata=option("The task id"))
     list: str = field(metadata=option("The task list to move it to"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def task_move(engine: Engine, parameters: MoveParameters) -> TaskInfo:
@@ -579,10 +584,10 @@ def register(registry: CommandRegistry) -> None:
     registry.register(TASK_PLACES.id, "Where every task stands in the list (for a window that asks for the rows as they come into view)", PlacesParameters, task_places, doing="Loading the tasks")
     registry.register(TASK_SHOW.id, "Show a task", ItemParameters, task_show, doing="Loading a task")
     registry.register(TASK_ADD.id, "Add a task", AddParameters, task_add, doing="Adding a task")
-    registry.register(TASK_EDIT.id, "Change a task", EditParameters, task_edit, doing="Saving a task")
-    registry.register(TASK_COMPLETE.id, "Mark a task done (a repeating task goes on to its next time)", ItemParameters, task_complete, doing="Marking a task done")
-    registry.register(TASK_REOPEN.id, "Make a done task open again", ItemParameters, task_reopen, doing="Opening a task again")
-    registry.register(TASK_DELETE.id, "Delete a task", ItemParameters, task_delete, destructive=True, doing="Deleting a task")
-    registry.register(TASK_MOVE.id, "Move a task to another task list of the same account", MoveParameters, task_move, doing="Moving a task")
+    registry.register(TASK_EDIT.id, "Change a task", EditParameters, undoable(task_edit, "Edit", "task"), doing="Saving a task")
+    registry.register(TASK_COMPLETE.id, "Mark a task done (a repeating task goes on to its next time)", ItemParameters, undoable(task_complete, "Mark as done", "task"), doing="Marking a task done")
+    registry.register(TASK_REOPEN.id, "Make a done task open again", ItemParameters, undoable(task_reopen, "Mark as not done", "task"), doing="Opening a task again")
+    registry.register(TASK_DELETE.id, "Delete a task", ItemParameters, undoable(task_delete, "Delete", "task"), destructive=True, doing="Deleting a task")
+    registry.register(TASK_MOVE.id, "Move a task to another task list of the same account", MoveParameters, undoable(task_move, "Move", "task"), doing="Moving a task")
     registry.register("task.import", "Import tasks from iCalendar text", ImportParameters, quiet_command(task_import), doing="Importing tasks")
     registry.register("task.export", "Export a task or a task list as iCalendar text", ExportParameters, task_export, doing="Exporting tasks")

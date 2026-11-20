@@ -15,6 +15,7 @@ from chrono_mail.engine.meetingmail import Mailing, MeetingDraft, copy_for, dele
 from chrono_mail.engine.calendarnames import CollectionNamer
 from chrono_mail.engine.pimaccess import Located, located, open_collection, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
+from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
@@ -24,9 +25,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.608"
+__version__ = "commands_calendar.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: edit, delete, move, Cancel and Restore take the number of the person's action, so Undo can put them back (B-18 step 3, D-368)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A Google colour is a tag of its own calendar (name|calendar id); a calendar tag given an appointment goes to Google, never into the event (D-341)
 # v4.4.600: The colour Google gives an appointment is its tag, in its window too; taking that tag off takes the colour off Google (D-339)
@@ -701,6 +703,7 @@ class EditParameters(EventFields):
     add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
     remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
     tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees of this change"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def in_event_zone(moment: Moment, start: Moment) -> Moment:
@@ -834,6 +837,7 @@ class DeleteParameters:
     item: str = field(metadata=option("The event id"))
     occurrence: str = field(default="", metadata=option("For a repeating event: only this occurrence (the 'occurrence' of event.list); empty deletes the whole event"))
     tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees it is cancelled"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 @dataclass(frozen=True, slots=True)
@@ -930,6 +934,7 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
 class MoveParameters:
     item: str = field(metadata=option("The event id"))
     calendar: str = field(metadata=option("The calendar to move it to"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def event_move(engine: Engine, parameters: MoveParameters) -> EventInfo:
@@ -1031,6 +1036,7 @@ class StatusParameters:
     item: str = field(metadata=option("The event id"))
     occurrence: str = field(default="", metadata=option("For a repeating event: only this occurrence (the 'occurrence' of event.list); empty is the whole event"))
     tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def _dates_for_status(parameters: StatusParameters, series: EventSeries, text: str) -> tuple[Moment, ...]:
@@ -1126,10 +1132,10 @@ def register(registry: CommandRegistry) -> None:
     registry.register(EVENT_LIST.id, "List the events of some days, repeating ones expanded", ListParameters, event_list, doing="Loading the calendar")
     registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
     registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
-    registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit, doing="Saving an event")
-    registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True, doing="Deleting an event")
-    registry.register(EVENT_CANCEL.id, "Cancel an event, or one occurrence of a repeating event: it stays, greyed", StatusParameters, event_cancel, doing="Cancelling an event")
-    registry.register(EVENT_RESTORE.id, "Take Cancelled off an event, or one occurrence of a repeating event", StatusParameters, event_restore, doing="Restoring an event")
-    registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move, doing="Moving an event")
+    registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, undoable(event_edit, "Edit", "appointment"), doing="Saving an event")
+    registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, undoable(event_delete, "Delete", "appointment"), destructive=True, doing="Deleting an event")
+    registry.register(EVENT_CANCEL.id, "Cancel an event, or one occurrence of a repeating event: it stays, greyed", StatusParameters, undoable(event_cancel, "Cancel", "appointment"), doing="Cancelling an event")
+    registry.register(EVENT_RESTORE.id, "Take Cancelled off an event, or one occurrence of a repeating event", StatusParameters, undoable(event_restore, "Restore", "appointment"), doing="Restoring an event")
+    registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, undoable(event_move, "Move", "appointment"), doing="Moving an event")
     registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import), doing="Importing events")
     registry.register("event.export", "Export an event or a calendar as iCalendar text", ExportParameters, event_export, doing="Exporting events")

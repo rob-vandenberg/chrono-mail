@@ -20,6 +20,7 @@ from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend, carried
+from chrono_mail.ui.pimundoing import SectionUndo
 from chrono_mail.ui.composing import Composing
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.mailstate import MailState
@@ -40,9 +41,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.6.655"
+__version__ = "readingpane.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: an answer to an invitation is one action Ctrl+Z in Calendar undoes: the calendar back as it was (B-18 step 3, D-368)
 # v4.6.655: keep_text_size: the content of a message keeps its size when the main window's style sheet is set again (D-367)
 # v4.4.615: open_window_of: a message already read is not marked read again (no command, no Undo step)
 # v4.4.572: wire_reader: a reader outside the reading pane gets the calendar card's actions; the message window and the Tag overview use it (D-328)
@@ -114,6 +116,7 @@ class ReadingPane(QObject):
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self.calendar_undo: SectionUndo | None = None  # the Calendar's Undo: an answer is one action Ctrl+Z in Calendar undoes (D-368); the window sets it
         self._state: MailState = state
         self._status: StatusReport = status
         self._prefs: InUse = prefs_in_use
@@ -874,7 +877,10 @@ class ReadingPane(QObject):
                 note = dialog.note
                 organizer_asked = check.no_organizer
                 chosen_parameters = changed(parameters, mail=choice is Choice.SEND, to=dialog.address if check.no_organizer else "")
-            self._backend.ask(INVITATION_ANSWER, chosen_parameters, answered, refused, owner=self)
+            if self.calendar_undo is not None:  # your calendar as it was comes back with Ctrl+Z in Calendar; a mail sent stays sent (D-368)
+                self.calendar_undo.ask(INVITATION_ANSWER, changed(chosen_parameters, undo=self.calendar_undo.new_action()), answered, refused, self)
+            else:
+                self._backend.ask(INVITATION_ANSWER, chosen_parameters, answered, refused, owner=self)
 
         self._backend.ask(INVITATION_ANSWER, changed(parameters, dry=True), checked, refused, owner=self)
 

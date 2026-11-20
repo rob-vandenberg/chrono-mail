@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.groups import contacts_of_book, group_addresses, groups_of_book, member_uids, read_card, uid_key
 from chrono_mail.engine.pim_server import item_writer
+from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
@@ -11,9 +12,10 @@ from chrono_mail.pim.contact import Contact, GroupForm, bare_uid, contact_to_tex
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_groups.py 2.1.311"
+__version__ = "commands_groups.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: rename, delete and the members of a group take the number of the person's action, so Undo can put them back (B-18 step 3, D-368)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: Initial contact groups (contact-group.*, R-39): list, create, rename, delete, add and remove members, the addresses of a group; every change on the
 #            server first like every card (D-193)
@@ -134,6 +136,7 @@ def _references(store: PimStore, collection: str, contacts: tuple[str, ...]) -> 
 class GroupRenameParameters:
     item: str = field(metadata=option("The group id (see contact-group.list)"))
     name: str = field(metadata=option("The new name"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def _change(engine: Engine, item: str, change: Callable[[PimStore, str, Contact], Contact]) -> GroupRow:
@@ -170,6 +173,7 @@ def group_rename(engine: Engine, parameters: GroupRenameParameters) -> GroupRow:
 class GroupMembersParameters:
     item: str = field(metadata=option("The group id (see contact-group.list)"))
     contacts: tuple[str, ...] = field(metadata=option("Contacts of the group's address book (repeat)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def group_add_members(engine: Engine, parameters: GroupMembersParameters) -> GroupRow:
@@ -200,6 +204,7 @@ def group_remove_members(engine: Engine, parameters: GroupMembersParameters) -> 
 @dataclass(frozen=True, slots=True)
 class GroupItem:
     item: str = field(metadata=option("The group id (see contact-group.list)"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
 
 
 def group_delete(engine: Engine, parameters: GroupItem) -> GroupItem:
@@ -243,8 +248,8 @@ CONTACT_GROUP_ADDRESSES: TypedCommand[GroupItem, GroupAddresses] = TypedCommand(
 def register(registry: CommandRegistry) -> None:
     registry.register(CONTACT_GROUP_LIST.id, "List the contact groups of the address books", GroupListParameters, group_list, doing="Reading the contact groups")
     registry.register(CONTACT_GROUP_CREATE.id, "Make a contact group", GroupCreateParameters, group_create, doing="Making a contact group")
-    registry.register(CONTACT_GROUP_RENAME.id, "Rename a contact group", GroupRenameParameters, group_rename, doing="Renaming a contact group")
-    registry.register(CONTACT_GROUP_DELETE.id, "Delete a contact group (its members stay)", GroupItem, group_delete, destructive=True, doing="Deleting a contact group")
-    registry.register(CONTACT_GROUP_ADD_MEMBERS.id, "Put contacts in a group", GroupMembersParameters, group_add_members, doing="Putting contacts in a group")
-    registry.register(CONTACT_GROUP_REMOVE_MEMBERS.id, "Take contacts out of a group (they stay in the address book)", GroupMembersParameters, group_remove_members, doing="Taking contacts out of a group")
+    registry.register(CONTACT_GROUP_RENAME.id, "Rename a contact group", GroupRenameParameters, undoable(group_rename, "Rename", "contact group"), doing="Renaming a contact group")
+    registry.register(CONTACT_GROUP_DELETE.id, "Delete a contact group (its members stay)", GroupItem, undoable(group_delete, "Delete", "contact group"), destructive=True, doing="Deleting a contact group")
+    registry.register(CONTACT_GROUP_ADD_MEMBERS.id, "Put contacts in a group", GroupMembersParameters, undoable(group_add_members, "Add to group", "contact group"), doing="Putting contacts in a group")
+    registry.register(CONTACT_GROUP_REMOVE_MEMBERS.id, "Take contacts out of a group (they stay in the address book)", GroupMembersParameters, undoable(group_remove_members, "Take out of group", "contact group"), doing="Taking contacts out of a group")
     registry.register(CONTACT_GROUP_ADDRESSES.id, "The addresses a message to a group goes to", GroupItem, group_addresses_command, doing="Reading the addresses of a group")

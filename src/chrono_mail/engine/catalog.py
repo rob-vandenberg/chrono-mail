@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_calendarmail, commands_colourtags, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_google, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_reminders, commands_rules, commands_schedule, commands_sidebar, commands_signatures, commands_tagoverview, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_calendarmail, commands_colourtags, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_google, commands_groups, commands_imap, commands_invitations, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_reminders, commands_rules, commands_schedule, commands_sidebar, commands_signatures, commands_tagoverview, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, pimundo, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 4.5.626"
+__version__ = "catalog.py 4.7.656"
 
 # --- Version history ----------------------------------------------------
+# v4.7.656: Undo and Redo in Calendar, Tasks and Contacts (pim.undo, pim.redo, pim.undo-labels, B-18 step 3, D-368)
 # v4.5.626: signature.* (B-24, D-358)
 # v4.4.593: google.sign-in (D-335)
 # v4.4.573: event.colours-to-tags (D-329)
@@ -66,6 +67,7 @@ def build_registry() -> CommandRegistry:
     commands_across.register(registry)
     junkfilter.register(registry)
     undo.register(registry)
+    pimundo.register(registry)
     commands_combined.register(registry)
     commands_invitations.register(registry)
     commands_calendarmail.register(registry)
