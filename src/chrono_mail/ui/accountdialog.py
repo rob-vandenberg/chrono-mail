@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.config import server_pin
-from chrono_mail.config.google import GOOGLE_CLIENT_FILE, google_client_codes
 from chrono_mail.core import AccountKind, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
     ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult, AccountSummary,
@@ -34,12 +33,15 @@ from chrono_mail.ui.calendaraccount import CALDAV_KINDS, CARDDAV_KINDS, Calendar
 from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.4.603"
+__version__ = "accountdialog.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: Google: the person fills in the Client ID and Client secret of their own Google project; Sign in with Google is greyed until
+#           both are there (B-34, D-364)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
 # v4.4.596: Gmail: the field is called App password, with the hint 16 letters from Google; spaces and line breaks of a pasted app password
 #           are removed (D-335)
@@ -89,8 +91,10 @@ GMAIL_LABEL: str = "Gmail: Google mail, with an app password"
 GMAIL_SERVERS: tuple[tuple[str, int], tuple[str, int]] = (("imap.gmail.com", 993), ("smtp.gmail.com", 465))  # both implicit TLS, checked live (D-335)
 GOOGLE: str = "google"  # Google Calendar and Google Contacts, through Google sign-in (D-335)
 GOOGLE_LABEL: str = "Google Calendar and Contacts: sign in with Google"
-GOOGLE_HELP: str = ("Chrono Mail opens Google's sign-in page in your web browser. Sign in, allow access to your calendars and contacts, and they "
-                    "are added here as Google Calendar and Google Contacts. For your Gmail mail, choose Gmail.")
+GOOGLE_HELP: str = ("Chrono Mail signs in through your own Google project: fill in the client ID and client secret of its OAuth client of the "
+                    "type Desktop app. Chrono Mail then opens Google's sign-in page in your web browser. Sign in, allow access to your calendars "
+                    "and contacts, and they are added here as Google Calendar and Google Contacts. For your Gmail mail, choose Gmail.")
+NO_GOOGLE_CODES: str = "Fill in the client ID and client secret of your Google project first"
 CALDAV: str = "caldav"  # the Account type choices of a calendar and contacts server (D-185, D-298): one kind of account, other folders ticked
 CARDDAV: str = "carddav"
 CALENDAR_KINDS: tuple[tuple[str, str], ...] = ((CALDAV, "CalDAV: calendars and tasks from a server"), (CARDDAV, "CardDAV: contacts from a server"))
@@ -148,6 +152,12 @@ class AccountDialog(QDialog):
         for value, label in CALENDAR_KINDS:
             self.kind.addItem(label, value)
         self.gmail_help: QLabel = part(form, QLabel, "gmailHelp")
+        self._kind_form: QFormLayout = part(form, QFormLayout, "kindForm")
+        self.google_client_id: QLineEdit = part(form, QLineEdit, "googleClientId")
+        self.google_client_secret: QLineEdit = part(form, QLineEdit, "googleClientSecret")
+        make_password_field(self.google_client_secret)
+        for field in (self.google_client_id, self.google_client_secret):
+            field.textChanged.connect(self._allow_add)
         self._gmail_text: str = self.gmail_help.text()
         self.tabs: QTabWidget = part(form, QTabWidget, "tabs")
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
@@ -255,8 +265,10 @@ class AccountDialog(QDialog):
             self.tabs.setCurrentIndex(ACCOUNT_TAB)
             self.encrypt.setChecked(True)  # never a choice left over from another type: Gmail's mail is encrypted here (OR-6)
         self.add_button.setText("Sign in with Google" if google else "Add account")
-        self.add_button.setToolTip("" if not google or google_client_codes() is not None else
-                                   f"Google sign-in is not set up on this computer: {GOOGLE_CLIENT_FILE} is missing")
+        for field in (self.google_client_id, self.google_client_secret):
+            self._kind_form.setRowVisible(field, google)
+        if not google:
+            self.add_button.setToolTip("")  # the reason for the greying is Google's only
         self.calendar.setVisible(calendar)
         if calendar:
             self.calendar.ticked_kinds = CARDDAV_KINDS if str(self.kind.currentData()) == CARDDAV else CALDAV_KINDS
@@ -323,10 +335,16 @@ class AccountDialog(QDialog):
         """Add account as the kind now shown allows it: the mail part while no test runs, the calendar part once Find found something; never
         while an account is being added."""
         if self._is_google():
-            allowed = google_client_codes() is not None  # greyed with the reason as its hover text (OR-15)
+            allowed = self._google_codes() is not None  # greyed with the reason as its hover text (OR-15)
+            self.add_button.setToolTip("" if allowed else NO_GOOGLE_CODES)
         else:
             allowed = self.calendar.found is not None if self._is_calendar() else not self._testing
         self.add_button.setEnabled(allowed and not self._adding)
+
+    def _google_codes(self) -> tuple[str, str] | None:
+        """The client ID and client secret typed (D-364); None while one of them is empty."""
+        client_id, secret = self.google_client_id.text().strip(), self.google_client_secret.text().strip()
+        return (client_id, secret) if client_id and secret else None
 
     def _gmail_servers(self) -> None:
         """Gmail: its servers, both with TLS, and the address as the user name, all greyed (D-335); another kind: the fields are the person's
@@ -533,7 +551,9 @@ class AccountDialog(QDialog):
             self._set_adding(False)
             self.result_label.setText(f'<span style="color:{red()}">{html.escape(str(error))}</span>')
 
-        self._backend.ask(GOOGLE_SIGN_IN, SignInParameters(ticket=self._google_ticket), done, failed, owner=self)
+        client_id, secret = self._google_codes() or ("", "")
+        parameters = SignInParameters(ticket=self._google_ticket, client_id=client_id, client_secret=secret)
+        self._backend.ask(GOOGLE_SIGN_IN, parameters, done, failed, owner=self)
 
     def _add_calendars(self) -> None:
         def added(result: AccountAddResult | None) -> None:

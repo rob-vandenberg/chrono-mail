@@ -7,9 +7,10 @@ from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "walletlabels.py 4.2.459"
+__version__ = "walletlabels.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: the client secret of a Google account is labelled as such, not as its server's password (D-364)
 # v4.2.459: move_profile_entries: a profile's entries move from its wallet name of before (with "/") to its own name now (D-274)
 # v3.6.371: Initial: the labels a person reads in the wallet for Chrono Mail's passwords and key; given at every save, rename and start (B-23, D-275)
 
@@ -20,6 +21,7 @@ SERVER_WORDS: dict[ServerRole, str] = {
     ServerRole.INCOMING: "incoming mail server",
     ServerRole.OUTGOING: "outgoing mail server",
     ServerRole.DAV: "calendar and contacts server",
+    ServerRole.GOOGLE_SECRET: "Google client secret",
 }
 
 
@@ -34,7 +36,7 @@ def password_label(engine: Engine, settings: AccountSettings, role: ServerRole) 
     of calendars and contacts only has none: its user name), then the server the password is for."""
     account = settings.account
     names = dict.fromkeys(name for name in (settings.account_name, account.email_address or account.incoming.username) if name)
-    server = SERVER_WORDS[ServerRole.DAV] if account.kind is AccountKind.DAV else SERVER_WORDS[role]  # its one password is its server's
+    server = SERVER_WORDS[ServerRole.DAV] if account.kind is AccountKind.DAV and role is not ServerRole.GOOGLE_SECRET else SERVER_WORDS[role]  # its one password is its server's
     return f"{_program(engine)}: {', '.join(names)} ({server})"
 
 

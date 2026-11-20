@@ -57,6 +57,7 @@ See also: [[sync-conflicts]]
 - [[D-331]] The same tabs on Settings > Sidebar and Settings > Tags
 - [[D-332]] One list of tags, each shown in the sections chosen
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
+- [[D-364]] Each Google account keeps the client codes of the person's own Google project
 - [[D-337]] Google event colours through Google's Calendar API
 - [[D-338]] The colours a person makes in Google Calendar are tags here
 - [[D-339]] Every colour of a Google calendar is a tag here

@@ -4,9 +4,10 @@ from typing import Protocol
 from chrono_mail.core import SERVICE_NAME, ConfigurationError, CredentialBackend, CredentialEntries, CredentialFailure
 
 # --- Version ------------------------------------------------------------
-__version__ = "passwords.py 4.2.459"
+__version__ = "passwords.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: ServerRole.GOOGLE_SECRET: the client secret of the Google project a Google account signs in through (B-34, D-364)
 # v4.2.459: KeyringPasswordStore.entries and entry_name: a profile's entries move to its wallet name without "/" (D-274)
 # v3.6.371: label: a password's entry gets a label a person can read in the wallet; a label that cannot be written never fails anything (B-23, D-275)
 # v1.8.263: R-16: the credential store is reached through core's one copy (CredentialEntries); the texts are unchanged
@@ -19,6 +20,7 @@ class ServerRole(Enum):
     INCOMING = "incoming"
     OUTGOING = "outgoing"
     DAV = "dav"  # the calendar and contacts server, when its password is not the one for incoming mail
+    GOOGLE_SECRET = "google-secret"  # a Google account: the client secret of the Google project it signs in through (D-364)
 
 
 class PasswordStore(Protocol):

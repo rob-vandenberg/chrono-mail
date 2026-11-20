@@ -46,9 +46,11 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.5.626"
+__version__ = "accountedit.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: a Google account: Client ID and Client secret on the General tab, below Google account; Save changes them for every Google
+#           account of the same Google address (B-34, D-364)
 # v4.5.626: The old signature field is gone: templates and signatures are chosen per account on Settings > Templates and Signatures (B-24, D-358)
 # v4.4.603: Shown as, Sign-in name; a calendar account shows its sign-in on the General tab, read-only; a Google account says whom it signed in as, without sign-in name and password fields (D-342)
 # v4.4.593: a Google account: its server, user name and password greyed; Find becomes Sign in with Google, for when Google ends the sign-in (D-335)
@@ -135,6 +137,18 @@ class AccountEditDialog(QDialog):
             for widget in (label, self.sign_in_name):
                 widget.setToolTip(tip)
             general.insertRow(1, label, self.sign_in_name)
+        self.google_client_id: QLineEdit | None = None
+        self.google_client_secret: QLineEdit | None = None
+        if account.google:  # its own Google project (D-364); one sign-in, so also its other part's (Calendar and Contacts)
+            shared = "; Save changes it for every Google account of this Google address, which share one sign-in"
+            self.google_client_id = QLineEdit(account.google_client_id)
+            self.google_client_id.setToolTip("The client ID of your Google project" + shared)
+            self.google_client_secret = QLineEdit()
+            self.google_client_secret.setPlaceholderText("(unchanged)")
+            self.google_client_secret.setToolTip("The client secret of your Google project; left empty, the stored one stays" + shared)
+            make_password_field(self.google_client_secret)
+            general.insertRow(2, "Client ID", self.google_client_id)
+            general.insertRow(3, "Client secret", self.google_client_secret)
         storage = part(form, QComboBox, "storage")
         self.storage: QComboBox | None = None
         if kind is AccountKind.POP3:  # an IMAP account always has the folders of its server
@@ -436,6 +450,8 @@ class AccountEditDialog(QDialog):
             junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
             invitation_answers=self._answers_value(),
             reminder_emails=self._reminders_value(),
+            google_client_id=differing(self.google_client_id.text().strip(), account.google_client_id) if self.google_client_id is not None else None,
+            google_client_secret=(self.google_client_secret.text().strip() or None) if self.google_client_secret is not None else None,
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
 

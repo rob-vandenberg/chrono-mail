@@ -88,7 +88,7 @@ Only `ui` may import PySide6.
 - An account is one login on one server. Mail accounts (POP3, IMAP) may also have a calendar and contacts server. An account of kind **Calendars and contacts** (`dav`, D-185) has only that: no mail, no address; the engine has no place for its mail (`storage_groups` leaves it out) and the window keeps it out of everything about mail.
 - Every account may have an account name, shown only inside Chrono Mail (D-184).
 - **Security:** plain, STARTTLS and implicit TLS; certificate verification is on by default; the person may choose to connect without it or accept an exception, never the program on its own (D-082, D-299).
-- **Authentication:** user name and password, kept in the OS credential store. OAuth2 comes with Gmail and Microsoft 365.
+- **Authentication:** user name and password, kept in the OS credential store. OAuth2 comes with Gmail and Microsoft 365. A Google account signs in through the person's own Google project: its client ID in the account's settings, its client secret in the credential store beside the passwords (`ServerRole.GOOGLE_SECRET`, D-364).
 
 ## 6. IMAP (the server is the truth)
 

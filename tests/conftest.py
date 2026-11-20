@@ -16,9 +16,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu 
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 4.4.549"
+__version__ = "conftest.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: no test reads the computer's own private file of Google codes: the one copy to the Google accounts reads a missing one (D-364)
 # v4.4.549: the window tests' fixtures and clean-up (tests/ui/uiplugin.py) are a plugin, so they reach every test whatever the order of the files
 # v4.4.542: every test starts with connections allowed, whatever the window of the test before did
 # v4.2.402: no test touches the start at login of the computer it runs on: it goes to the test's own folder (D-284)
@@ -103,3 +104,11 @@ def _own_start_at_login(tmp_path_factory: pytest.TempPathFactory, monkeypatch: p
 
     monkeypatch.setattr(commands_autostart, "read_autostart", read)
     monkeypatch.setattr(commands_autostart, "write_autostart", write)
+
+
+@pytest.fixture(autouse=True)
+def _no_former_google_codes(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one copy of the former Google codes (D-364) reads a file that is not there: the computer's own would make the result depend on it."""
+    from chrono_mail.engine import google_access
+
+    monkeypatch.setattr(google_access, "FORMER_CODES_FILE", tmp_path_factory.mktemp("google") / "google-client.json")

@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.5.626"
+__version__ = "files.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: google_client_id read and saved with the account (B-34, D-364)
 # v4.5.626: texts (the account's templates and signatures) read and saved with the account (B-24, D-358)
 # v4.4.608: google_name read and saved with the account (D-346)
 # v4.4.593: google read and saved with the account (D-335)
@@ -146,6 +147,9 @@ def _account(data: object, position: int) -> AccountSettings:
         google_name = data.get("google_name", "")
         if not isinstance(google_name, str):
             raise ConfigurationError(f"Setting '{where}.google_name' is not text")
+        google_client_id = data.get("google_client_id", "")
+        if not isinstance(google_client_id, str):
+            raise ConfigurationError(f"Setting '{where}.google_client_id' is not text")
         auto_schedule = data.get("dav_auto_schedule", False)
         always_answers = data.get("dav_always_answers", False)
         dav_addresses = data.get("dav_addresses", [])
@@ -162,7 +166,7 @@ def _account(data: object, position: int) -> AccountSettings:
             calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
             invitation_answers=answers, dav_auto_schedule=auto_schedule, dav_always_answers=always_answers, dav_addresses=tuple(dav_addresses), reminder_emails=reminder_emails,
-            google=google, google_name=google_name, texts=_texts(data.get("texts", {}), where),
+            google=google, google_name=google_name, google_client_id=google_client_id, texts=_texts(data.get("texts", {}), where),
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -270,6 +274,7 @@ def config_to_text(config: AppConfig) -> str:
                     "reminder_emails": settings.reminder_emails,
                     "google": settings.google,
                     "google_name": settings.google_name,
+                    "google_client_id": settings.google_client_id,
                 }
                 for settings in config.accounts
             ],

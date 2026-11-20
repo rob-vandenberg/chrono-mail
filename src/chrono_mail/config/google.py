@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.4.593"
+__version__ = "google.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: read only once, by the copy of its codes to the Google accounts, which keep their own since (B-34, D-364)
 # v4.4.593: Initial: the Google project's client ID and secret, read from a private file outside the project (D-335)
 
 GOOGLE_CLIENT_FILE: Path = Path.home() / ".claude" / "chrono-mail" / "google-client.json"  # never in the project folder (G-1, D-335)
@@ -12,8 +13,8 @@ MAXIMUM_FILE_BYTES: int = 16 * 1024
 
 
 def google_client_codes(path: Path = GOOGLE_CLIENT_FILE) -> tuple[str, str] | None:
-    """(client ID, client secret) of the Google project Chrono Mail signs in through; None when the file is missing or cannot be read, so
-    Google sign-in is not offered (mail is never touched by it)."""
+    """(client ID, client secret) of the Google project in the private file Google accounts signed in through before 4.6.646; None when the
+    file is missing or cannot be read. Since then each account keeps its own (D-364): the file is read only by their one copy."""
     try:
         if path.stat().st_size > MAXIMUM_FILE_BYTES:
             return None

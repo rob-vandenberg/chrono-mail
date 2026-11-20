@@ -29,3 +29,4 @@ See also: [[storage]]
 - [[D-078]] Own generic DAV client
 - [[D-293]] Check for updates never on its own
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
+- [[D-364]] Each Google account keeps the client codes of the person's own Google project

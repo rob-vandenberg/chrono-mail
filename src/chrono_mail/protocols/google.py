@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.4.608"
+__version__ = "google.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: Google refusing the client ID or client secret says so, and where they are changed (B-34, D-364)
 # v4.4.608: the profile permission: the person's name on Google, from the sign-in and read again with profile_name (D-346)
 # v4.4.604: set_own_name: one's own name for a calendar, never the calendar's own name (D-343)
 # v4.4.599: The labels of a Google calendar (the colours a person made and named there): read per calendar, set on an event (D-338)
@@ -41,6 +42,8 @@ MAXIMUM_LABELS: int = 500  # a calendar holds 200 of them at Google; more than t
 MAXIMUM_LABEL_ID: int = 200
 MAXIMUM_LABEL_NAME: int = 100  # as a tag's name here (config.tags MAXIMUM_NAME)
 SIGN_IN_AGAIN: str = "Google asks you to sign in again (in Testing mode every 7 days): Settings > Accounts, the Google account, Sign in with Google."
+CODES_REFUSED: str = ("Google does not accept the client ID or client secret of this account: check them on the General tab of the account "
+                      "(Settings > Accounts, the account, Edit…)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +173,8 @@ def _token_request(client: GoogleClient, fields: dict[str, str]) -> dict[str, ob
         reason = _error_of(error.read(MAXIMUM_ANSWER_BYTES))
         if reason in ("invalid_grant", "unauthorized_client"):
             raise AuthenticationError(SIGN_IN_AGAIN) from None
+        if reason == "invalid_client":
+            raise AuthenticationError(CODES_REFUSED) from None
         raise ProtocolError(f"Google refused: {reason or error.code}") from None
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as error:
         raise ProtocolError(f"Google could not be reached: {getattr(error, 'reason', error)}") from None

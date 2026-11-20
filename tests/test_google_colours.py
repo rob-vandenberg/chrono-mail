@@ -16,12 +16,13 @@ from chrono_mail.protocols.google import ColourRead, GoogleClient, GoogleRefused
 from tests.enginefactory import make_engine
 from tests.fakedav import FakeDav
 from tests.test_engine_commands import call
-from tests.test_google_sign_in import CLIENT, signs_in
+from tests.test_google_sign_in import CODES, signs_in
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_colours.py 4.4.613"
+__version__ = "test_google_colours.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: the sign-in is given the client ID and client secret typed (D-364)
 # v4.4.613: Google busy or out of reach for the colours is said by nothing, only at the third synchronisation in a row, once; a refusal still is (D-348)
 # v4.4.608: the Google Calendar account is found by its server: a new sign-in gives no Shown as name (D-346)
 # v4.4.602: A Google colour is a tag of its own calendar, "Rood|<calendar id>", never in the person's tag list (D-341): the tests of D-340's rule
@@ -249,7 +250,6 @@ def google_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tu
         try:
             from chrono_mail.engine import commands_google
 
-            monkeypatch.setattr(google_access, "google_client_codes", lambda: (CLIENT.client_id, CLIENT.client_secret))
             def renew(client: GoogleClient, refresh: str) -> tuple[str, int]:
                 return "access-1", 3600
 
@@ -263,7 +263,7 @@ def google_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tu
             monkeypatch.setattr(google_colours, "calendar_id_of", calendar_of)
             engine = make_engine(tmp_path)
             signs_in(monkeypatch, CALENDAR, "refresh-1")
-            account = next(each for each in call(engine, "google.sign-in").account_ids if engine.config().find(each).dav_url.startswith(f"http://127.0.0.1:{calendars.port}/"))
+            account = next(each for each in call(engine, "google.sign-in", **CODES).account_ids if engine.config().find(each).dav_url.startswith(f"http://127.0.0.1:{calendars.port}/"))
             yield engine, account, calendars, api
         finally:
             google_access.forget_access("")

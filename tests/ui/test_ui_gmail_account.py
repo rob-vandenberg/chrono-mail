@@ -1,5 +1,6 @@
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.config import ServerRole
 from chrono_mail.core import AccountKind
 import pytest
 
@@ -8,9 +9,11 @@ from chrono_mail.ui.accountdialog import GMAIL, GOOGLE, AccountDialog
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_gmail_account.py 4.4.603"
+__version__ = "test_ui_gmail_account.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: Google: Sign in with Google greyed until Client ID and Client secret are filled in; the sign-ins are given the typed or the
+#           account's own codes (B-34, D-364)
 # v4.4.603: a Google account's sign-in name and password fields are left out, no longer greyed (D-342)
 # v4.4.596: a folder that only holds folders cannot be selected; App password with its hint, its spaces dropped (D-335)
 # v4.4.595: Gmail needs only the Account tab, Servers and Options greyed; the window never taller than the screen with its title bar (D-336)
@@ -61,22 +64,26 @@ def test_an_address_typed_while_on_gmail_gives_the_usual_guess_when_leaving_gmai
     assert dialog.servers.incoming_host.text() == "mail.two.org" and dialog.servers.outgoing_host.text() == "mail.two.org"
 
 
-def test_google_calendar_and_contacts_is_a_sign_in_greyed_with_its_reason_without_the_client_file(
-    world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(accountdialog, "google_client_codes", lambda: ("id", "secret"))
+def test_google_calendar_and_contacts_is_a_sign_in_greyed_with_its_reason_until_the_codes_are_filled_in(world: World, qtbot: QtBot) -> None:
     dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
     qtbot.addWidget(dialog)
+    assert not dialog.google_client_id.isVisibleTo(dialog) and not dialog.google_client_secret.isVisibleTo(dialog)
     dialog.kind.setCurrentIndex(dialog.kind.findData(GOOGLE))
-    assert dialog.add_button.text() == "Sign in with Google" and dialog.add_button.isEnabled()
-    assert dialog.gmail_help.isVisibleTo(dialog) and "web browser" in dialog.gmail_help.text()
+    assert dialog.google_client_id.isVisibleTo(dialog) and dialog.google_client_secret.isVisibleTo(dialog)
+    assert dialog.google_client_secret.echoMode() == dialog.google_client_secret.EchoMode.Password
+    assert dialog.add_button.text() == "Sign in with Google" and not dialog.add_button.isEnabled()
+    assert dialog.add_button.toolTip() == accountdialog.NO_GOOGLE_CODES
+    assert dialog.gmail_help.isVisibleTo(dialog) and "client ID and client secret" in dialog.gmail_help.text()
     assert not dialog.servers.widget.isVisibleTo(dialog) and not dialog.calendar.isVisibleTo(dialog) and not dialog.test_button.isVisibleTo(dialog)
-    monkeypatch.setattr(accountdialog, "google_client_codes", lambda: None)
-    dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
-    dialog.kind.setCurrentIndex(dialog.kind.findData(GOOGLE))
-    assert not dialog.add_button.isEnabled() and "not set up on this computer" in dialog.add_button.toolTip()
+    dialog.google_client_id.setText("an-id")
+    assert not dialog.add_button.isEnabled()
+    dialog.google_client_secret.setText("a-secret")
+    assert dialog.add_button.isEnabled() and dialog.add_button.toolTip() == ""
+    dialog.google_client_secret.setText("  ")
+    assert not dialog.add_button.isEnabled()
     dialog.kind.setCurrentIndex(dialog.kind.findData(GMAIL))
     assert dialog.add_button.text() == "Add account" and dialog.add_button.isEnabled() and "app password" in dialog.gmail_help.text()
+    assert dialog.add_button.toolTip() == "" and not dialog.google_client_id.isVisibleTo(dialog)
 
 
 
@@ -97,18 +104,18 @@ def test_edit_account_of_google_offers_sign_in_with_google_and_greys_the_login(w
 
 
 def test_cancel_stays_usable_while_waiting_for_google_and_stops_the_sign_in(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    from chrono_mail.engine import commands_google, google_access
+    from chrono_mail.engine import commands_google
     from tests.ui.world import wait
 
     def opened(url: str) -> bool:
         return True
 
-    monkeypatch.setattr(accountdialog, "google_client_codes", lambda: ("id", "secret"))
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: ("id", "secret"))
     monkeypatch.setattr(commands_google.webbrowser, "open", opened)  # no real browser in a test
     dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts())
     qtbot.addWidget(dialog)
     dialog.kind.setCurrentIndex(dialog.kind.findData(GOOGLE))
+    dialog.google_client_id.setText("id")
+    dialog.google_client_secret.setText("secret")
     dialog.add_button.click()
     wait(qtbot, lambda: bool(commands_google._waiting))  # pyright: ignore[reportPrivateUsage]
     assert dialog.cancel_button is not None and dialog.cancel_button.isEnabled() and not dialog.add_button.isEnabled()
@@ -120,17 +127,18 @@ def test_cancel_stays_usable_while_waiting_for_google_and_stops_the_sign_in(worl
 def test_edit_accounts_sign_in_can_be_stopped_with_its_button(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     import dataclasses
 
-    from chrono_mail.engine import commands_google, google_access
+    from chrono_mail.engine import commands_google
     from chrono_mail.ui.accountedit import AccountEditDialog
     from tests.ui.world import wait
 
     def opened(url: str) -> bool:
         return True
 
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: ("id", "secret"))
     monkeypatch.setattr(commands_google.webbrowser, "open", opened)  # no real browser in a test
     account = world.call("account.list")[0]
-    world.engine.change_config(lambda config: config.with_account(dataclasses.replace(config.find(account.account_id), google=True)))  # a Google account
+    world.engine.change_config(lambda config: config.with_account(dataclasses.replace(config.find(account.account_id), google=True,
+                                                                                      google_client_id="id")))  # a Google account, its own codes (D-364)
+    world.engine.passwords.set(account.account_id, ServerRole.GOOGLE_SECRET, "secret")
     dialog = AccountEditDialog(world.backend, dataclasses.replace(account, google=True))
     qtbot.addWidget(dialog)
     dialog.dav_check_button.click()

@@ -65,6 +65,7 @@ from chrono_mail.ui.tagoverview import Openers, TagOverviewWindow
 from chrono_mail.ui.tagfilter import TagFilter, tags_shown_key
 from chrono_mail.engine.commands_colourtags import EVENT_COLOURS_TO_TAGS, ColoursToTags
 from chrono_mail.engine.commands_pim import PIM_PURGE_DELETED, PurgeResult
+from chrono_mail.engine.commands_google import GOOGLE_COPY_CODES, CopiedCodes
 from chrono_mail.engine.commands_signatures import SNIPPET_TAKE_OLD, TakeOldParameters, TakenSignatures
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.sendnotices import SendNotices
@@ -74,9 +75,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.5.629"
+__version__ = "mainwindow.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: The start gives the Google accounts the client ID and client secret of the former private file, once, before anything syncs (B-34, D-364)
 # v4.5.629: an import whose export had the reference client's "Sent from" tick on ticks Settings > Templates and Signatures > "Sent from Chrono Mail" (D-359)
 # v4.4.616: Settings > Calendar's choices taken into use: Start week on for every date field, the rest by the Calendar section (D-352)
 # v4.5.626: The start moves each account's old plain-text signature into the list of signatures, once (B-24, D-358)
@@ -1471,7 +1473,7 @@ class MainWindow(QMainWindow):
         def moved() -> None:  # a profile's key is under its own wallet name now (D-274): only now anything reads it
             self.messages.load_contact_addresses()
             self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
-            self._with_key(lambda: self.rebuilds.start(ready))  # every index usable first (D-229)
+            self._copy_google_codes(lambda: self._with_key(lambda: self.rebuilds.start(ready)))  # every index usable first (D-229)
 
         def ready() -> None:
             self.reload_accounts(select_saved=True, then=check)
@@ -1486,6 +1488,21 @@ class MainWindow(QMainWindow):
             self._files_waiting.clear()
 
         self.checking.move_profile_wallet(moved)
+
+    def _copy_google_codes(self, then: Callable[[], None]) -> None:
+        """Once, before anything syncs: the Google accounts get the client ID and client secret they signed in with before 4.6.646 (D-364).
+        A word only when it happened, or could not; the start goes on either way."""
+
+        def done(result: CopiedCodes) -> None:
+            if result.names:
+                self.report.show(f"Your Google accounts keep their client ID and client secret themselves now: {', '.join(result.names)}")
+            then()
+
+        def failed(error: ChronoMailError) -> None:
+            self.report.show(f"The Google accounts could not get their client ID and client secret yet: {error}; it is tried again at the next start")
+            then()
+
+        self.backend.ask(GOOGLE_COPY_CODES, NoParameters(), done, failed, owner=self)
 
     def _colours_to_tags(self) -> None:
         """Every appointment colour in use becomes a tag of the same name and colour (D-329); the appointments follow their facts. An appointment

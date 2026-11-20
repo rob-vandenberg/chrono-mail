@@ -12,7 +12,7 @@ import pytest
 
 from chrono_mail.config import ServerRole
 from chrono_mail.config.google import google_client_codes
-from chrono_mail.core import AuthenticationError, ConfigurationError
+from chrono_mail.core import AuthenticationError
 from chrono_mail.engine import Engine, UsageError, commands_google, google_access
 from chrono_mail.protocols import google
 from chrono_mail.protocols.dav import DavClient
@@ -22,13 +22,15 @@ from tests.fakedav import FakeDav
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_google_sign_in.py 4.4.597"
+__version__ = "test_google_sign_in.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: a sign-in is given the client ID and client secret typed (CODES); without them it asks for them (B-34, D-364)
 # v4.4.597: a calendar owned by either of Google's two names for you is your own; each Google account keeps its own kind (D-335)
 # v4.4.593: Initial tests: Google sign-in, its access codes, the two Google accounts, signing in again, Bearer for DAV (D-335)
 
 CLIENT = GoogleClient("id-123.apps.googleusercontent.com", "GOCSPX-test")
+CODES: dict[str, object] = {"client_id": CLIENT.client_id, "client_secret": CLIENT.client_secret}  # what the person typed (D-364)
 
 
 def id_token(address: str, name: str = "") -> str:
@@ -139,7 +141,6 @@ def servers(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[FakeDav, FakeDav]
     for server in (calendars, contacts):
         server.bearer = "access-1"
         server.__enter__()
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: (CLIENT.client_id, CLIENT.client_secret))
     monkeypatch.setattr(commands_google, "PARTS", (("Google Calendar", f"http://127.0.0.1:{calendars.port}/dav/"),
                                                    ("Google Contacts", f"http://localhost:{contacts.port}/dav/")))
     yield calendars, contacts
@@ -176,14 +177,14 @@ def signs_in(monkeypatch: pytest.MonkeyPatch, address: str, refresh: str, name: 
 def test_signing_in_adds_google_calendar_and_google_contacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: tuple[FakeDav, FakeDav]) -> None:
     engine = make_engine(tmp_path)
     signs_in(monkeypatch, "ann@gmail.com", "refresh-1")
-    result = call(engine, "google.sign-in")
+    result = call(engine, "google.sign-in", **CODES)
     accounts = [settings for settings in engine.config().accounts if settings.google]
     assert result.address == "ann@gmail.com" and len(result.account_ids) == 2 == len(accounts)
     assert sorted(settings.dav_url for settings in accounts) == sorted(url for _, url in commands_google.PARTS)
     assert all(settings.account_name == "" for settings in accounts)  # no Shown as name made up: the person chooses one (D-346)
     assert all(engine.passwords.get(settings.account.account_id, ServerRole.INCOMING) == "refresh-1" for settings in accounts)
     with pytest.raises(UsageError):
-        call(engine, "google.sign-in")  # the same Google account twice
+        call(engine, "google.sign-in", **CODES)  # the same Google account twice
 
 
 def test_signing_in_again_takes_the_new_sign_in_only_for_the_same_google_address(
@@ -191,7 +192,7 @@ def test_signing_in_again_takes_the_new_sign_in_only_for_the_same_google_address
 ) -> None:
     engine = make_engine(tmp_path)
     signs_in(monkeypatch, "ann@gmail.com", "refresh-1")
-    first = call(engine, "google.sign-in").account_ids[0]
+    first = call(engine, "google.sign-in", **CODES).account_ids[0]
     signs_in(monkeypatch, "bob@gmail.com", "refresh-2")
     with pytest.raises(UsageError, match="but this account belongs to ann@gmail.com"):
         call(engine, "google.sign-in", account=first)
@@ -205,7 +206,7 @@ def test_a_google_account_synchronises_with_its_access_code_renewed_when_needed(
 ) -> None:
     engine: Engine = make_engine(tmp_path)
     signs_in(monkeypatch, "ann@gmail.com", "refresh-1")
-    account = call(engine, "google.sign-in").account_ids[0]
+    account = call(engine, "google.sign-in", **CODES).account_ids[0]
     renewed: list[str] = []
     def renew(client: GoogleClient, refresh: str) -> tuple[str, int]:
         renewed.append(refresh)
@@ -224,10 +225,11 @@ def test_a_google_account_synchronises_with_its_access_code_renewed_when_needed(
         call(engine, "dav.sync", account=account)
 
 
-def test_without_the_client_file_sign_in_says_it_is_not_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: None)
-    with pytest.raises(ConfigurationError, match="Google sign-in is not set up on this computer"):
-        call(make_engine(tmp_path), "google.sign-in")
+def test_without_a_client_id_and_secret_the_sign_in_asks_for_them(tmp_path: Path) -> None:
+    attempts: tuple[dict[str, object], ...] = ({}, {"client_id": CLIENT.client_id}, {"client_id": " ", "client_secret": CLIENT.client_secret})
+    for typed in attempts:
+        with pytest.raises(UsageError, match="Fill in the client ID and client secret"):
+            call(make_engine(tmp_path), "google.sign-in", **typed)
 
 
 def test_a_refused_access_code_asks_to_sign_in_again() -> None:
@@ -241,7 +243,6 @@ def test_a_refused_access_code_asks_to_sign_in_again() -> None:
 def test_cancel_stops_the_wait_for_the_browser_at_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
 
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: (CLIENT.client_id, CLIENT.client_secret))
 
     def opened(url: str) -> bool:
         return True
@@ -252,7 +253,7 @@ def test_cancel_stops_the_wait_for_the_browser_at_once(tmp_path: Path, monkeypat
 
     def sign_in() -> None:
         try:
-            call(engine, "google.sign-in")
+            call(engine, "google.sign-in", **CODES)
         except AuthenticationError as error:
             outcome.append(error)
 
@@ -269,22 +270,21 @@ def test_cancel_stops_the_wait_for_the_browser_at_once(tmp_path: Path, monkeypat
 
 
 def test_without_a_web_browser_the_sign_in_says_so_at_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: (CLIENT.client_id, CLIENT.client_secret))
 
     def not_opened(url: str) -> bool:
         return False
 
     monkeypatch.setattr(commands_google.webbrowser, "open", not_opened)
     with pytest.raises(UsageError, match="could not open your web browser"):
-        call(make_engine(tmp_path), "google.sign-in")
+        call(make_engine(tmp_path), "google.sign-in", **CODES)
 
 
 def test_a_removed_google_calendar_comes_back_with_a_new_sign_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: tuple[FakeDav, FakeDav]) -> None:
     engine = make_engine(tmp_path)
     signs_in(monkeypatch, "ann@gmail.com", "refresh-1")
-    calendar, contacts = call(engine, "google.sign-in").account_ids
+    calendar, contacts = call(engine, "google.sign-in", **CODES).account_ids
     call(engine, "account.remove", account=calendar)
-    again = call(engine, "google.sign-in")
+    again = call(engine, "google.sign-in", **CODES)
     urls = sorted(settings.dav_url for settings in engine.config().accounts if settings.google)
     assert len(again.account_ids) == 1 and urls == sorted(url for _, url in commands_google.PARTS)
     assert contacts not in again.account_ids
@@ -295,9 +295,8 @@ def test_a_stop_before_the_sign_in_starts_and_a_stop_after_the_answer_both_keep_
 ) -> None:
     engine = make_engine(tmp_path)
     call(engine, "google.cancel-sign-in", ticket="early")  # Cancel came before the sign-in began its work
-    monkeypatch.setattr(google_access, "google_client_codes", lambda: (CLIENT.client_id, CLIENT.client_secret))
     with pytest.raises(AuthenticationError, match="stopped"):
-        call(engine, "google.sign-in", ticket="early")
+        call(engine, "google.sign-in", ticket="early", **CODES)
 
     class Late:
         """Signs in, then the person presses Cancel while Google is being asked."""
@@ -325,7 +324,7 @@ def test_a_stop_before_the_sign_in_starts_and_a_stop_after_the_answer_both_keep_
     monkeypatch.setattr(commands_google, "SignInWaiter", Late)
     monkeypatch.setattr(commands_google.webbrowser, "open", opened)
     with pytest.raises(AuthenticationError, match="stopped"):
-        call(engine, "google.sign-in", ticket="late")
+        call(engine, "google.sign-in", ticket="late", **CODES)
     assert not any(settings.google for settings in engine.config().accounts)
 
 
@@ -406,7 +405,7 @@ def test_signing_in_keeps_google_s_name_apart_from_shown_as_and_signing_in_again
     """D-346: no Shown as name is made up; the person's name on Google is kept apart, and a new sign-in renews it."""
     engine = make_engine(tmp_path)
     signs_in(monkeypatch, "ann@gmail.com", "refresh-1", "Ann Lee")
-    added = call(engine, "google.sign-in").account_ids
+    added = call(engine, "google.sign-in", **CODES).account_ids
     assert {(engine.config().find(each).account_name, engine.config().find(each).google_name) for each in added} == {("", "Ann Lee")}
     signs_in(monkeypatch, "ann@gmail.com", "refresh-2", "Ann Stone")
     call(engine, "google.sign-in", account=added[0])

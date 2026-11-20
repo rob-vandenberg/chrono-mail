@@ -41,6 +41,7 @@ from chrono_mail.crypto import (
     unseal_key_with_passphrase,
 )
 from chrono_mail.engine.changes import Change
+from chrono_mail.engine.google_access import forget_access
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
 from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -55,9 +56,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.5.626"
+__version__ = "commands_accounts.py 4.6.646"
 
 # --- Version history ----------------------------------------------------
+# v4.6.646: AccountSummary.google_client_id; account.edit changes the client ID and client secret of every Google account of the same
+#           Google address, which share one sign-in; removing an account removes its client secret (B-34, D-364)
 # v4.5.626: AccountSummary.texts in place of the old signature; account.edit no longer takes a signature (B-24, D-358)
 # v4.4.608: a Google account without a Shown as name is named by the person's name on Google; Google's two parts told apart as Google Calendar
 #           and Google Contacts; list_name and holds: the two lines of an account in Settings > Accounts, the server only when two are the same (D-346)
@@ -471,6 +474,7 @@ class AccountSummary:
     list_name: str = ""  # line 1 in Settings > Accounts: "Rob <rob@example.com>", or the address (D-346)
     holds: str = ""  # line 2 there: what it holds, "Mail (POP3)", "Google Calendar"; the server only when two accounts are the same (D-346)
     calendar_kind: str = ""  # its calendars and contacts in a row of the Operations window: Calendars and contacts, Google Calendar (D-346)
+    google_client_id: str = ""  # a Google account: the client ID of the Google project it signs in through (its secret is never shown, D-364)
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -513,6 +517,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         list_name(item),
         holds(item, accounts),
         google_part(item) if item.google else DAV_KIND_WORDS,
+        item.google_client_id,
     )
 
 
@@ -554,6 +559,7 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     engine.passwords.delete(account_id, ServerRole.INCOMING)
     engine.passwords.delete(account_id, ServerRole.OUTGOING)
     engine.passwords.delete(account_id, ServerRole.DAV)
+    engine.passwords.delete(account_id, ServerRole.GOOGLE_SECRET)  # D-364
     if settings.dav_url or settings.account.kind is AccountKind.DAV:
         engine.report(Change("collection_changed", account_id))  # its calendars, task lists and address books leave the sections (D-146)
     return AccountRemoveResult(account_id, str(engine.directories.account_directory(account_id)))
@@ -598,6 +604,8 @@ class AccountEditParameters:
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
     invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, none, or empty (as the server announces)"))
     reminder_emails: str | None = field(default=None, metadata=option("Who sends the e-mail reminders: chrono, server or none"))
+    google_client_id: str | None = field(default=None, metadata=option("A Google account: the client ID of your Google project"))
+    google_client_secret: str | None = field(default=None, metadata=option("A Google account: a new client secret of your Google project", secret=True))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
@@ -605,6 +613,12 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
     account = settings.account
+    client_id = None if parameters.google_client_id is None else parameters.google_client_id.strip()
+    client_secret = (parameters.google_client_secret or "").strip() or None
+    if (client_id is not None or client_secret is not None) and not settings.google:
+        raise UsageError("Only a Google account has a client ID and client secret")
+    if client_id == "":
+        raise UsageError("The client ID of a Google account must not be empty")
     email = account.email_address if parameters.email_address is None else parameters.email_address.strip()
     if account.kind is AccountKind.DAV:
         email = ""  # calendars and contacts only: no address
@@ -643,11 +657,13 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     answers = settings.invitation_answers if parameters.invitation_answers is None else parameters.invitation_answers
     if answers not in ("", "server", "chrono", "none"):
         raise UsageError("Who mails the answers to invitations is server, chrono, none or empty")
+    address = account.incoming.username.lower()
+    shared = {item.account.account_id for item in config.accounts if item.google and item.account.incoming.username.lower() == address} if settings.google else set()  # one sign-in: one Google project (D-364)
 
     def edit(fresh: AppConfig) -> AppConfig:  # the edited parts on the account as it is now: what other commands changed meanwhile stays
         _refuse_same_account(fresh.accounts, account.kind, incoming.username, incoming.host, account.account_id)
         current = fresh.find(account.account_id)
-        return fresh.with_account(replace(
+        fresh = fresh.with_account(replace(
             current,
             account=replace(current.account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
             pop3=pop3,
@@ -658,6 +674,11 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             invitation_answers=answers,
             reminder_emails=reminder_emails,
         ))
+        if client_id is not None:
+            for item in fresh.accounts:
+                if item.account.account_id in shared:
+                    fresh = fresh.with_account(replace(item, google_client_id=client_id))
+        return fresh
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:
         engine.passwords.set(account.account_id, ServerRole.INCOMING, parameters.password)
@@ -667,8 +688,15 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             engine.passwords.set(account.account_id, ServerRole.OUTGOING, follow)
     elif parameters.outgoing_password:
         engine.passwords.set(account.account_id, ServerRole.OUTGOING, parameters.outgoing_password)
+    if client_secret is not None:
+        for account_id in shared:
+            engine.passwords.set(account_id, ServerRole.GOOGLE_SECRET, client_secret)
     config = engine.change_config(edit)
+    for account_id in shared if client_id is not None or client_secret is not None else ():
+        forget_access(account_id)  # the next access code comes from the project as it is now
     label_account(engine, account.account_id)  # a new name or address, or a password stored again: its labels follow (B-23)
+    for account_id in shared - {account.account_id} if client_secret is not None else ():
+        label_account(engine, account_id)
     return _summary(config.find(account.account_id))
 
 

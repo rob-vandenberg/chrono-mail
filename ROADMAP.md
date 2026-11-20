@@ -317,7 +317,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | # | Task | Status |
 |---|---|---|
 | 5.1 | Gmail mail by IMAP and SMTP with an app password: Add account's Gmail choice, All Mail hidden at first, the app password advice (D-335). | done (4.4.592) |
-| 5.2 | Google sign-in (OAuth with PKCE) through the owner's own Google project; Google Calendar and Google Contacts over CalDAV and CardDAV with it; sign in again when Google ends it (D-335). | done (4.4.593) |
+| 5.2 | Google sign-in (OAuth with PKCE) through the owner's own Google project; Google Calendar and Google Contacts over CalDAV and CardDAV with it; sign in again when Google ends it (D-335); since 4.6.646 through the person's own Google project, its codes kept per account (D-364). | done (4.4.593) |
 | 5.3 | Google Tasks through Google's Tasks API (no tasks over CalDAV at Google). | open |
 | 5.4 | Google event colours through Google's Calendar API (CalDAV does not carry them, checked live): an event without tags shows Google's colour, a changed colour tag goes to Google first (D-337). | done (4.4.598) |
 | 5.5 | The colours a person makes and names in Google Calendar (labels): a named one is a tag here in its colour, a tag of that name goes back to Google as that label (D-338). | done (4.4.599) |
