@@ -21,9 +21,11 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.6.652"
+__version__ = "calendarwidgets.py 4.6.653"
 
 # --- Version history ----------------------------------------------------
+# v4.6.653: Month and n weeks: the weekday row, the day numbers, Week n, today's circle and the room before a day's events at the Calendar's
+#           size, in drawing and in clicks (D-367)
 # v4.6.652: the hours, the gutter, the all-day bars and the Month dots at the Calendar's size; the hour height of Ctrl and the wheel is kept
 #           at the standard size (base_hour_height) and drawn at the Calendar's size (D-367)
 # v4.4.620: In Month a day's timed events start below the all-day bars of that day, not below the deepest bar of its week (the owner)
@@ -829,7 +831,7 @@ class MonthView(EntryHits):
         return len(self.days) // 7
 
     def _cell_size(self) -> tuple[float, float]:
-        return self.width() / 7, max(40.0, (self.height() - 22) / max(1, self._weeks()))
+        return self.width() / 7, max(float(_px(40)), (self.height() - _px(22)) / max(1, self._weeks()))
 
     def _own(self, day: date) -> bool:
         """A day of the month shown (n weeks: every day)."""
@@ -837,10 +839,10 @@ class MonthView(EntryHits):
 
     @override
     def slot_at(self, position: QPointF) -> tuple[date, int] | None:
-        if self._weeks() < 1 or position.y() < 22:
+        if self._weeks() < 1 or position.y() < _px(22):
             return None
         width, height = self._cell_size()
-        column, row = min(6, int(position.x() // width)), min(self._weeks() - 1, int((position.y() - 22) // height))
+        column, row = min(6, int(position.x() // width)), min(self._weeks() - 1, int((position.y() - _px(22)) // height))
         return self.days[row * 7 + column], -1
 
     @override
@@ -871,7 +873,7 @@ class MonthView(EntryHits):
         for column in range(7):
             if len(self.days) >= 7:
                 painter.setPen(quiet)
-                painter.drawText(QRectF(column * width, 2, width, 18), Qt.AlignmentFlag.AlignCenter, self.days[column].strftime("%A"))
+                painter.drawText(QRectF(column * width, _px(2), width, _px(18)), Qt.AlignmentFlag.AlignCenter, self.days[column].strftime("%A"))
         self.hits = []
         self.mark_hits = []
         self.titles = []
@@ -883,7 +885,7 @@ class MonthView(EntryHits):
         line_height = QFontMetrics(small).height() + 2
         for week in range(self._weeks()):
             week_days = self.days[week * 7 : week * 7 + 7]
-            top = 22 + week * height
+            top = _px(22) + week * height
             week_bars = layout.bars(self.entries, week_days, include_timed_spanning=True)
             used = {bar.entry.row for bar in week_bars}
             for column, day in enumerate(week_days):
@@ -904,19 +906,19 @@ class MonthView(EntryHits):
                 if day == self.today:
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(palette.color(QPalette.ColorRole.Highlight))
-                    painter.drawEllipse(QRectF(left + width - 24, top + 2, 20, 18))
+                    painter.drawEllipse(QRectF(left + width - _px(24), top + _px(2), _px(20), _px(18)))
                     painter.setPen(palette.color(QPalette.ColorRole.HighlightedText))
                 else:
                     painter.setPen(text if self._own(day) else quiet)
-                painter.drawText(QRectF(left, top + 2, width - 6, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(day.day) if day.day != 1 else f"{day.strftime('%b')} 1")
+                painter.drawText(QRectF(left, top + _px(2), width - _px(6), _px(18)), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(day.day) if day.day != 1 else f"{day.strftime('%b')} 1")
                 if column == 0 and self.week_numbers:
                     painter.setPen(quiet)
-                    painter.drawText(QRectF(left + 5, top + 2, width / 2, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"Week {layout.week_number(week_days)}")
-            room = int((height - 22) // line_height)
+                    painter.drawText(QRectF(left + _px(5), top + _px(2), width / 2, _px(18)), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"Week {layout.week_number(week_days)}")
+            room = int((height - _px(22)) // line_height)
             for bar in week_bars:
                 if bar.row >= room:
                     continue
-                rect = QRectF(bar.first * width + 2, top + 22 + bar.row * line_height, (bar.last - bar.first + 1) * width - 4, line_height - 2)
+                rect = QRectF(bar.first * width + 2, top + _px(22) + bar.row * line_height, (bar.last - bar.first + 1) * width - 4, line_height - 2)
                 mark = self.mark_for(bar.entry)
                 self.note_mark(paint_block(painter, rect, bar.entry, same_event(bar.entry, self.selected), small,
                                            [self.title_shown(bar.entry)], mark=mark), bar.entry)
@@ -931,7 +933,7 @@ class MonthView(EntryHits):
                 bar_rows = max((bar.row for bar in week_bars if bar.first <= column <= bar.last), default=-1) + 1  # the bars of this day only (the owner)
                 free_rows = max(0, room - bar_rows)
                 for position, entry in enumerate(timed[:free_rows]):
-                    y = top + 22 + (bar_rows + position) * line_height
+                    y = top + _px(22) + (bar_rows + position) * line_height
                     prefix = f"{entry.start.strftime('%H:%M')} "
                     if entry.filled:  # in its colour as an all-day event, its dot in the text's colour (D-297)
                         rect = QRectF(left + 2, y, width - 4, line_height - 2)
@@ -955,16 +957,16 @@ class MonthView(EntryHits):
                     painter.setPen(line_colour)
                     mark_size = min(MARK_SIZE, line_height - 3)
                     mark_state = self.mark_for(entry)
-                    mark_room = paint_mark(painter, int(left + 16), int(y + line_height / 2 - 1), mark_state, mark_size)  # where the text would start
+                    mark_room = paint_mark(painter, int(left + _px(16)), int(y + line_height / 2 - 1), mark_state, mark_size)  # where the text would start
                     if mark_state:
-                        self.mark_hits.append((QRectF(int(left + 16), int(y + line_height / 2 - 1) - mark_size // 2, mark_size, mark_size), entry))
+                        self.mark_hits.append((QRectF(int(left + _px(16)), int(y + line_height / 2 - 1) - mark_size // 2, mark_size, mark_size), entry))
                     behind = QColor(palette.color(QPalette.ColorRole.Highlight)) if selected else QColor(base)
                     tags_left = paint_tags(painter, rect, y, line_height - 1, entry, behind, line_colour)  # the tag icons at the end of the line (D-329)
                     painter.setPen(line_colour)
-                    text_room = min(width - 20 - mark_room, tags_left - (left + 16 + mark_room) - 2)
-                    painter.drawText(QRectF(left + 16 + mark_room, y, text_room, line_height - 1), Qt.AlignmentFlag.AlignVCenter,
+                    text_room = min(width - _px(20) - mark_room, tags_left - (left + _px(16) + mark_room) - 2)
+                    painter.drawText(QRectF(left + _px(16) + mark_room, y, text_room, line_height - 1), Qt.AlignmentFlag.AlignVCenter,
                                      QFontMetrics(small).elidedText(prefix + self.title_shown(entry), Qt.TextElideMode.ElideRight, int(text_room - 2)))
-                    title_left = left + 16 + mark_room + QFontMetrics(small).horizontalAdvance(prefix)  # the title of this line, after its time (D-324)
+                    title_left = left + _px(16) + mark_room + QFontMetrics(small).horizontalAdvance(prefix)  # the title of this line, after its time (D-324)
                     title_height = QFontMetrics(small).height()
                     self.titles.append(TitlePlace(QRectF(title_left, y + (line_height - 1 - title_height) / 2, max(1.0, left + width - 4 - title_left), title_height), entry,
                                                   QFont(small), line_colour, palette.color(QPalette.ColorRole.Highlight) if selected else base))

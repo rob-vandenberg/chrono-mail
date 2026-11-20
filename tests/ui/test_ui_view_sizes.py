@@ -13,9 +13,10 @@ from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_view_sizes.py 4.6.652"
+__version__ = "test_ui_view_sizes.py 4.6.653"
 
 # --- Version history ----------------------------------------------------
+# v4.6.653: Month: the weekday row and a day's top follow the Calendar size, in clicks too
 # v4.6.652: Calendar, Contacts and Tasks: the rows of Sizes, each slider its own view only, Cancel, the first start (D-367)
 # v4.6.651: the row above the message list (Sorted by, Filter, the count) follows the Message list slider, not the Main window slider (D-367)
 
@@ -144,3 +145,27 @@ def test_at_the_first_start_the_views_keep_the_main_window_size(tmp_path: Path) 
     empty = QSettings(str(tmp_path / "b.ini"), QSettings.Format.IniFormat)
     prefs.settle_view_sizes(empty)
     assert [prefs.saved_view(empty, view) for view in scale.VIEWS] == [1.0, 1.0, 1.0]
+
+
+def test_the_month_view_weekday_row_and_days_follow_the_calendar_size(qtbot: QtBot) -> None:
+    from datetime import date, timedelta
+
+    from PySide6.QtCore import QPointF
+
+    from chrono_mail.ui.calendarwidgets import MonthView
+
+    month = MonthView()
+    qtbot.addWidget(month)
+    month.resize(700, 600)
+    first = date(2026, 11, 16)
+    month.set_data([first + timedelta(days=offset) for offset in range(28)], [], 11, first, 0)
+    try:
+        scale.set_view("calendar", 2.0)
+        assert month.slot_at(QPointF(10, 40)) is None  # still the row of weekday names: 44 pixels high at twice the size
+        assert month.slot_at(QPointF(10, 46)) == (first, -1)  # just below it: the first day
+        week_height = (600 - 44) / 4
+        assert month.slot_at(QPointF(10, 44 + week_height + 2)) == (first + timedelta(days=7), -1)
+        month.grab()  # drawn at that size without trouble
+    finally:
+        scale.set_view("calendar", 1.0)
+    assert month.slot_at(QPointF(10, 23)) == (first, -1)  # at the standard size the row is 22 pixels
