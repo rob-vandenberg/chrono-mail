@@ -13,9 +13,10 @@ from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_view_sizes.py 4.6.653"
+__version__ = "test_ui_view_sizes.py 4.6.654"
 
 # --- Version history ----------------------------------------------------
+# v4.6.654: the row of day names and the column left of the days follow the Calendar size
 # v4.6.653: Month: the weekday row and a day's top follow the Calendar size, in clicks too
 # v4.6.652: Calendar, Contacts and Tasks: the rows of Sizes, each slider its own view only, Cancel, the first start (D-367)
 # v4.6.651: the row above the message list (Sorted by, Filter, the count) follows the Message list slider, not the Main window slider (D-367)
@@ -169,3 +170,43 @@ def test_the_month_view_weekday_row_and_days_follow_the_calendar_size(qtbot: QtB
     finally:
         scale.set_view("calendar", 1.0)
     assert month.slot_at(QPointF(10, 23)) == (first, -1)  # at the standard size the row is 22 pixels
+
+
+def test_the_row_of_day_names_and_the_column_left_of_it_follow_the_calendar_size(qtbot: QtBot) -> None:
+    from datetime import date, timedelta
+
+    from PySide6.QtGui import QFont, QFontMetrics, QImage
+
+    from zoneinfo import ZoneInfo
+
+    from chrono_mail.ui.calendarwidgets import DayHeader, GridCanvas, gutter
+
+    header, canvas = DayHeader(), GridCanvas()
+    for widget in (header, canvas):
+        qtbot.addWidget(widget)
+    first = date(2026, 11, 16)
+    days = [first + timedelta(days=offset) for offset in range(5)]
+    try:
+        scale.set_view("calendar", 2.0)
+        font = QFont(header.font())
+        font.setPointSizeF(_system_points() * 2.0)
+        for widget in (header, canvas):
+            widget.setFont(font)
+        header.week_number = 47
+        header.set_data(days, [], first)
+        header.resize(900, header.height())
+        widest = QFontMetrics(font).horizontalAdvance("Week 53")
+        assert gutter(header) == gutter(canvas) >= widest + 10  # "Week 47" whole, and the hours below lined up with the days
+        assert header.height() >= 2 * 40  # the weekday and the number one below the other, then the all-day row
+        from PySide6.QtCore import QPointF
+
+        canvas.set_data(days, [], ZoneInfo("UTC"), first)
+        canvas.resize(900, canvas.height())
+        for widget in (header, canvas):  # a click on the hours, "All day" or "Week 47" is on no day, also where 54 pixels end
+            assert widget.slot_at(QPointF(gutter(widget) - 2, 30)) is None
+            slot = widget.slot_at(QPointF(gutter(widget) + 2, 30))
+            assert slot is not None and slot[0] == first
+        image = QImage(header.size(), QImage.Format.Format_ARGB32)
+        header.render(image)  # drawn at that size without trouble
+    finally:
+        scale.set_view("calendar", 1.0)

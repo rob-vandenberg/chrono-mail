@@ -4601,3 +4601,8 @@ Tests: tests/ui/test_ui_view_sizes.py (4 new; fail on 4.6.651); 242 related test
 ## 2026-11-20, 4.6.653: the Month view follows the Calendar size (D-367)
 The owner (a screenshot of 4 weeks at a large size: the weekday names cut off at the bottom; Proceed of 2026-11-20). Missed in 4.6.652: ui/calendarwidgets.py MonthView drew the weekday row (22 pixels, text box 18), the day number and Week n (18), today's circle (20 by 18), the room before a day's events (22) and the text after a dot (16) at fixed sizes; now _px, in drawing and in slot_at alike.
 Tests: one new in tests/ui/test_ui_view_sizes.py (fails on 4.6.652); 78 related tests pass; Pyrefly 0 on the program (Linux, win32) and on the test file; layer check passes. No reviewers: fixed numbers swapped for sized ones (G-9).
+
+## 2026-11-20, 4.6.654: the row of day names and the column left of the days follow the Calendar size (D-367)
+The owner (a screenshot of Work Week at a large size: the weekday names over the day numbers, "Week 47" without its W; Proceed of 2026-11-20). ui/calendarwidgets.py DayHeader: the weekday, the day number and today's circle at _px; gutter(widget): the column left of the days is never narrower than "Week 53", "All day" or "00:00" in the view's font, used by GridCanvas and DayHeader alike.
+Reviewers (round 1, both): slot_at still compared with the plain 54 pixels, so at a large size a click on the hours or on "All day" landed on the last day (since 4.6.652); fixed, the test clicks there. Round 2 nothing real.
+Tests: one new in tests/ui/test_ui_view_sizes.py (fails on 4.6.653, and without the slot_at fix); 87 related tests pass; Pyrefly 0 on the program (Linux, win32) and on the test file; layer check passes.
