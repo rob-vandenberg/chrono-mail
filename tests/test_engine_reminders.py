@@ -15,15 +15,18 @@ from chrono_mail.engine.commands_reminders import _LOOKING, ReminderCheck, _Due,
 from chrono_mail.pim.ical import parse_events
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.pimstore import DueReminder, PimIndex, PimStore
+from chrono_mail.pimstore.schema import SCHEMA_VERSION
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
 from tests.test_config import make_account
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import local_calendar
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_reminders.py 4.4.557"
+__version__ = "test_engine_reminders.py 4.6.647"
 
 # --- Version history ----------------------------------------------------
+# v4.6.647: the index of calendars and tasks has format 7 since 4.4.600 (D-339): an older format made here has no other_tags and other_folded,
+#           and the upgrade is done when the index is at SCHEMA_VERSION; the upgrade of format 3 has eight steps
 # v4.4.557: A cancelled event is cancelled and restored with their own commands (D-310)
 # v4.4.550: a cancelled event or date gives no reminder, counts again when it changes back; the upgrade of the index to format 6 (D-316)
 # v4.4.545: a task reminds through the same look; the upgrade of the index to format 5 (D-316)
@@ -476,8 +479,18 @@ def index_file(setup: Setup) -> Path:
     return setup.engine.directories.pim_directory(LOCAL_ACCOUNT_ID) / "pim.sqlite"
 
 
+NEWEST: str = str(SCHEMA_VERSION)  # the format an upgrade ends in
+
+
+def without_other_tags(connection: sqlite3.Connection) -> None:
+    """Formats before 7 (4.4.600, D-339) have no columns for the tags an item has from its server."""
+    connection.execute("ALTER TABLE items DROP COLUMN other_tags")
+    connection.execute("ALTER TABLE items DROP COLUMN other_folded")
+
+
 def back_to_format_3(setup: Setup) -> None:
     connection = sqlite3.connect(index_file(setup))
+    without_other_tags(connection)
     connection.execute("DROP INDEX items_by_reminder")
     connection.execute("ALTER TABLE items DROP COLUMN reminder_due")
     connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema'")
@@ -499,7 +512,7 @@ def test_the_upgrade_gives_existing_events_their_moment_and_keeps_the_items(setu
     back_to_format_3(setup)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
     assert due_in_index(setup, far_ahead()) == []  # the one reminder fired, the other event has none: nothing is left to read
     assert check(setup).notes == ()
 
@@ -508,7 +521,7 @@ class Stop(BaseException):
     """The program ends here."""
 
 
-@pytest.mark.parametrize("step", range(1, 7))
+@pytest.mark.parametrize("step", range(1, 9))
 def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_at_the_next_start(setup: Setup, monkeypatch: pytest.MonkeyPatch, step: int) -> None:
     event_in(setup, 10, "Dentist", ("15",))
     back_to_format_3(setup)
@@ -535,7 +548,7 @@ def test_the_upgrade_interrupted_at_any_step_leaves_the_old_format_and_is_done_a
     assert file_format(setup) == ("3", False)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert [note.summary for note in check(setup).notes] == ["Dentist"]
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
 
 
 def test_a_look_that_stops_before_the_last_look_is_written_finds_it_all_again(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -810,6 +823,7 @@ def test_an_email_alarm_of_a_task_from_elsewhere_is_mailed_like_an_event_s(setup
 
 def back_to_format_4(setup: Setup) -> None:
     connection = sqlite3.connect(index_file(setup))
+    without_other_tags(connection)
     connection.execute("UPDATE items SET reminder_due = NULL WHERE kind = 'tasks'")
     connection.execute("UPDATE meta SET value = '4' WHERE key = 'schema'")
     connection.commit()
@@ -827,19 +841,19 @@ def test_the_upgrade_gives_existing_tasks_their_moment_and_leaves_events_as_they
     back_to_format_4(setup)
     assert file_format(setup) == ("4", True)
     assert summaries(setup) == ["Pay rent"]
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
     assert [one for one in due_in_index(setup, far_ahead()) if one.kind is CollectionKind.TASKS] == []  # the one fired, the other has none
     assert due_in_index(setup, far_ahead()) == [one for one in events_before if one.kind is CollectionKind.EVENTS]
     assert check(setup).notes == ()
 
 
-def test_format_3_comes_to_format_6_with_events_and_tasks(setup: Setup) -> None:
+def test_format_3_comes_to_the_newest_format_with_events_and_tasks(setup: Setup) -> None:
     task_in(setup, 10, "Pay rent", ("15",))
     event_in(setup, 10, "Dentist", ("15",))
     back_to_format_3(setup)
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert sorted(summaries(setup)) == ["Dentist", "Pay rent"]
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
 
 
 @pytest.mark.parametrize("step", range(1, 4))
@@ -872,7 +886,7 @@ def test_the_upgrade_for_tasks_interrupted_at_any_step_leaves_the_old_format_and
     connection.close()
     looked_at(setup, datetime.now(UTC) - timedelta(minutes=6))
     assert summaries(setup) == ["Pay rent"]
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
 
 
 def cancelled_date_of_a_series(first: datetime) -> str:
@@ -950,6 +964,7 @@ def worked_out_as_format_5(setup: Setup, cancelled: str, moment: datetime) -> No
     looked_at(setup, datetime.now(UTC) - timedelta(seconds=1))
     check(setup)  # every moment worked out
     connection = sqlite3.connect(index_file(setup))
+    without_other_tags(connection)
     connection.execute("UPDATE items SET reminder_due = ? WHERE item_id = ?", (int(moment.timestamp()), cancelled))
     connection.execute("UPDATE meta SET value = '5' WHERE key = 'schema'")
     connection.commit()
@@ -964,7 +979,7 @@ def test_the_upgrade_takes_the_moment_of_an_existing_cancelled_event_and_keeps_t
     worked_out_as_format_5(setup, cancelled, start - timedelta(minutes=15))
     assert file_format(setup) == ("5", True)
     assert check(setup).notes == ()
-    assert file_format(setup) == ("6", True)
+    assert file_format(setup) == (NEWEST, True)
     assert [one.item_id for one in due_in_index(setup, far_ahead())] != [cancelled]
     assert len(due_in_index(setup, far_ahead())) == 1  # Lunch: its moment came back, the cancelled event has none
 
@@ -996,4 +1011,4 @@ def test_the_upgrade_of_format_5_interrupted_at_any_step_leaves_the_old_format_a
     monkeypatch.undo()
     assert file_format(setup) == ("5", True)
     assert check(setup).notes == ()
-    assert file_format(setup) == ("6", True) and due_in_index(setup, far_ahead()) == []
+    assert file_format(setup) == (NEWEST, True) and due_in_index(setup, far_ahead()) == []

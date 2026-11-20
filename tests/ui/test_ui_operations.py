@@ -11,9 +11,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 4.4.615"
+__version__ = "test_ui_operations.py 4.6.647"
 
 # --- Version history ----------------------------------------------------
+# v4.6.647: the Settings pages as they are now: Templates and Signatures (4.5.626) and Calendar among them
 # v4.4.615: the empty Operations tab shows its line until the first row comes
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.0.375: the text of the empty Errors page is the form's (D-276)
@@ -231,8 +232,8 @@ def test_the_tick_boxes_are_on_a_page_of_their_own(qtbot: QtBot, world: World) -
     qtbot.addWidget(dialog)
     pages = [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())]
     assert pages == [
-        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Accounts", "Rules", "Tags",
-        "Scheduled messages", "Operations window", "Security and storage", "Keyboard",
+        "General", "Appearance", "Sidebar", "Message list", "Reading", "Writing", "Templates and Signatures", "Accounts", "Rules", "Tags",
+        "Calendar", "Scheduled messages", "Operations window", "Security and storage", "Keyboard",
     ]
     page = dialog.pages.widget(pages.index("Operations window"))
     general = dialog.pages.widget(0)

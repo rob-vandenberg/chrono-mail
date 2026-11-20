@@ -18,9 +18,11 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 4.2.480"
+__version__ = "test_ui_appearance.py 4.6.647"
 
 # --- Version history ----------------------------------------------------
+# v4.6.647: the Settings window opens wider than the test screen (933 pixels since 4.5.626, the owner: "THE CODE IS CORRECT"); growing back
+#           with the slider it fits the screen, so the size it had counts as far as the screen reaches
 # v4.2.480: each theme has its own second accent, accent_alternative (the owner)
 # v4.2.476: The dark theme's list colour is the owner's #151c1c
 # v4.2.474: Menus have the theme's menu colour, no longer the window's (4.2.473)
@@ -354,6 +356,10 @@ def test_the_settings_window_grows_with_the_other_windows_slider_within_the_scre
     dialog.show()
     qtbot.wait(50)
     width, height = dialog.width(), dialog.height()  # the test screen is 800 pixels: shrink first, then grow back
+    screen = dialog.screen()
+    assert screen is not None
+    room = screen.availableGeometry()  # growing back never goes beyond the screen, also when the window opened wider
+    back_width, back_height = min(width, room.width()), min(height, room.height())
     try:
         for _ in range(4):  # four steps: 1.00 to 0.80
             qtbot.keyClick(dialog.windows_slider, Keys.Key.Key_Down)
@@ -361,12 +367,13 @@ def test_the_settings_window_grows_with_the_other_windows_slider_within_the_scre
         assert dialog.windows_slider.minimumWidth() == round(SLIDER_WIDTH * 0.8)
         for _ in range(4):  # and back to 1.00: the size it had
             qtbot.keyClick(dialog.windows_slider, Keys.Key.Key_Up)
-        assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
+        assert back_width - 3 <= dialog.width() <= min(max(width, dialog._needed_size().width()), room.width()) + 3  # noqa: SLF001 - the size it had, or what its page needs, within the screen
+        assert back_height - 3 <= dialog.height() <= min(max(height, dialog._needed_size().height()), room.height()) + 3  # noqa: SLF001
         dialog.windows_slider.setValue(scale.SLIDER_STEPS)  # Large: never beyond the screen
-        screen = dialog.screen()
-        assert screen is not None and dialog.width() <= screen.availableGeometry().width() and dialog.height() <= screen.availableGeometry().height()
+        assert dialog.width() <= screen.availableGeometry().width() and dialog.height() <= screen.availableGeometry().height()
         dialog.reject()  # Cancel: the size it had
-        assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
+        assert back_width - 3 <= dialog.width() <= min(max(width, dialog._needed_size().width()), room.width()) + 3  # noqa: SLF001 - the size it had, or what its page needs, within the screen
+        assert back_height - 3 <= dialog.height() <= min(max(height, dialog._needed_size().height()), room.height()) + 3  # noqa: SLF001
     finally:
         window.try_windows_scale(1.0)
 

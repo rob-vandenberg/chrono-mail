@@ -13,9 +13,11 @@ from tests.ui.test_ui_reader import shown
 from tests.ui.world import World, add_window, dialogs, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_windowstate.py 4.6.645"
+__version__ = "test_ui_windowstate.py 4.6.647"
 
 # --- Version history ----------------------------------------------------
+# v4.6.647: the Settings window is at least as wide as its widest page (933 pixels since 4.5.626, the owner: "THE CODE IS CORRECT"): the sizes
+#           it remembers on the test screen, 800 pixels wide, keep that smallest width and the height chosen
 # v4.6.645: the New message window, which deletes itself when it closes, is registered with add_window
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v0.0.83: Initial tests of the remembered size and position of the windows
@@ -103,17 +105,18 @@ def test_the_settings_window_remembers_its_size_with_ok_and_with_cancel(world: W
         return dialog
 
     dialog = make()
-    dialog.resize(781, 581)
+    smallest = dialog.minimumWidth()  # as wide as its widest page needs (the Templates and Signatures page)
+    dialog.resize(smallest, 581)
     dialog.show()
     dialog.reject()
     first = make()
-    assert abs(first.width() - 781) <= 4 and abs(first.height() - 581) <= 4  # the screen of the test is 800 wide, so the size is within it
+    assert first.width() == smallest and abs(first.height() - 581) <= 4  # the test screen is narrower than the window: no width wider than it is kept
     first.show()
     first.reject()
     second = make()
     assert (second.width(), second.height()) == (first.width(), first.height())  # and it does not drift with every opening
-    second.resize(790, 600)
+    second.resize(smallest, 600)
     second.show()
     second.done(int(SettingsDialog.DialogCode.Accepted))  # what accept() does once there is no conflict between keys
     third = make()
-    assert abs(third.width() - 790) <= 4 and abs(third.height() - 600) <= 4
+    assert third.width() == smallest and abs(third.height() - 600) <= 4

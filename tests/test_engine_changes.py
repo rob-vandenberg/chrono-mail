@@ -14,9 +14,10 @@ from tests.test_import_emclient import make_exports
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_changes.py 4.2.455"
+__version__ = "test_engine_changes.py 4.6.647"
 
 # --- Version history ----------------------------------------------------
+# v4.6.647: a folder rename's "working" note for the status line is not counted among the folder actions
 # v4.2.455: the import test imports mail only: calendars=False (the Calendars and tasks choice of 4.2.452 is on by default and needs the backup)
 # v1.1.250: every fact about mail brings the numbers of the folders it touched, as the index has them right after the change (R-10)
 # v0.5.165: facts are compared without their numbers
@@ -107,7 +108,8 @@ def test_folder_actions_are_one_fact_each(setup: Setup) -> None:
     call(setup.engine, "folder.create", account=setup.account_id, folder="Projects")
     call(setup.engine, "folder.rename", account=setup.account_id, folder="Projects", new_name="Work")
     call(setup.engine, "folder.delete", account=setup.account_id, folder="Work")
-    assert [(change.kind, change.folder, change.to_folder) for change in told] == [("folder_made", "Projects", ""), ("folder_renamed", "Projects", "Work"), ("folder_deleted", "Work", "")]
+    actions = [change for change in told if change.kind != "working"]  # a rename also says in the status line that it is under way: a note, not an action
+    assert [(change.kind, change.folder, change.to_folder) for change in actions] == [("folder_made", "Projects", ""), ("folder_renamed", "Projects", "Work"), ("folder_deleted", "Work", "")]
 
 
 def test_a_rebuilt_index_is_one_fact(setup: Setup) -> None:
