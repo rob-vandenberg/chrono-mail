@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from chrono_mail.core import AuthenticationError, CertificateError, ConnectionSecurity, ProtocolError
 from chrono_mail.protocols.google import SIGN_IN_AGAIN
 from chrono_mail.protocols.hangup import Held, connect
-from chrono_mail.protocols.tls import context_for, failure
+from chrono_mail.protocols.tls import NAME_NOT_FOUND, context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.624"
+__version__ = "dav.py 4.6.650"
 
 # --- Version history ----------------------------------------------------
+# v4.6.650: a server name that could not be looked up (often no internet) is said in plain words (D-366)
 # v4.4.624: move: rename an item on the server, never over another (D-356)
 # v4.4.613: fetch tells the items the server refuses for good (refused) apart from those that failed only for now (D-348)
 # v4.4.604: access: Google's access code, for one's own name of a calendar (D-343)
@@ -394,6 +395,8 @@ class DavClient:
                 raise DavCertificateError(str(named), named.trouble) from None
             except ssl.SSLError as error:
                 raise ProtocolError(f"The secure connection failed: {error.reason or error}") from None
+            except socket.gaierror:
+                raise ProtocolError(NAME_NOT_FOUND) from None  # often no internet: plain words, the same on Linux and Windows (D-366)
             except TimeoutError:
                 raise ProtocolError("The server did not answer in time") from None
             except (OSError, http.client.HTTPException) as error:

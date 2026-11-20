@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.6.646"
+__version__ = "google.py 4.6.650"
 
 # --- Version history ----------------------------------------------------
+# v4.6.650: Google whose name could not be looked up (often no internet) says "Google could not be found (no internet connection?)" (D-366)
 # v4.6.646: Google refusing the client ID or client secret says so, and where they are changed (B-34, D-364)
 # v4.4.608: the profile permission: the person's name on Google, from the sign-in and read again with profile_name (D-346)
 # v4.4.604: set_own_name: one's own name for a calendar, never the calendar's own name (D-343)
@@ -163,6 +164,18 @@ def refresh_access(client: GoogleClient, refresh_token: str) -> tuple[str, int]:
     return access, int(str(tokens.get("expires_in", "0")) or 0)
 
 
+GOOGLE_NOT_FOUND: str = "Google could not be found (no internet connection?)"
+
+
+def _unreachable(error: OSError | http.client.HTTPException) -> ProtocolError:
+    """Google could not be reached: a name lookup that failed (often no internet) in plain words, the same on Linux and Windows (D-366);
+    anything else as the system says it."""
+    reason = getattr(error, "reason", error)
+    if isinstance(error, socket.gaierror) or isinstance(reason, socket.gaierror):
+        return ProtocolError(GOOGLE_NOT_FOUND)
+    return ProtocolError(f"Google could not be reached: {reason}")
+
+
 def _token_request(client: GoogleClient, fields: dict[str, str]) -> dict[str, object]:
     body = urllib.parse.urlencode({"client_id": client.client_id, "client_secret": client.client_secret, **fields}).encode()
     request = urllib.request.Request(TOKEN_URL, data=body, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -177,7 +190,7 @@ def _token_request(client: GoogleClient, fields: dict[str, str]) -> dict[str, ob
             raise AuthenticationError(CODES_REFUSED) from None
         raise ProtocolError(f"Google refused: {reason or error.code}") from None
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as error:
-        raise ProtocolError(f"Google could not be reached: {getattr(error, 'reason', error)}") from None
+        raise _unreachable(error) from None
     if len(raw) > MAXIMUM_ANSWER_BYTES:
         raise ProtocolError("Google's answer is far too large")
     try:
@@ -429,7 +442,7 @@ def _api(access: str, method: str, url: str, body: dict[str, object] | None = No
             raise ProtocolError(f"Google is busy: {reason or error.code}") from None  # asking later may work
         raise GoogleRefused(f"Google refused: {reason or error.code}") from None
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, http.client.HTTPException) as error:  # also a connection that broke off mid-answer
-        raise ProtocolError(f"Google could not be reached: {getattr(error, 'reason', error)}") from None
+        raise _unreachable(error) from None
     if len(raw) > MAXIMUM_LIST_BYTES:
         raise ProtocolError("Google's answer is far too large")
     if not raw:

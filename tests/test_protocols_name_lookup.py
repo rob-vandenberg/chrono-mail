@@ -3,15 +3,18 @@ import socket
 import pytest
 
 from chrono_mail.core import ConnectionSecurity, ProtocolError, ServerSettings
+from chrono_mail.protocols.dav import DavClient
+from chrono_mail.protocols.google import GOOGLE_NOT_FOUND, GoogleClient, profile_name, refresh_access
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client
 from chrono_mail.protocols.smtp import send_message
 from chrono_mail.protocols.tls import NAME_NOT_FOUND
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocols_name_lookup.py 4.6.649"
+__version__ = "test_protocols_name_lookup.py 4.6.650"
 
 # --- Version history ----------------------------------------------------
+# v4.6.650: a calendar server and Google say it in plain words too (D-366)
 # v4.6.649: Initial: a server name that could not be looked up is said in plain words by IMAP, POP3 and SMTP (D-366)
 
 SERVER = ServerSettings("mail.example.invalid", 993, ConnectionSecurity.TLS, "user")
@@ -43,3 +46,21 @@ def test_smtp_says_the_server_name_could_not_be_found() -> None:
     with pytest.raises(ProtocolError) as raised:
         send_message(ServerSettings("mail.example.invalid", 465, ConnectionSecurity.TLS, "user"), "x", "me@example.com", ["you@example.com"], b"Subject: x\r\n\r\nx\r\n")
     assert str(raised.value) == NAME_NOT_FOUND
+
+
+def test_a_calendar_server_says_the_server_name_could_not_be_found() -> None:
+    with pytest.raises(ProtocolError) as raised:
+        DavClient("https://calendar.example.invalid/dav/", "user", "x").request("PROPFIND", "/dav/")
+    assert str(raised.value) == NAME_NOT_FOUND
+
+
+def test_google_sign_in_says_google_could_not_be_found() -> None:
+    with pytest.raises(ProtocolError) as raised:
+        refresh_access(GoogleClient("id", "secret"), "token")
+    assert str(raised.value) == GOOGLE_NOT_FOUND == "Google could not be found (no internet connection?)"
+
+
+def test_a_google_calendar_request_says_google_could_not_be_found() -> None:
+    with pytest.raises(ProtocolError) as raised:
+        profile_name("access")
+    assert str(raised.value) == GOOGLE_NOT_FOUND
