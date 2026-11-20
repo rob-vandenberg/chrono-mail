@@ -2,11 +2,13 @@ import socket
 
 from chrono_mail.core import ProtocolError
 from chrono_mail.protocols.hangup import Held, connect
+from chrono_mail.protocols.tls import connection_failed
 
 # --- Version ------------------------------------------------------------
-__version__ = "lineconnection.py 4.4.542"
+__version__ = "lineconnection.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: a server name that could not be looked up (often no internet) is said in plain words (connection_failed, D-366)
 # v4.4.542: dial: a connection the end of the program can hang up
 # v1.8.263: R-16: the one copy of sending to a mail server and reading its lines (was in protocols/imap.py and protocols/pop3.py)
 
@@ -14,7 +16,7 @@ _RECEIVE_BYTES: int = 65536
 
 
 def _failed(error: OSError) -> ProtocolError:
-    return ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}")
+    return connection_failed(error)
 
 
 class LineConnection:

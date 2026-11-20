@@ -13,9 +13,10 @@ from chrono_mail.protocols.hangup import connect
 from chrono_mail.core import CertificateError, CertificateTrouble, ConnectionSecurity, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "tls.py 4.4.542"
+__version__ = "tls.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: a server name that could not be looked up (often no internet) is said in plain words (connection_failed, D-366)
 # v4.4.542: the look at a certificate can be hung up at the end of the program
 # v4.2.441: a server with an accepted certificate that now shows another one is connected when that other one passes the usual checks
 #           (a renewal by a known authority); otherwise CertificateChanged. failure() names the server (CertificateError, D-299);
@@ -238,6 +239,17 @@ def _handshake(host: str, port: int, security: ConnectionSecurity, kind: str, co
         held.release()
 
 
+NAME_NOT_FOUND: str = "The server's name could not be found (no internet connection?)"
+
+
+def connection_failed(error: OSError) -> ProtocolError:
+    """A connection that failed, in words a person can read: a name lookup that failed (often no internet) in plain words, the same
+    on Linux and Windows, whose own texts differ ("getaddrinfo failed"); anything else as the system says it (D-366)."""
+    if isinstance(error, socket.gaierror):
+        return ProtocolError(NAME_NOT_FOUND)
+    return ProtocolError(f"Connection failed: {getattr(error, 'strerror', None) or type(error).__name__}")
+
+
 def inspect_certificate(host: str, port: int, security: ConnectionSecurity, kind: str, timeout: float = 15.0) -> CertificateInfo:
     """Connect and read the certificate the server presents, and say whether the usual checks would accept it."""
     unchecked = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -250,7 +262,7 @@ def inspect_certificate(host: str, port: int, security: ConnectionSecurity, kind
         finally:
             sock.close()
     except (OSError, ssl.SSLError) as error:
-        raise ProtocolError(f"Connection failed: {getattr(error, 'strerror', None) or type(error).__name__}") from None
+        raise connection_failed(error) from None
     if der is None:
         raise ProtocolError("The server did not present a certificate")
     problem: str | None = None

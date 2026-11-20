@@ -38,3 +38,4 @@ See also: [[mail-window]]
 - [[D-352]] Settings > Calendar and the n weeks view
 - [[D-354]] The default font of new messages
 - [[D-365]] A stored password shows as 16 dots; the eye only while editing
+- [[D-366]] The status line after a failed mail check; Ctrl+Shift+O for the Operations window

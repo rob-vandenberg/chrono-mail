@@ -8,12 +8,13 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.core.errors import refused_login
 from chrono_mail.core.words import digits
-from chrono_mail.protocols.tls import client_context, failure
+from chrono_mail.protocols.tls import client_context, connection_failed, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 4.4.592"
+__version__ = "smtp.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: a server name that could not be looked up (often no internet) is said in plain words (connection_failed, D-366)
 # v4.4.592: a login Gmail refused says how to make an app password (D-335)
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
@@ -115,7 +116,7 @@ def _mapped_errors(settings: ServerSettings) -> Generator[None]:
     except ssl.SSLCertVerificationError as error:
         raise failure(error, settings.host, settings.port, settings.security, "smtp") from None
     except (OSError, ssl.SSLError) as error:
-        raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
+        raise connection_failed(error) from None
 
 
 def _open(

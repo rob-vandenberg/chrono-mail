@@ -18,16 +18,18 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatequestions import questions_for, with_account
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
-from chrono_mail.ui.operations import OperationsWindow
+from chrono_mail.ui.operations import ERRORS_TAB, OperationsWindow
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.4.608"
+__version__ = "mailchecking.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: the status line after a mail check names the one account that failed, or gives each error once with the number of accounts;
+#           a click on it opens the Operations window at the Errors tab (D-366)
 # v4.4.608: a calendars row is named by the account's own name and what it holds: "Rob (Google Calendar)" (D-346)
 # v4.4.605: Refresh is Send and Receive in every section; each calendar account has a row in the Operations window; a Refresh while one runs is ignored (D-344)
 # v4.4.598: Event colours changed by a synchronisation (Google's, D-337) show at once; their problem in the status line when nothing else went wrong
@@ -69,6 +71,20 @@ DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
 CALENDARS_WORDS: str = "Calendars, contacts and tasks"  # how the status line names what a calendar and contacts server keeps in step
+
+
+def mail_check_line(problems: list[tuple[str, str]], account_name: Callable[[str], str]) -> str:
+    """The status line of a mail check that went wrong (D-366): one account names that account; more accounts give each error once,
+    in the order it came, with the number of accounts it happened to and no names."""
+    accounts = list(dict.fromkeys(account_id for account_id, _ in problems))
+    texts: dict[str, set[str]] = {}
+    for account_id, text in problems:
+        texts.setdefault(text, set()).add(account_id)
+    if len(accounts) == 1:
+        return f"Mail check: {account_name(accounts[0])}: " + "; ".join(texts)
+    return "Mail check: " + "; ".join(f"{counted(len(ids), 'account')}: {text}" for text, ids in texts.items())
+
+
 SettleChoice = Literal["delete_on_server", "restore_here", "remove_here", "keep_here"]
 BLOCKED_QUESTIONS: dict[str, tuple[str, tuple[tuple[str, SettleChoice, str], ...]]] = {  # kind -> question, (button, choice, what was done)
     "missing_here": (
@@ -458,7 +474,7 @@ class MailChecking(QObject):
         remaining = set(wanted)
         totals = {"new": 0, "junk": 0}
         new_by_account: dict[str, int] = {}
-        problems: list[str] = []
+        problems: list[tuple[str, str]] = []  # (account, what went wrong)
         blocked: list[tuple[str, BlockedFolder]] = []  # (account, folder held back by a safety rule)
 
         def finish() -> None:
@@ -470,7 +486,7 @@ class MailChecking(QObject):
                 self._mail_fills -= wanted
                 self.start_watchers()
             if problems:
-                self._status.show("Mail check: " + "; ".join(problems), error=True)
+                self._status.show(mail_check_line(problems, self._state.account_name), error=True, to_errors=True)
             else:
                 junk = f", {totals['junk']} moved to Junk" if totals["junk"] else ""
                 self._status.show(f"Mail checked: {counted(totals['new'], 'new message')}{junk}" if totals["new"] else "Mail checked: nothing new")
@@ -496,7 +512,7 @@ class MailChecking(QObject):
                 blocked.extend((account_id, item) for item in result.blocked)
                 if result.aborted:
                     own.append(result.aborted)
-                problems.extend(own)
+                problems.extend((account_id, text) for text in own)
                 self._finish_operation(account_id, "receive", "; ".join(own) if own else None)
                 remaining.discard(account_id)
                 if not remaining:
@@ -508,7 +524,7 @@ class MailChecking(QObject):
             def failed(error: ChronoMailError) -> None:
                 if isinstance(error, CertificateError):  # Connect checks that account again (D-299)
                     self._ask_about(with_account(error.trouble, account_id), lambda: self.check_accounts({account_id}, first_fill=first_fill))
-                problems.append(str(error))
+                problems.append((account_id, str(error)))
                 self._finish_operation(account_id, "receive", str(error))
                 remaining.discard(account_id)
                 if not remaining:
@@ -585,6 +601,11 @@ class MailChecking(QObject):
         self.operations.show()
         self.operations.raise_()
         self.operations.activateWindow()
+
+    def show_errors(self) -> None:
+        """A click on the error line of a mail check: the Operations window at its Errors tab (D-366)."""
+        self.operations.tabs.setCurrentIndex(ERRORS_TAB)
+        self.show_operations()
 
     def _operation_name(self, account_id: str, direction: str) -> str:
         """The name of a row: the address and the protocol, as "rob@example.com (POP3)"."""

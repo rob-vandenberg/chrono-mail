@@ -5,12 +5,13 @@ from typing import Self
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.protocols.lineconnection import LineConnection
-from chrono_mail.protocols.tls import client_context, failure
+from chrono_mail.protocols.tls import client_context, connection_failed, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3.py 4.4.542"
+__version__ = "pop3.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: a server name that could not be looked up (often no internet) is said in plain words (connection_failed, D-366)
 # v4.4.542: the connection can be hung up at the end of the program
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v1.8.263: R-16: sending and reading lines go through LineConnection (protocols/lineconnection.py), shared with IMAP
@@ -92,7 +93,7 @@ class Pop3Client:
             raise failure(error, settings.host, settings.port, settings.security, "pop3") from None
         except (OSError, ssl.SSLError) as error:
             self.close()
-            raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
+            raise connection_failed(error) from None
 
     def close(self) -> None:
         self._connection.close()

@@ -1,7 +1,8 @@
 from collections.abc import Callable
+from typing import override
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QMouseEvent
 from PySide6.QtWidgets import QLabel, QMessageBox, QStatusBar, QToolTip, QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -12,9 +13,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 4.4.542"
+__version__ = "statusreport.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: to_errors: an error line of a mail check can be clicked (a hand, a hover text) and asks for the Errors tab (D-366)
 # v4.4.542: closing and closing_line: the end of the program has the status line and the busy bar to itself
 # v4.2.464: the busy bar hides Qt's text itself: it draws itself (D-266)
 # v4.2.392: progress_ended: the count of a command that ended (an import: done, stopped or failed) leaves the status bar at once
@@ -35,6 +37,7 @@ __version__ = "statusreport.py 4.4.542"
 CLICK_OPERATIONS: str = "Click to show the Operations window"
 CLICK_INDEX: str = "Click to show the index progress"
 CLICK_BACKUP: str = "Click to show the backup progress"
+CLICK_ERRORS: str = "Click to show the errors in the Operations window"
 CLEAR_AFTER_MS: int = 60_000  # an informative line is cleared a minute after it came, by its own clock; a warning, an error or work still running stays
 BUSY_AFTER_MS: int = 1000  # the busy bar moves only for work that runs longer than a moment (a minute check of 36 ms never shows)
 MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
@@ -45,6 +48,7 @@ class StatusReport(QObject):
     the busy bar, whose click asks for the Operations window."""
 
     bar_clicked = Signal()  # the busy bar: the index window while an index is updated, else the Operations window
+    errors_clicked = Signal()  # the error line of a mail check: the Errors tab of the Operations window (D-366)
 
     def __init__(self, parent: QWidget, account_name: Callable[[str], str]) -> None:
         super().__init__(parent)
@@ -53,6 +57,8 @@ class StatusReport(QObject):
         self._jobs: tuple[RunningJob, ...] = ()
         self.label: QLabel = QLabel("", parent)
         self.label.setTextFormat(Qt.TextFormat.PlainText)  # it shows folder names, subjects and server replies: never markup (RV-167)
+        self.label.installEventFilter(self)
+        self._to_errors: bool = False  # the line shown is a mail check's error: a click shows the Errors tab (D-366)
         self.progress_bar: ClickableBar = ClickableBar(parent)
         self.progress_bar.clicked.connect(self.bar_clicked)
         self.progress_bar.setToolTip(CLICK_OPERATIONS)
@@ -77,18 +83,35 @@ class StatusReport(QObject):
         bar.addWidget(self.line, 1)
         bar.addPermanentWidget(self.progress_bar)
 
-    def show(self, text: str, error: bool = False, running: bool = False) -> None:
+    def show(self, text: str, error: bool = False, running: bool = False, to_errors: bool = False) -> None:
         """A line: an informative one goes a minute after it came, by its own clock (whatever else runs meanwhile); a warning or an error
-        (red) and one about work still running (running: "Preparing to …", a count) stay until the next line."""
+        (red) and one about work still running (running: "Preparing to …", a count) stay until the next line. to_errors: a click on it
+        shows the Errors tab of the Operations window (D-366)."""
         if self._closing:
             return
         self.label.setText(text)
         self._is_error = error
+        self._clickable(to_errors and bool(text))
         self.restyle()
         if error or running or not text:
             self._clear_timer.stop()
         else:
             self._clear_timer.start(CLEAR_AFTER_MS)
+
+    def _clickable(self, to_errors: bool) -> None:
+        self._to_errors = to_errors
+        self.label.setToolTip(CLICK_ERRORS if to_errors else "")
+        if to_errors:
+            self.label.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.label.unsetCursor()
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.label and self._to_errors and isinstance(event, QMouseEvent) and event.type() == QEvent.Type.MouseButtonRelease \
+                and event.button() == Qt.MouseButton.LeftButton:  # a right-click opens nothing
+            self.errors_clicked.emit()
+        return False
 
     def _clear(self) -> None:
         if not self._is_error:
@@ -172,6 +195,7 @@ class StatusReport(QObject):
         """The program takes a moment to end: this line, and the bar moves until the window closes."""
         self.label.setText(text)
         self._is_error = False
+        self._clickable(False)
         self.restyle()
         self._clear_timer.stop()
         self._busy_timer.stop()

@@ -75,9 +75,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.6.646"
+__version__ = "mainwindow.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: View > Operations… is an action with the key Ctrl+Shift+O; a click on a mail check's error line opens the Errors tab (D-366)
 # v4.6.646: The start gives the Google accounts the client ID and client secret of the former private file, once, before anything syncs (B-34, D-364)
 # v4.5.629: an import whose export had the reference client's "Sent from" tick on ticks Settings > Templates and Signatures > "Sent from Chrono Mail" (D-359)
 # v4.4.616: Settings > Calendar's choices taken into use: Start week on for every date field, the rest by the Calendar section (D-352)
@@ -628,6 +629,7 @@ class MainWindow(QMainWindow):
         self.act_open_menu = self._action("Open the menu", self.open_menu, "Alt+M")
         self.act_search = self._action("Search", lambda: self._in_section("search"), "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", lambda: self.search.advanced(), "Ctrl+Shift+F")
+        self.act_operations = self._action("Operations…", lambda: self.checking.show_operations(), "Ctrl+Shift+O")  # D-366
         self.act_auto = QAction("Refresh automatically", self)
         self.act_auto.setCheckable(True)
         self.act_auto.setChecked(self.prefs.read().auto_check)
@@ -822,7 +824,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_show_groups)
         view_menu.addAction(self.act_auto)
         view_menu.addSeparator()
-        view_menu.addAction("Operations…", self.checking.show_operations)
+        view_menu.addAction(self.act_operations)
         help_menu = root.addMenu("&Help")
         help_menu.addAction(self.act_about)
         root.addSeparator()
@@ -847,6 +849,7 @@ class MainWindow(QMainWindow):
         self.report.install(self.statusBar())
         self.status_label, self.progress_bar, self.status_line = self.report.label, self.report.progress_bar, self.report.line
         self.report.bar_clicked.connect(self._bar_clicked)
+        self.report.errors_clicked.connect(self.checking.show_errors)
         self.rebuilds.running_changed.connect(self.report.bar_hint)
 
     def _bar_clicked(self) -> None:

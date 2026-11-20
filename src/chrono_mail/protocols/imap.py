@@ -9,13 +9,14 @@ from typing import Self
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.core.errors import refused_login
 from chrono_mail.protocols.lineconnection import LineConnection
-from chrono_mail.protocols.tls import client_context, failure
+from chrono_mail.protocols.tls import client_context, connection_failed, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 4.4.592"
+__version__ = "imap.py 4.6.649"
 
 # --- Version history ----------------------------------------------------
+# v4.6.649: a server name that could not be looked up (often no internet) is said in plain words (connection_failed, D-366)
 # v4.4.592: a login Gmail refused says how to make an app password (D-335)
 # v4.4.542: the connection can be hung up at the end of the program; leave: LOGOUT without waiting for the answer
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
@@ -311,7 +312,7 @@ class ImapClient:
             raise failure(error, settings.host, settings.port, settings.security, "imap") from None
         except (OSError, ssl.SSLError) as error:
             self.close()
-            raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
+            raise connection_failed(error) from None
 
     def close(self) -> None:
         self._connection.close()
