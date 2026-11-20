@@ -7,14 +7,15 @@ from PySide6.QtCore import QSettings
 from chrono_mail.core.colours import accent_value
 from chrono_mail.ui import calendarlayout
 from chrono_mail.ui.columns import valid_columns
-from chrono_mail.ui.scale import STANDARD, clamp
+from chrono_mail.ui.scale import STANDARD, VIEWS, clamp
 from chrono_mail.ui.weekstart import WEEK_STARTS
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.5.626"
+__version__ = "prefs.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: calendar_scale, contacts_scale, tasks_scale: the size of each view; settle_view_sizes gives each that is not stored the Main window's size once (D-367)
 # v4.5.626: sent_from_line: Settings > Templates and Signatures > Attach "Sent from Chrono Mail" (B-24, D-358)
 # v4.4.623: Settings > Writing > Default font: compose_font_family and compose_font_points (D-354)
 # v4.4.617: save_startup: Show on startup saved by the program through this module, never by its name elsewhere (D-211)
@@ -90,6 +91,9 @@ DEFAULTS: dict[str, object] = {
     "date_style": "short",
     "list_density": "normal",
     "list_scale": 1.0,  # the size of the message list: a factor (scale.py); an older list_font_size in points is converted
+    "calendar_scale": 1.0,  # the size of the Calendar view right of the sidebar: a factor (scale.py, D-367); stored at the first start (settle_view_sizes)
+    "contacts_scale": 1.0,  # the same for Contacts
+    "tasks_scale": 1.0,  # the same for Tasks
     "conversations": False,
     "show_favorites": True,
     "show_local_folders": True,
@@ -233,6 +237,23 @@ def saved_list(settings: QSettings, system_points: float) -> float:
     return STANDARD
 
 
+def saved_view(settings: QSettings, view: str) -> float:
+    """The size of a view (calendar, contacts, tasks); not stored yet: the Main window's, the size it had before it had a slider (D-367)."""
+    stored = _stored(settings, f"{view}_scale")
+    if stored is not None:
+        return stored
+    main = _stored(settings, "interface_scale")
+    return main if main is not None else STANDARD
+
+
+def settle_view_sizes(settings: QSettings) -> None:
+    """At the start: each view size not stored yet is stored at the Main window's size, once, so it no longer follows that slider
+    (the owner, Q122: at the update nothing changes size; after it the sliders are each the person's own, D-367)."""
+    for view in VIEWS:
+        if not settings.contains(f"{view}_scale"):
+            settings.setValue(f"{view}_scale", saved_view(settings, view))
+
+
 def _accent(value: object) -> str:
     """An accent colour as #rrggbb, or "" (the theme's blue) for anything else."""
     return accent_value(str(value or "")) or ""
@@ -306,6 +327,9 @@ class Preferences:
     date_style: str = "short"
     list_density: str = "normal"
     list_scale: float = 1.0
+    calendar_scale: float = 1.0
+    contacts_scale: float = 1.0
+    tasks_scale: float = 1.0
     conversations: bool = False
     show_favorites: bool = True
     show_local_folders: bool = True
@@ -385,6 +409,9 @@ def read_preferences(settings: QSettings) -> Preferences:
         date_style=choice("date_style"),
         list_density=choice("list_density"),
         list_scale=_factor(settings, "list_scale"),
+        calendar_scale=saved_view(settings, "calendar"),
+        contacts_scale=saved_view(settings, "contacts"),
+        tasks_scale=saved_view(settings, "tasks"),
         conversations=get_bool(settings, "conversations"),
         show_favorites=get_bool(settings, "show_favorites"),
         show_local_folders=get_bool(settings, "show_local_folders"),

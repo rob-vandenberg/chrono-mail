@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from PySide6.QtCore import QByteArray, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget
 
 from chrono_mail.pim.times import local_time
@@ -12,15 +12,17 @@ from chrono_mail.engine.commands_addressbook import ContactInfo
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_mail import MESSAGE_SEARCH, SearchParameters
+from chrono_mail.ui import scale
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.formatting import avatar_colour, initials
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactdetail.py 3.6.349"
+__version__ = "contactdetail.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: apply_size: the name, the photo and the margins follow the Contacts size (D-367)
 # v3.6.349: the dates of a contact's mail on this computer's clock through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.10.277: The groups a contact is in, under Contact information (R-39)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -87,14 +89,9 @@ class ContactDetail(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)  # like the reading pane, the calendar and the tasks: the content reaches the separator
         header = QHBoxLayout()
-        header.setContentsMargins(HEADER_MARGINS, HEADER_MARGINS, HEADER_MARGINS, 8)
+        self._header: QHBoxLayout = header
         self.photo = QLabel(self)
-        self.photo.setFixedSize(AVATAR, AVATAR)
         self.name = QLabel(self)
-        font = self.name.font()
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 1.5)
-        self.name.setFont(font)
         self.subtitle = QLabel(self)
         self.subtitle.setEnabled(False)
         self.tag_label = QLabel(self)
@@ -106,6 +103,7 @@ class ContactDetail(QWidget):
         header.addLayout(titles, 1)
         header.addWidget(self.tag_label, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
+        self.apply_size()
         self.tabs = QTabWidget(self)
         self.text = QTextBrowser(self)
         self.text.setOpenLinks(False)
@@ -130,10 +128,22 @@ class ContactDetail(QWidget):
         self.history.clear()
         self.text.setHtml(f"<p style='margin:30px' align=center><i>{_e(text)}</i></p>")
 
+    def apply_size(self) -> None:
+        """The margins, the photo and the name (bold, half as large again as the text) at the Contacts size (D-367)."""
+        margin = scale.vpx("contacts", HEADER_MARGINS)
+        self._header.setContentsMargins(margin, margin, margin, scale.vpx("contacts", 8))
+        self.photo.setFixedSize(scale.vpx("contacts", AVATAR), scale.vpx("contacts", AVATAR))
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() * 1.5)
+        self.name.setFont(font)
+        if self._current is not None:
+            self.photo.setPixmap(avatar_pixmap(self._current.name, scale.vpx("contacts", AVATAR), self._current.photo_base64))
+
     def set_contact(self, info: ContactInfo) -> None:
         self._current = info
         name = info.name
-        self.photo.setPixmap(avatar_pixmap(name, AVATAR, info.photo_base64))
+        self.photo.setPixmap(avatar_pixmap(name, scale.vpx("contacts", AVATAR), info.photo_base64))
         self.name.setText(name)
         line = " · ".join(part for part in (info.title, info.organization) if part)
         self.subtitle.setText(line)

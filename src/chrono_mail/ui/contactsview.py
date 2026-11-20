@@ -43,6 +43,7 @@ from chrono_mail.engine.commands_groups import (
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_addressbook import ListParameters as ContactListParameters
 from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
+from chrono_mail.ui import scale
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, paint_mark
 from chrono_mail.ui.collectionpanel import ROLE_GROUP
@@ -60,9 +61,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.4.615"
+__version__ = "contactsview.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: the count, the rows, the circles and the details follow the Contacts size (D-367)
 # v4.4.615: _collection_of: the address book a selected contact is in (Delete says whether it goes to a server by the contact's own book)
 # v4.4.587: A tick box per address book: the list shows the ticked ones together, a group its members; new contacts go to the book with the blue plus (D-334)
 # v4.4.584: The shared Tags block of Calendar and Tasks replaces the own Tags list: no "All contacts", a click turns a tag filter on and off (D-334)
@@ -93,7 +95,13 @@ ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
 PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 2  # true on a contact with an action under way (drawn greyed)
 ONE_BOOK: str = "(select contacts of one address book)"  # a menu of one address book's groups or moves, with contacts of two selected (D-334)
 ROW_HEIGHT: int = 56
+COUNT_MARGINS: tuple[int, int, int, int] = (10, 8, 10, 6)  # around "Contacts (n)", at the Contacts size
 AVATAR_SIZE: int = 36
+
+
+def _px(pixels: int) -> int:
+    """A size in pixels at the Contacts size (Settings > Appearance > Sizes > Contacts, D-367)."""
+    return scale.vpx("contacts", pixels)
 
 
 class ContactListModel(PimItemModel):
@@ -200,7 +208,7 @@ class ContactDelegate(MarkDelegate):
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        return QSize(0, ROW_HEIGHT)
+        return QSize(0, _px(ROW_HEIGHT))
 
     @override
     def _mark_area(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> tuple[QRect | None, str, str]:
@@ -215,8 +223,8 @@ class ContactDelegate(MarkDelegate):
             return None, "", item
         rect = _rect(option)
         strong = QFontMetrics(_typed(option, "font", QFont))
-        centre = rect.top() + 8 + strong.height() // 2
-        return QRect(rect.left() + 10 + AVATAR_SIZE + 10, centre - MARK_SIZE // 2, MARK_SIZE, MARK_SIZE), state, item
+        centre = rect.top() + _px(8) + strong.height() // 2
+        return QRect(rect.left() + _px(10) + _px(AVATAR_SIZE) + _px(10), centre - MARK_SIZE // 2, MARK_SIZE, MARK_SIZE), state, item
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -234,8 +242,9 @@ class ContactDelegate(MarkDelegate):
         quiet = QColor(text)
         quiet.setAlpha(255 if selected else 170)
         name = str(row.name)
-        painter.drawPixmap(rect.left() + 10, rect.top() + (rect.height() - AVATAR_SIZE) // 2, avatar_pixmap(name, AVATAR_SIZE))
-        left = rect.left() + 10 + AVATAR_SIZE + 10
+        avatar = _px(AVATAR_SIZE)
+        painter.drawPixmap(rect.left() + _px(10), rect.top() + (rect.height() - avatar) // 2, avatar_pixmap(name, avatar))
+        left = rect.left() + _px(10) + avatar + _px(10)
         tags = tuple(row.tags)
         chips = paint_chips(painter, QRect(left, rect.top(), rect.right() - left - 10, rect.height()), tags, self._colours, _typed(option, "font", QFont)) if tags else 0
         width = rect.right() - left - 10 - chips
@@ -244,17 +253,17 @@ class ContactDelegate(MarkDelegate):
         painter.setPen(text)
         model = index.model()
         mark = model.mark_of(str(row.item)) if isinstance(model, ContactListModel) else ""
-        mark_room = paint_mark(painter, left, rect.top() + 8 + strong.height() // 2, mark)
-        title_rect = QRect(left + mark_room, rect.top() + 8, width - mark_room, strong.height())
+        mark_room = paint_mark(painter, left, rect.top() + _px(8) + strong.height() // 2, mark)
+        title_rect = QRect(left + mark_room, rect.top() + _px(8), width - mark_room, strong.height())
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter, strong.elidedText(name, Qt.TextElideMode.ElideRight, width - mark_room))
         subtitle = str(row.subtitle)
         if subtitle:
             painter.setPen(quiet)
-            painter.drawText(QRect(left, rect.top() + 8 + strong.height() + 2, width, strong.height()), Qt.AlignmentFlag.AlignVCenter, strong.elidedText(subtitle, Qt.TextElideMode.ElideRight, width))
+            painter.drawText(QRect(left, rect.top() + _px(8) + strong.height() + 2, width, strong.height()), Qt.AlignmentFlag.AlignVCenter, strong.elidedText(subtitle, Qt.TextElideMode.ElideRight, width))
         line = QColor(text)
         line.setAlpha(28)
         painter.setPen(line)
-        painter.drawLine(rect.left() + 10, rect.bottom(), rect.right(), rect.bottom())
+        painter.drawLine(rect.left() + _px(10), rect.bottom(), rect.right(), rect.bottom())
         painter.restore()
 
 
@@ -301,7 +310,7 @@ class ContactsPage(PimListPage):
         pane_layout.setContentsMargins(0, 0, 0, 0)
         pane_layout.setSpacing(0)
         self.count_label = QLabel("", pane)
-        self.count_label.setContentsMargins(10, 8, 10, 6)
+        self.count_label.setContentsMargins(*COUNT_MARGINS)
         pane_layout.addWidget(self.count_label)
         self.list = QListView(pane)
         self.list.setModel(self.model)
@@ -395,6 +404,13 @@ class ContactsPage(PimListPage):
         self.reload_list()
 
     # --- showing ------------------------------------------------------------------------------
+
+    @override
+    def _size_changed(self) -> None:
+        """The Contacts size changed (D-367): the count's margins, the rows and the details."""
+        self.count_label.setContentsMargins(*(_px(margin) for margin in COUNT_MARGINS))
+        self.list.doItemsLayout()
+        self.detail.apply_size()
 
     @override
     def on_show(self) -> None:

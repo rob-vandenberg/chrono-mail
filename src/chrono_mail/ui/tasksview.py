@@ -46,6 +46,7 @@ from chrono_mail.engine.commands_tasklist import MoveParameters as TaskMove
 from chrono_mail.engine.commands_tasklist import ListParameters as TaskListParameters
 from chrono_mail.engine.commands_tasklist import PlacesParameters as TaskPlacesParameters
 from chrono_mail.ui.splitter import PaneSplitter, SideSplitter
+from chrono_mail.ui import scale
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_SIZE, MARK_TIPS, SyncMarks, paint_mark
 from chrono_mail.core.colours import NEW_TAG
@@ -61,9 +62,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 4.4.615"
+__version__ = "tasksview.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: the rows, headings and round marks follow the Tasks size (D-367)
 # v4.4.615: _collection_of: the list a selected task is in (Delete says whether it goes to a server by the task's own list)
 # v4.4.584: The Tags block without "All tasks": a click turns a tag filter on and off (D-334)
 # v4.4.581: The answer about one changed task, asked before the list was asked again, is not used: it was asked with the old tag, tab or
@@ -98,6 +100,11 @@ HEADER_HEIGHT: int = 30
 ROW_HEIGHT: int = 52
 MARK: int = 22
 PAGE: int = 100  # task rows asked for at a time, as they come into view
+
+
+def _px(pixels: int) -> int:
+    """A size in pixels at the Tasks size (Settings > Appearance > Sizes > Tasks, D-367)."""
+    return scale.vpx("tasks", pixels)
 TABS: tuple[tuple[str, str], ...] = (("all", "All"), ("upcoming", "Upcoming"), ("completed", "Completed"))
 
 
@@ -376,13 +383,13 @@ class TaskDelegate(MarkDelegate):
             return None, "", item
         rect = _rect(option)
         metrics = QFontMetrics(_typed(option, "font", QFont))
-        centre = rect.top() + 7 + metrics.height() // 2
-        return QRect(rect.left() + 24 + MARK // 2 + 12, centre - MARK_SIZE // 2, MARK_SIZE, MARK_SIZE), state, item
+        centre = rect.top() + _px(7) + metrics.height() // 2
+        return QRect(rect.left() + _px(24) + _px(MARK) // 2 + _px(12), centre - MARK_SIZE // 2, MARK_SIZE, MARK_SIZE), state, item
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         """The height of a heading or a task: the list asks it of every row to lay itself out, so it is asked without the row (KIND_ROLE)."""
-        return QSize(0, HEADER_HEIGHT if index.data(KIND_ROLE) == "header" else ROW_HEIGHT)
+        return QSize(0, _px(HEADER_HEIGHT) if index.data(KIND_ROLE) == "header" else _px(ROW_HEIGHT))
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -403,7 +410,7 @@ class TaskDelegate(MarkDelegate):
             colour = QColor(palette.color(QPalette.ColorRole.Text))
             colour.setAlpha(190)
             painter.setPen(colour)
-            painter.drawText(rect.adjusted(12, 6, 0, 0), Qt.AlignmentFlag.AlignVCenter, str(payload))
+            painter.drawText(rect.adjusted(_px(12), _px(6), 0, 0), Qt.AlignmentFlag.AlignVCenter, str(payload))
             painter.restore()
             return
         if kind == "waiting" or not isinstance(payload, TaskRow):  # its row is on its way: the place is kept, the text comes when the row is in
@@ -418,8 +425,8 @@ class TaskDelegate(MarkDelegate):
             text = palette.color(QPalette.ColorRole.PlaceholderText)  # an action is under way: greyed until it ends
         quiet = QColor(text)
         quiet.setAlpha(255 if selected else 170)
-        draw_mark(painter, QPoint(rect.left() + 24, rect.center().y()), payload)
-        left = rect.left() + 24 + MARK // 2 + 12
+        draw_mark(painter, QPoint(rect.left() + _px(24), rect.center().y()), payload, _px(MARK))
+        left = rect.left() + _px(24) + _px(MARK) // 2 + _px(12)
         tags = tuple(payload.tags)
         chips = paint_chips(painter, QRect(left, rect.top(), rect.right() - left - 10, rect.height()), tags, self._colours, font) if tags else 0
         width = rect.right() - left - 10 - chips
@@ -430,18 +437,18 @@ class TaskDelegate(MarkDelegate):
         painter.setPen(text)
         summary = payload.summary
         mark = model.mark_of(payload.item) if isinstance(model, TaskListModel) else ""
-        mark_room = paint_mark(painter, left, rect.top() + 7 + metrics.height() // 2, mark)
-        painter.drawText(QRect(left + mark_room, rect.top() + 7, width - mark_room, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
+        mark_room = paint_mark(painter, left, rect.top() + _px(7) + metrics.height() // 2, mark)
+        painter.drawText(QRect(left + mark_room, rect.top() + _px(7), width - mark_room, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
                          metrics.elidedText(summary, Qt.TextElideMode.ElideRight, width - mark_room))
         painter.setFont(font)
         due = due_text(payload.due)
         if due:
             painter.setPen(QColor(red()) if payload.overdue and not selected else quiet)
-            painter.drawText(QRect(left, rect.top() + 7 + metrics.height() + 2, width, metrics.height()), Qt.AlignmentFlag.AlignVCenter, due + ("  ⟳" if payload.repeats else ""))
+            painter.drawText(QRect(left, rect.top() + _px(7) + metrics.height() + 2, width, metrics.height()), Qt.AlignmentFlag.AlignVCenter, due + ("  ⟳" if payload.repeats else ""))
         line = QColor(text)
         line.setAlpha(28)
         painter.setPen(line)
-        painter.drawLine(rect.left() + 12, rect.bottom(), rect.right(), rect.bottom())
+        painter.drawLine(rect.left() + _px(12), rect.bottom(), rect.right(), rect.bottom())
         painter.restore()
 
 
@@ -569,6 +576,11 @@ class TasksPage(PimListPage):
         self.list.customContextMenuRequested.connect(self._list_menu)
         self.day_watch.looked.connect(self._look)
         self.tag_filter.chosen.connect(self._tag_chosen)
+
+    @override
+    def _size_changed(self) -> None:
+        """The Tasks size changed (D-367): the rows and headings take their new height."""
+        self.list.doItemsLayout()
 
     def _tag_chosen(self, tag: str) -> None:
         """A tag was chosen in the sidebar (or everything): only its tasks are shown (D-327)."""

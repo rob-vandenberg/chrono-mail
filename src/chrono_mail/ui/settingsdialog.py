@@ -1,6 +1,7 @@
 import html
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Literal, override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings, QSize, Qt, Signal
@@ -67,9 +68,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.6.635"
+__version__ = "settingsdialog.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: Appearance > Sizes: Calendar, Contacts and Tasks below Message list, tried at once (view_scale_tried), Cancel puts them back (D-367)
 # v4.6.635: A Default font that is not installed shows its name with "(not installed)" and stays the choice at OK (D-354)
 # v4.5.626: Settings > Templates and Signatures after Writing: the signatures, kept at OK (B-24, D-358); the page list is as wide as its
 #           longest title
@@ -323,6 +325,7 @@ class SettingsDialog(QDialog):
     interface_scale_tried = Signal(float)  # the Main window slider moved: the main window shows that size at once (not saved yet)
     windows_scale_tried = Signal(float)  # the same for the other windows and dialogs (this one too)
     list_scale_tried = Signal(float)  # the same for the message list
+    view_scale_tried = Signal(str, float)  # the same for Calendar, Contacts or Tasks: the view's name and its size (D-367)
     reading_scale_tried = Signal(float)  # the same for the text of messages, read and written
     list_settings_tried = Signal(object)  # Message list: Layout, Reading pane, Dates, Row height, conversations or the tag's colour changed: shown at once (not saved yet)
 
@@ -576,6 +579,9 @@ class SettingsDialog(QDialog):
     def _list_slider_moved(self, position: int) -> None:
         self.list_scale_tried.emit(scale.factor_at(position))
 
+    def _view_slider_moved(self, view: str, position: int) -> None:
+        self.view_scale_tried.emit(view, scale.factor_at(position))
+
     def _reading_slider_moved(self, position: int) -> None:
         self.reading_scale_tried.emit(scale.factor_at(position))
 
@@ -587,7 +593,7 @@ class SettingsDialog(QDialog):
         self.windows_scale_tried.emit(factor)
         self.sidebar.setFixedWidth(wpx(190))  # this window follows too
         self._size_sidebar_text(factor)
-        for slider in (self.interface_slider, self.list_slider, self.windows_slider, self.reading_slider):
+        for slider in (self.interface_slider, self.list_slider, *self.view_sliders.values(), self.windows_slider, self.reading_slider):
             slider.setMinimumWidth(wpx(SLIDER_WIDTH))
         self._grow_with(factor)
 
@@ -640,7 +646,7 @@ class SettingsDialog(QDialog):
             self.resize(width, height)
 
     def _appearance_page(self) -> QWidget:
-        page = forms.load("settings_appearance", self, {f"{key}Slider": _new_slider for key in ("interface", "list", "windows", "reading")})
+        page = forms.load("settings_appearance", self, {f"{key}Slider": _new_slider for key in ("interface", "list", *scale.VIEWS, "windows", "reading")})
         s = self._settings
         self.scheme_box = _fill_combo(part(page, QComboBox, "schemeBox"), SCHEME_LABELS, self._chosen.color_scheme)
         app = QApplication.instance()
@@ -654,6 +660,12 @@ class SettingsDialog(QDialog):
         self.list_scale_saved: float = prefs.saved_list(s, self.system_points)
         self.list_slider, self.list_reset = self._size_row(page, "list", self.list_scale_saved)
         self.list_slider.valueChanged.connect(self._list_slider_moved)
+        self.view_scales_saved: dict[str, float] = {view: scale.view(view) for view in scale.VIEWS}  # what Cancel puts back (D-367)
+        self.view_sliders: dict[str, SizeSlider] = {}
+        self.view_resets: dict[str, QPushButton] = {}
+        for view in scale.VIEWS:
+            self.view_sliders[view], self.view_resets[view] = self._size_row(page, view, self.view_scales_saved[view])
+            self.view_sliders[view].valueChanged.connect(partial(self._view_slider_moved, view))
         self.windows_slider, self.windows_reset = self._size_row(page, "windows", self.windows_scale_saved)
         self.windows_slider.valueChanged.connect(self._windows_slider_moved)
         self.reading_scale_saved: float = prefs.saved_reading(s)
@@ -1045,7 +1057,9 @@ class SettingsDialog(QDialog):
             color_scheme=str(self.scheme_box.currentData()), accent_dark=accent_dark, accent_light=accent_light,
             interface_scale=scale.factor_at(self.interface_slider.value()), windows_scale=scale.factor_at(self.windows_slider.value()),
             list_layout=str(self.layout_box.currentData()), reading_pane=str(self.pane_box.currentData()), date_style=str(self.date_box.currentData()),
-            list_density=str(self.density_box.currentData()), list_scale=scale.factor_at(self.list_slider.value()), conversations=self.conversations.isChecked(),
+            list_density=str(self.density_box.currentData()), list_scale=scale.factor_at(self.list_slider.value()),
+            calendar_scale=scale.factor_at(self.view_sliders["calendar"].value()), contacts_scale=scale.factor_at(self.view_sliders["contacts"].value()),
+            tasks_scale=scale.factor_at(self.view_sliders["tasks"].value()), conversations=self.conversations.isChecked(),
             show_favorites=bool(sidebar["show_favorites"]), show_local_folders=bool(sidebar["show_local_folders"]), show_tags=bool(sidebar["show_tags"]),
             tag_text_colour=self.tag_text_colour.isChecked(), unread_leaves_on_read=self.unread_leaves_on_read.isChecked(),
             secondary_sort=str(self.secondary_sort_box.currentData()),

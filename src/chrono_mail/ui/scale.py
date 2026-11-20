@@ -8,9 +8,10 @@ from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleHintRetur
 from chrono_mail.ui.icons import bundled_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "scale.py 4.4.615"
+__version__ = "scale.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: a size factor for each of Calendar, Contacts and Tasks, the part of the view right of the sidebar (view, set_view, vpx, D-367)
 # v4.4.615: The buttons of dialogs and message boxes always have icons, and these (and the icons of message boxes) are the program's own
 #           Breeze copies in the colour of button text, on every computer and in every theme; never the desktop's icon theme (D-087, D-158)
 #           also Yes to all, No to all, Save all, Abort, Retry and Ignore (document-save-all, process-stop and go-next copied from Breeze)
@@ -128,6 +129,24 @@ def set_message_list(factor: float) -> None:
 def lpx(pixels: float) -> int:
     """A size in pixels at the factor of the message list; never below 1."""
     return max(1, round(pixels * _state.list_factor))
+
+
+VIEWS: tuple[str, ...] = ("calendar", "contacts", "tasks")  # the views with a size slider of their own (D-367)
+_views: dict[str, float] = dict.fromkeys(VIEWS, STANDARD)
+
+
+def view(name: str) -> float:
+    """The size factor of a view now: what is right of the sidebar and below the top bar (Calendar, Contacts or Tasks, D-367)."""
+    return _views.get(name, STANDARD)
+
+
+def set_view(name: str, factor: float) -> None:
+    _views[name] = clamp(factor)
+
+
+def vpx(name: str, pixels: float) -> int:
+    """A size in pixels at the factor of that view; never below 1."""
+    return max(1, round(pixels * view(name)))
 
 
 def clamp(factor: float) -> float:

@@ -16,7 +16,7 @@ from chrono_mail.engine.commands_updates import interrupt_downloads
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
 from chrono_mail.engine.commands_schedule import ScheduledInfo
-from chrono_mail.ui import appearance, scale, theme, weekstart
+from chrono_mail.ui import appearance, prefs, scale, theme, weekstart
 from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
 from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.certificatequestions import questions_for
@@ -75,9 +75,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.6.649"
+__version__ = "mainwindow.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: Calendar, Contacts and Tasks at their own sizes: stored at the first start from the Main window's (Q122), tried while a slider
+#           moves, back on Cancel, kept on OK (D-367)
 # v4.6.649: View > Operations… is an action with the key Ctrl+Shift+O; a click on a mail check's error line opens the Errors tab (D-366)
 # v4.6.646: The start gives the Google accounts the client ID and client secret of the former private file, once, before anything syncs (B-34, D-364)
 # v4.5.629: an import whose export had the reference client's "Sent from" tick on ticks Settings > Templates and Signatures > "Sent from Chrono Mail" (D-359)
@@ -427,6 +429,8 @@ class MainWindow(QMainWindow):
         self._build_status()
         self.columns.apply_list_layout()
         self.columns.apply_list_look()
+        prefs.settle_view_sizes(self.settings)  # once: a view without a size of its own keeps the Main window's (Q122, D-367)
+        self._apply_view_sizes()
         self.reading.apply_place()
         self.reading.apply_reader_preferences()
         self._apply_shortcuts()
@@ -1189,6 +1193,7 @@ class MainWindow(QMainWindow):
         dialog.windows_scale_tried.connect(self.try_windows_scale)
         dialog.reading_scale_tried.connect(self.try_reading_scale)
         dialog.list_scale_tried.connect(self.try_list_scale)
+        dialog.view_scale_tried.connect(self.try_view_scale)
         dialog.list_settings_tried.connect(self.try_list_settings)
         self.columns.try_in(dialog.columns_picker)
         try:
@@ -1208,6 +1213,8 @@ class MainWindow(QMainWindow):
                 self.try_windows_scale(dialog.windows_scale_saved)
             self.try_reading_scale(dialog.reading_scale_saved)
             self.try_list_scale(dialog.list_scale_saved)
+            for view, factor in dialog.view_scales_saved.items():
+                self.try_view_scale(view, factor)
         self._tried_interface = self._tried_windows = None  # from now on the saved sizes
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
             self.report.finished("Rules applied")  # its "mailbox changed" fetches the list and the numbers again
@@ -1325,6 +1332,9 @@ class MainWindow(QMainWindow):
             self.messages.take_in_secondary_sort()  # in place: the rows and the selection stay (D-320)
         if looks or differ("list_scale", "list_density"):
             self.columns.apply_list_look(after.list_scale if self.prefs.trying is not None else None)  # tried: the size the slider shows
+        if looks or differ("calendar_scale", "contacts_scale", "tasks_scale"):
+            tried = self.prefs.trying is not None  # tried: the sizes the sliders show
+            self._apply_view_sizes({"calendar": after.calendar_scale, "contacts": after.contacts_scale, "tasks": after.tasks_scale} if tried else None)
         if differ("reading_pane"):
             self.reading.set_place(after.reading_pane)  # only then: a width the person dragged stays
         if differ("reading_pane_fits_message"):
@@ -1376,6 +1386,16 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(theme.stylesheet())
         self._apply_scaled_parts()
         self.columns.apply_list_look(scale.message_list())  # the list keeps the size it shows (also one being tried out, not saved yet)
+        self._apply_view_sizes({view: scale.view(view) for view in scale.VIEWS})  # so do Calendar, Contacts and Tasks
+
+    def _apply_view_sizes(self, factors: dict[str, float] | None = None) -> None:
+        """Calendar, Contacts and Tasks each at their own size (D-367): given (tried, or what they show), else the saved ones."""
+        for view in scale.VIEWS:
+            self.pages[view].apply_size(factors[view] if factors is not None else prefs.saved_view(self.settings, view))
+
+    def try_view_scale(self, view: str, factor: float) -> None:
+        """Show Calendar, Contacts or Tasks at this size now, without saving it."""
+        self.pages[view].apply_size(factor)
 
     def try_list_scale(self, factor: float) -> None:
         """Show the message list at this size now, without saving it."""

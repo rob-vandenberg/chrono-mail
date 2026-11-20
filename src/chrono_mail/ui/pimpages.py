@@ -2,13 +2,14 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QSettings, Qt, Signal, SignalInstance
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction, QFont
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import Change
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import PIM_ENABLE, CollectionSummary
+from chrono_mail.ui import appearance, scale
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks
 from chrono_mail.ui.collectionpanel import CollectionPanel
@@ -16,9 +17,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 4.4.568"
+__version__ = "pimpages.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: apply_size: everything right of the sidebar (content) at the view's own size, Settings > Appearance > Sizes (D-367)
 # v4.4.568: The status line says where new items go when the blue plus moved by itself (D-326)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: pim.enable typed
@@ -76,6 +78,28 @@ class PimPage(SectionPage):
         self._refetching: bool = False
         self._refetch_again: bool = False
         self.marks: SyncMarks | None = None  # set by the window (use_marks)
+
+    @property
+    def size_name(self) -> str:
+        """Its name among the sizes of Settings > Appearance: calendar, contacts or tasks (scale.VIEWS)."""
+        return self.section_name.lower()
+
+    def apply_size(self, factor: float) -> None:
+        """Everything right of the sidebar and below the top bar at this size (a factor of the system's text size, D-367): the text,
+        then the parts of a fixed size (_size_changed). The top bar, the sidebar and the status line keep the Main window's size."""
+        scale.set_view(self.size_name, factor)
+        app = QApplication.instance()
+        system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        font = QFont(QApplication.font())
+        font.setPointSizeF(round(system * scale.view(self.size_name), 2))
+        self.content.setFont(font)
+        for widget in self.content.findChildren(QWidget):
+            if not widget.isWindow():
+                widget.setFont(font)  # each part, also one with style rules of its own (as the message list's row, D-367)
+        self._size_changed()
+
+    def _size_changed(self) -> None:
+        """The parts of a fixed size (rows, circles, hours) follow the view's size: each view its own."""
 
     @override
     def on_show(self) -> None:

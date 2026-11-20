@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import override
 
 from PySide6.QtCore import Signal, SignalInstance, QDate, QEvent, QPoint, QRect, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QColor, QFontMetrics, QPainter, QResizeEvent
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontMetrics, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCalendarWidget,
@@ -56,9 +56,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.616"
+__version__ = "calendarview.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: _size_changed: the title, the hours, the all-day row, Month and Agenda follow the Calendar's size (D-367)
 # v4.4.616: Settings > Calendar (D-352): the n weeks view (named by its weeks), Upcoming of a chosen number of days from the day shown (the
 #           arrows move by them), week numbers, short events as 30 minutes, past events less bright, Start week on (also the small month)
 # v4.4.615: the delete question of an appointment is plain, and says that one of a server goes there too; no store directory or days (OR-18)
@@ -263,10 +264,7 @@ class CalendarPage(PimPage):
         self.next_button.setText("›")
         self.next_button.setToolTip("Next")
         self.title = QLabel("", nav)
-        font = self.title.font()
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 1.15)
-        self.title.setFont(font)
+        self._title_font()
         self.today_button = QPushButton("Today", nav)
         self.past_button = QPushButton("Hide past events", nav)
         self.past_button.setCheckable(True)
@@ -367,6 +365,25 @@ class CalendarPage(PimPage):
         if digits(height):
             self.grid.canvas.set_hour_height(int(height))
         self._apply_view()
+
+    def _title_font(self) -> None:
+        """The title ("November 2026") bold and a little larger than the rest of the calendar."""
+        parent = self.title.parentWidget()
+        font = QFont(parent.font() if parent is not None else self.title.font())
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() * 1.15)
+        self.title.setFont(font)
+
+    @override
+    def _size_changed(self) -> None:
+        """The Calendar's size changed (D-367): the title, the hours (kept at the same hour on top), the all-day row and the views."""
+        self._title_font()
+        hour = self.grid.area.verticalScrollBar().value() / max(1, self.grid.canvas.hour_height)
+        self.grid.canvas.apply_size()
+        self.grid.header.apply_size()
+        self.grid.area.verticalScrollBar().setValue(round(hour * self.grid.canvas.hour_height))
+        self.month.update()
+        self.agenda.doItemsLayout()
 
     def _zoomed(self, height: int) -> None:
         self._settings.setValue("calendar_hour_height", height)  # Ctrl and the wheel changed the hours: remembered

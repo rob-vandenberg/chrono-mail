@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QListWidget, QListWidgetI
 from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
+from chrono_mail.ui import scale
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, WAITING, mark_icon, paint_mark
 from chrono_mail.ui.tagchips import TagColourBook
@@ -20,9 +21,11 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.4.620"
+__version__ = "calendarwidgets.py 4.6.652"
 
 # --- Version history ----------------------------------------------------
+# v4.6.652: the hours, the gutter, the all-day bars and the Month dots at the Calendar's size; the hour height of Ctrl and the wheel is kept
+#           at the standard size (base_hour_height) and drawn at the Calendar's size (D-367)
 # v4.4.620: In Month a day's timed events start below the all-day bars of that day, not below the deepest bar of its week (the owner)
 # v4.4.617: A past block keeps its own colour and text, both dimmed together: a fresh white text on the darker block did not look dimmed (D-352)
 # v4.4.616: Month draws any number of weeks (the n weeks view, no other month greyed there); week numbers in Month, n weeks and the header
@@ -138,6 +141,15 @@ DOT_RADIUS: float = 3.5
 DOT_ROOM: int = 9
 
 
+def _px(pixels: int) -> int:
+    """A size in pixels at the Calendar's size (Settings > Appearance > Sizes > Calendar, D-367)."""
+    return scale.vpx("calendar", pixels)
+
+
+def _fpx(pixels: float) -> float:
+    return pixels * scale.view("calendar")
+
+
 def same_event(one: Entry | None, other: Entry | None) -> bool:
     """The same occurrence of the same event, whatever changed in it: its title, its time or its day (D-324, D-325). An event is its item; a date of a
     series, or of an object of only changed dates, is its occurrence (the date it had first, which a change never moves)."""
@@ -150,7 +162,7 @@ def first_line(rect: QRectF, font: QFont, mark: str, dot: bool) -> tuple[float, 
     metrics = QFontMetrics(bold_of(font))
     y = rect.top() + (2 if rect.height() >= 2 * metrics.height() else max(0.0, (rect.height() - metrics.height()) / 2))  # a short block: the title in the middle
     size = min(MARK_SIZE, metrics.height())
-    lead = DOT_ROOM if dot else 0  # the dot comes first, then the mark and the text, as in a timed event without a background
+    lead = _px(DOT_ROOM) if dot else 0  # the dot comes first, then the mark and the text, as in a timed event without a background
     mark_left = rect.left() + (lead + 5 if dot else 4)  # with the dot the mark and the text start where they do on a line without a background
     text_left = mark_left + size + MARK_GAP if mark else rect.left() + lead + 5  # after a mark the same small gap as after the dot (the owner)
     return y, mark_left, size, text_left
@@ -191,14 +203,14 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
     painter.setFont(bold)
     metrics = QFontMetrics(bold)
     y, mark_left, size, first_left = first_line(rect, font, mark, dot)
-    lead = DOT_ROOM if dot else 0
+    lead = _px(DOT_ROOM) if dot else 0
     mark_area = QRectF(mark_left, int(y + metrics.height() / 2) - size // 2, size, size) if mark else None
     for index, line in enumerate(lines):
         painter.setFont(bold if index == 0 else font)
         if dot and index == 0:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(text_colour)
-            painter.drawEllipse(QPointF(rect.left() + DOT_CENTRE, y + metrics.height() / 2), DOT_RADIUS, DOT_RADIUS)
+            painter.drawEllipse(QPointF(rect.left() + _fpx(DOT_CENTRE), y + metrics.height() / 2), _fpx(DOT_RADIUS), _fpx(DOT_RADIUS))
             painter.setPen(text_colour)
         text_right = rect.right()
         if index == 0:
@@ -556,7 +568,8 @@ class GridCanvas(EntryHits):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.hour_height: int = DEFAULT_HOUR_HEIGHT
+        self.base_hour_height: int = DEFAULT_HOUR_HEIGHT  # the person's choice (Ctrl and the wheel) at the standard size
+        self.hour_height: int = DEFAULT_HOUR_HEIGHT  # as drawn: that choice at the Calendar's size (D-367)
         self.days: list[date] = []
         self.zone: tzinfo | None = None
         self.segments: dict[date, list[Segment]] = {}
@@ -575,7 +588,13 @@ class GridCanvas(EntryHits):
         self.update()
 
     def set_hour_height(self, height: int) -> None:
-        self.hour_height = max(MINIMUM_HOUR_HEIGHT, min(MAXIMUM_HOUR_HEIGHT, height))
+        """The hours at this height at the standard size; drawn at the Calendar's size."""
+        self.base_hour_height = max(MINIMUM_HOUR_HEIGHT, min(MAXIMUM_HOUR_HEIGHT, height))
+        self.apply_size()
+
+    def apply_size(self) -> None:
+        """The Calendar's size changed (D-367): the hours grow or shrink with it."""
+        self.hour_height = _px(self.base_hour_height)
         self.setFixedHeight(24 * self.hour_height)
         self.update()
 
@@ -584,21 +603,21 @@ class GridCanvas(EntryHits):
         return QSize(600, 24 * self.hour_height)
 
     def column_width(self) -> float:
-        return max(1.0, (self.width() - GUTTER) / max(1, len(self.days)))
+        return max(1.0, (self.width() - _px(GUTTER)) / max(1, len(self.days)))
 
     @override
     def slot_at(self, position: QPointF) -> tuple[date, int] | None:
         if not self.days or position.x() < GUTTER:
             return None
-        index = min(len(self.days) - 1, int((position.x() - GUTTER) // self.column_width()))
+        index = min(len(self.days) - 1, int((position.x() - _px(GUTTER)) // self.column_width()))
         minute = int(position.y() / self.hour_height * 60) // SNAP_MINUTES * SNAP_MINUTES
         return self.days[index], max(0, min(24 * 60 - SNAP_MINUTES, minute))
 
     @override
     def wheelEvent(self, event: QWheelEvent) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:  # Ctrl and the wheel: more or fewer hours on the screen
-            self.set_hour_height(self.hour_height + (6 if event.angleDelta().y() > 0 else -6))
-            self.hour_height_changed.emit(self.hour_height)
+            self.set_hour_height(self.base_hour_height + (6 if event.angleDelta().y() > 0 else -6))
+            self.hour_height_changed.emit(self.base_hour_height)
             event.accept()
             return
         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:  # Shift and the wheel: a period back or forward
@@ -622,7 +641,7 @@ class GridCanvas(EntryHits):
         small.setPointSizeF(max(6.0, font.pointSizeF() * 0.85))
         width = self.column_width()
         for index, day in enumerate(self.days):
-            left = GUTTER + index * width
+            left = _px(GUTTER) + index * width
             if day == self.today:
                 tint = QColor(palette.color(QPalette.ColorRole.Highlight))
                 tint.setAlpha(22)
@@ -633,17 +652,17 @@ class GridCanvas(EntryHits):
         for hour in range(24):
             y = hour * self.hour_height
             painter.setPen(line)
-            painter.drawLine(GUTTER - 6, y, self.width(), y)
+            painter.drawLine(_px(GUTTER) - 6, y, self.width(), y)
             painter.setPen(faint)
-            painter.drawLine(GUTTER, y + self.hour_height // 2, self.width(), y + self.hour_height // 2)
+            painter.drawLine(_px(GUTTER), y + self.hour_height // 2, self.width(), y + self.hour_height // 2)
             if hour:
                 label = QColor(text)
                 label.setAlpha(150)
                 painter.setPen(label)
-                painter.drawText(QRect(0, y - 8, GUTTER - 10, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{hour:02d}:00")
+                painter.drawText(QRect(0, y - _px(8), _px(GUTTER) - 10, _px(16)), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{hour:02d}:00")
         painter.setPen(line)
         for index in range(len(self.days) + 1):
-            x = int(GUTTER + index * width)
+            x = int(_px(GUTTER) + index * width)
             painter.drawLine(x, 0, x, self.height())
         painter.setFont(font)
         self.hits = []
@@ -652,7 +671,7 @@ class GridCanvas(EntryHits):
         for index, day in enumerate(self.days):
             for segment in self.segments.get(day, []):
                 column_width = (width - 3) / segment.columns
-                left = GUTTER + index * width + 1 + segment.column * column_width
+                left = _px(GUTTER) + index * width + 1 + segment.column * column_width
                 top = segment.start / 60 * self.hour_height
                 height = max(14.0, (segment.end - segment.start) / 60 * self.hour_height - 1)
                 rect = QRectF(left, top, column_width - 1, height)
@@ -673,9 +692,9 @@ class GridCanvas(EntryHits):
             index = self.days.index(self.today)
             y = (self.now.hour * 60 + self.now.minute) / 60 * self.hour_height
             painter.setPen(QPen(QColor(theme(palette).now_line), 2))
-            painter.drawLine(int(GUTTER + index * width), int(y), int(GUTTER + (index + 1) * width), int(y))
+            painter.drawLine(int(_px(GUTTER) + index * width), int(y), int(_px(GUTTER) + (index + 1) * width), int(y))
             painter.setBrush(QColor(theme(palette).now_line))
-            painter.drawEllipse(QPointF(GUTTER + index * width, y), 4, 4)
+            painter.drawEllipse(QPointF(_px(GUTTER) + index * width, y), 4, 4)
         painter.end()
 
 
@@ -692,25 +711,30 @@ class DayHeader(EntryHits):
         self.bars: list[Bar] = []
         self.today: date = date.today()
         self.week_number: int = 0  # the week number shown above "All day" (Settings > Calendar, D-352); 0: none
-        self.setMinimumHeight(DAY_ROW + BAR_HEIGHT)
+        self.setMinimumHeight(_px(DAY_ROW) + _px(BAR_HEIGHT))
 
     def set_data(self, days: list[date], entries: list[Entry], today: date) -> None:
         self.days = days
         self.today = today
         self.bars = layout.bars(entries, days, include_timed_spanning=True)
-        rows = max((bar.row for bar in self.bars), default=-1) + 1
-        self.setFixedHeight(DAY_ROW + 6 + max(1, rows) * (BAR_HEIGHT + BAR_GAP))
         self.selected = followed(self.selected, entries)
+        self.apply_size()
+
+    def apply_size(self) -> None:
+        """Its height for the all-day bars at the Calendar's size (D-367)."""
+        rows = max((bar.row for bar in self.bars), default=-1) + 1
+        self.setMinimumHeight(_px(DAY_ROW) + _px(BAR_HEIGHT))
+        self.setFixedHeight(_px(DAY_ROW) + 6 + max(1, rows) * (_px(BAR_HEIGHT) + _px(BAR_GAP)))
         self.update()
 
     def column_width(self) -> float:
-        return max(1.0, (self.width() - GUTTER) / max(1, len(self.days)))
+        return max(1.0, (self.width() - _px(GUTTER)) / max(1, len(self.days)))
 
     @override
     def slot_at(self, position: QPointF) -> tuple[date, int] | None:
         if not self.days or position.x() < GUTTER:
             return None
-        return self.days[min(len(self.days) - 1, int((position.x() - GUTTER) // self.column_width()))], -1
+        return self.days[min(len(self.days) - 1, int((position.x() - _px(GUTTER)) // self.column_width()))], -1
 
     @override
     def paintEvent(self, event: object) -> None:
@@ -724,7 +748,7 @@ class DayHeader(EntryHits):
         font = self.font()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         for index, day in enumerate(self.days):
-            left = GUTTER + index * width
+            left = _px(GUTTER) + index * width
             painter.setPen(line)
             painter.drawLine(int(left), 0, int(left), self.height())
             if day == self.today:
@@ -753,15 +777,15 @@ class DayHeader(EntryHits):
         label = QColor(text)
         label.setAlpha(150)
         painter.setPen(label)
-        painter.drawText(QRect(0, DAY_ROW + 2, GUTTER - 6, BAR_HEIGHT), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "All day")
+        painter.drawText(QRect(0, _px(DAY_ROW) + 2, _px(GUTTER) - 6, _px(BAR_HEIGHT)), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "All day")
         if self.week_number:
-            painter.drawText(QRect(0, 0, GUTTER - 6, DAY_ROW), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"Week {self.week_number}")
+            painter.drawText(QRect(0, 0, _px(GUTTER) - 6, _px(DAY_ROW)), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"Week {self.week_number}")
         self.hits = []
         self.mark_hits = []
         self.titles = []
         for bar in self.bars:
-            left = GUTTER + bar.first * width + 1
-            rect = QRectF(left, DAY_ROW + 4 + bar.row * (BAR_HEIGHT + BAR_GAP), (bar.last - bar.first + 1) * width - 3, BAR_HEIGHT)
+            left = _px(GUTTER) + bar.first * width + 1
+            rect = QRectF(left, _px(DAY_ROW) + 4 + bar.row * (_px(BAR_HEIGHT) + _px(BAR_GAP)), (bar.last - bar.first + 1) * width - 3, _px(BAR_HEIGHT))
             mark = self.mark_for(bar.entry)
             self.note_mark(paint_block(painter, rect, bar.entry, same_event(bar.entry, self.selected), font,
                                        [self.title_shown(bar.entry)], mark=mark), bar.entry)
