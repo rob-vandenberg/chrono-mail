@@ -1,14 +1,18 @@
+import gc
+
 import pytest
 
 from chrono_mail.core import AuthenticationError, ProtocolError
 from chrono_mail.protocols.dav import DavClient, DavConflict, DavError, canonical_colour, parse_multistatus, passing_failure
 from chrono_mail.protocols.tls import fingerprint
+from chrono_mail.protocols import hangup
 from tests.fakedav import FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocol_dav.py 4.4.512"
+__version__ = "test_protocol_dav.py 4.7.659"
 
 # --- Version history ----------------------------------------------------
+# v4.7.659: a client dropped without closing lets its connection go at once, without Python's clean-up
 # v4.4.512: a collection whose DAV:owner is someone else is shared (D-310)
 # v1.10.278: read: one item by the multiget first (Kerio's GET of a contact is 404); not there only on 404; a failure raises
 # v1.1.235: an empty answer means not there; a collection made is returned as listed; a yes without a collection is an error (Kerio)
@@ -355,3 +359,19 @@ def test_one_item_is_read_by_the_multiget_first_and_not_there_only_when_the_serv
         server.gets_failing = True
         with pytest.raises(ProtocolError):
             dav.read(book, book.href + "a.vcf")  # a failure is never "not there" (D-196)
+
+
+def test_a_client_dropped_without_closing_lets_its_connection_go_at_once() -> None:
+    """Its connection held a hook that held the client: both, and the open connection, stayed until Python's clean-up (tests/test_hangup.py
+    then found connections still held after other tests)."""
+    with FakeDav() as server:
+        before = len(hangup._held)  # noqa: SLF001
+        gc.disable()  # only freeing at once counts here, never the clean-up
+        try:
+            client = DavClient(server.url, "ann", "secret")
+            client.all_collections()
+            assert len(hangup._held) == before + 1  # noqa: SLF001
+            del client
+            assert len(hangup._held) == before  # noqa: SLF001
+        finally:
+            gc.enable()

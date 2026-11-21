@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_keys.py 4.7.657"
+__version__ = "test_ui_keys.py 4.7.659"
 
 # --- Version history ----------------------------------------------------
+# v4.7.659: Pyrefly-clean (the Contacts sidebar test: typed stand-in, no unchecked headings)
 # v4.7.657: Ctrl+Shift+O (Operations, 4.6.649) acts anywhere in the main window, also in the folder list, as D-366 says
 # v4.2.399: F2 on the Inbox renames nothing: a standard folder's Rename folder is greyed (D-269)
 # v2.2.313: Undo and Redo (B-18): window-wide in Mail and in the read-only text of a message, never in a text field, whose own undo they are
@@ -144,15 +145,19 @@ def test_delete_in_a_sections_sidebar_is_the_calendar_or_address_books(world: Wo
     items: list[str] = []
     collections: list[str] = []
     monkeypatch.setattr(page, "delete_selected", lambda: items.append("items"))
-    monkeypatch.setattr(page.panel, "delete_collection", lambda collection: collections.append(collection))
+    def deleted(collection: str) -> None:
+        collections.append(collection)
+
+    monkeypatch.setattr(page.panel, "delete_collection", deleted)
     wait(qtbot, lambda: page.panel.tree.topLevelItemCount() > 0)
     tree = page.panel.tree
-    entry = next((tree.topLevelItem(row).child(column) for row in range(tree.topLevelItemCount()) for column in range(tree.topLevelItem(row).childCount())), None)
-    assert entry is not None
+    headings = [heading for heading in (tree.topLevelItem(row) for row in range(tree.topLevelItemCount())) if heading is not None]
+    entry = next((heading.child(column) for heading in headings for column in range(heading.childCount())), None)
+    assert entry is not None and headings
     tree.setCurrentItem(entry)
     press(qtbot, window, tree, QKeySequence(Qt.Key.Key_Delete))
     assert items == [] and len(collections) == 1  # before: the contacts selected in the list were deleted
-    tree.setCurrentItem(tree.topLevelItem(0))  # a heading: nothing to delete
+    tree.setCurrentItem(headings[0])  # a heading: nothing to delete
     press(qtbot, window, tree, QKeySequence(Qt.Key.Key_Delete))
     assert items == [] and len(collections) == 1
     window.tree.setCurrentIndex(QModelIndex())

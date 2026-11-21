@@ -5,6 +5,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+import weakref
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -18,9 +19,11 @@ from chrono_mail.protocols.tls import NAME_NOT_FOUND, context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.7.658"
+__version__ = "dav.py 4.7.659"
 
 # --- Version history ----------------------------------------------------
+# v4.7.659: the connection's socket hook holds its client weakly: a client dropped without closing lets its connection go at once, never only at
+#           Python's clean-up (tests/test_hangup.py found connections still held after other tests)
 # v4.7.658: a collection may keep no colour on its server (keeps_colour: Google's task lists); attach_local and unlisted, which a client of
 #           Google's calendars uses for Google Tasks (B-14, D-370)
 # v4.6.650: a server name that could not be looked up (often no internet) is said in plain words (D-366)
@@ -338,7 +341,7 @@ class DavClient:
             connection: http.client.HTTPConnection = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=self._context or ssl.create_default_context())
         else:
             connection = http.client.HTTPConnection(host, port, timeout=self.timeout)
-        setattr(connection, "_create_connection", self._connect_to_known_address)  # http.client's own hook for making the socket
+        setattr(connection, "_create_connection", _known_address_hook(self))  # http.client's own hook for making the socket
         return connection
 
     def _connect_to_known_address(self, address: tuple[str, int], timeout: float | None = None, source: tuple[str, int] | None = None) -> socket.socket:
@@ -772,6 +775,21 @@ class DavClient:
     def etag_of(self, href: str) -> str:
         entries = self.propfind(href, [(DAV, "getetag")])
         return _etag(entries[0].text(f"{{{DAV}}}getetag")) if entries else ""
+
+
+def _known_address_hook(client: DavClient) -> Callable[..., socket.socket]:
+    """The connection's hook for making its socket, holding its client only weakly: the client holds the connection, so a hook that held the client
+    would keep both, and the connection open, after the client was dropped without closing (until Python's clean-up); held weakly, a dropped
+    client lets its connection go at once, as hangup.py counts on."""
+    reference = weakref.ref(client)
+
+    def create(address: tuple[str, int], timeout: float | None = None, source: tuple[str, int] | None = None) -> socket.socket:
+        found = reference()
+        if found is None:
+            raise ConnectionAbortedError("The connection's client is gone")
+        return found._connect_to_known_address(address, timeout, source)  # noqa: SLF001 - the client's own hook
+
+    return create
 
 
 def _escaped(target: str) -> str:

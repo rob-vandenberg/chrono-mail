@@ -14,9 +14,10 @@ from chrono_mail.sync.davsync import DavReport, sync_dav, unsent_changes
 from tests.fakedav import Collection, FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_dav.py 4.4.613"
+__version__ = "test_sync_dav.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: Setup.sync and the tests' own clients are closed after use (tests/test_hangup.py failed after tests/test_engine_dav_names.py)
 # v4.4.613: a contact the server lists but refuses is said once, asked for again only when it changes on the server or at a new start (D-348)
 # v4.4.512: a calendar remembers whether it is someone else's (D-310)
 # v2.4.333: the line of an item that could not be fetched counts it one way ("1 item")
@@ -49,7 +50,8 @@ class Setup:
         self.state = tmp_path / "pim" / "dav-state.json"
 
     def sync(self, left_out: frozenset[str] = frozenset()) -> DavReport:
-        return sync_dav(DavClient(self.server.url, "ann", "secret"), self.store, self.state, durable=False, left_out=left_out)
+        with DavClient(self.server.url, "ann", "secret") as client:  # closed after each sync: never a connection left held for a later test
+            return sync_dav(client, self.store, self.state, durable=False, left_out=left_out)
 
     def collection(self, kind: CollectionKind) -> str:
         return next(info.collection_id for info in self.store.collections(kind))
@@ -58,6 +60,12 @@ class Setup:
         identifier = self.collection(kind)
         found = (self.store.index.get(item) for item in self.store.index.item_ids(identifier))
         return sorted(item.title for item in found if item is not None)
+
+
+def closing_sync(client: DavClient, store: PimStore, state: Path, durable: bool = False) -> DavReport:
+    """A synchronisation with a client made for it, closed after it: never a connection left held for a later test."""
+    with client:
+        return sync_dav(client, store, state, durable=durable)
 
 
 class RacingClient(DavClient):
@@ -144,7 +152,8 @@ def test_a_change_made_here_loses_nothing_when_the_server_changed_the_item_at_th
         meeting = setup.store.index.find_uid(events, "e1")
         assert meeting is not None
         setup.store.put(events, event("e1", "Mine"), meeting.item_id)
-        report = sync_dav(RacingClient(server, server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        with RacingClient(server, server.url, "ann", "secret") as client:
+            report = sync_dav(client, setup.store, setup.state, durable=False)
         assert "Theirs" in server.collections["events"].items["e1.ics"][1]  # the server's change is not overwritten
         assert report.conflicts == 1 and "Mine" in " ".join(setup.titles(CollectionKind.EVENTS)) and len(load_conflicts(setup.store)) == 1  # nor ours lost
 
@@ -236,7 +245,7 @@ def test_a_collection_missing_from_the_list_but_still_on_the_server_is_kept(tmp_
         fill(server)
         setup = Setup(tmp_path, server)
         setup.sync()
-        report = sync_dav(ShortListClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        report = closing_sync(ShortListClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
         assert report.removed == 0 and any("still there" in line for line in report.errors)
         assert setup.store.get_collection(setup.collection(CollectionKind.TASKS)).server_value("href")
 
@@ -260,8 +269,8 @@ def test_a_collection_deleted_on_the_server_with_changes_here_is_a_sync_conflict
 def test_a_wrong_password_stops_the_synchronisation(tmp_path: Path) -> None:
     with FakeDav() as server:
         setup = Setup(tmp_path, server)
-        with pytest.raises(AuthenticationError):
-            sync_dav(DavClient(server.url, "ann", "wrong"), setup.store, setup.state, durable=False)
+        with pytest.raises(AuthenticationError), DavClient(server.url, "ann", "wrong") as client:
+            sync_dav(client, setup.store, setup.state, durable=False)
 
 
 def test_a_calendar_remembers_whose_it_is_also_when_that_changes(tmp_path: Path) -> None:
@@ -293,7 +302,8 @@ def test_a_folder_left_out_is_never_looked_at_and_one_made_later_arrives(tmp_pat
     with FakeDav() as server:
         fill(server)
         setup = Setup(tmp_path, server)
-        tasks = next(item for item in DavClient(server.url, "ann", "secret").all_collections() if item.kind == "tasks")
+        with DavClient(server.url, "ann", "secret") as client:
+            tasks = next(item for item in client.all_collections() if item.kind == "tasks")
         report = setup.sync(frozenset({folder_key(tasks)}))
         assert report.created == 2 and not setup.store.collections(CollectionKind.TASKS)
         assert not any(path.endswith("/tasks/") and method == "REPORT" for method, path in server.requests)
@@ -353,6 +363,7 @@ class ForgetfulClient(DavClient):
         super().__init__(url, "ann", "secret")
         self.shown: int = shown
 
+    @override
     def changes(self, collection: RemoteCollection, token: str) -> RemoteChanges:
         if token:
             raise DavConflict("forgotten", 403)
@@ -361,6 +372,7 @@ class ForgetfulClient(DavClient):
 
 
 class EmptyListingClient(DavClient):
+    @override
     def items(self, collection: RemoteCollection) -> list[RemoteItem]:
         return []
 
@@ -371,7 +383,7 @@ def test_a_listing_that_lost_most_items_removes_nothing_and_is_asked_again(tmp_p
         setup = Setup(tmp_path, server)
         setup.sync()
         server.add("events", "new.ics", event("new", "New one"))
-        report = sync_dav(ForgetfulClient(server.url, 10), setup.store, setup.state, durable=False)
+        report = closing_sync(ForgetfulClient(server.url, 10), setup.store, setup.state, durable=False)
         assert len(setup.titles(CollectionKind.EVENTS)) >= 50 and report.deleted_here == 0
         assert any("nothing was removed here" in error for error in report.errors)
         assert setup.sync().errors == [] and len(setup.titles(CollectionKind.EVENTS)) == 51  # asked again: all of it back in step
@@ -380,7 +392,7 @@ def test_a_listing_that_lost_most_items_removes_nothing_and_is_asked_again(tmp_p
         setup = Setup(tmp_path / "ctag", server)
         setup.sync()
         server.add("events", "new.ics", event("new", "New one"))
-        report = sync_dav(EmptyListingClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        report = closing_sync(EmptyListingClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
         assert len(setup.titles(CollectionKind.EVENTS)) == 20 and any("nothing was removed here" in error for error in report.errors)
         assert setup.sync().errors == [] and len(setup.titles(CollectionKind.EVENTS)) == 21
 
@@ -388,6 +400,7 @@ def test_a_listing_that_lost_most_items_removes_nothing_and_is_asked_again(tmp_p
 class SlowItemClient(DavClient):
     """One item never comes: its GET times out."""
 
+    @override
     def get(self, href: str) -> tuple[str, str] | None:
         if href.endswith("m7.ics"):
             raise ProtocolError("The server did not answer in time")
@@ -398,7 +411,7 @@ def test_one_item_that_times_out_costs_only_that_item(tmp_path: Path) -> None:
     with FakeDav(multiget=False) as server:
         many(server, 30)
         setup = Setup(tmp_path, server)
-        report = sync_dav(SlowItemClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        report = closing_sync(SlowItemClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
         assert len(setup.titles(CollectionKind.EVENTS)) == 29
         assert report.errors == ["Calendar: 1 item could not be fetched; asked for again at the next synchronisation"]
         assert setup.sync().errors == [] and len(setup.titles(CollectionKind.EVENTS)) == 30  # the token was kept back: it comes next time
@@ -422,9 +435,9 @@ def test_a_real_mass_delete_on_the_server_is_done_here_at_the_second_synchronisa
         setup.sync()
         for number in range(15):
             server.remove("events", f"m{number}.ics")
-        forgetful = ForgetfulClient(server.url, 1000)
-        assert sync_dav(forgetful, setup.store, setup.state, durable=False).errors != []
-        assert sync_dav(forgetful, setup.store, setup.state, durable=False).deleted_here == 15 and len(setup.titles(CollectionKind.EVENTS)) == 5
+        with ForgetfulClient(server.url, 1000) as forgetful:
+            assert sync_dav(forgetful, setup.store, setup.state, durable=False).errors != []
+            assert sync_dav(forgetful, setup.store, setup.state, durable=False).deleted_here == 15 and len(setup.titles(CollectionKind.EVENTS)) == 5
 
 
 REFUSED_TWO: str = "Contacts: 2 contacts the server will not hand out; Chrono Mail asks again when they change on the server"
@@ -526,6 +539,6 @@ def test_a_listing_the_guard_refuses_forgets_no_refused_contact(tmp_path: Path) 
         setup = Setup(tmp_path, server)
         assert setup.sync().errors == [REFUSED_TWO]
         server.add("contacts", "new.vcf", card("new", "New One"))  # the listing comes again
-        cut = sync_dav(EmptyListingClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
+        cut = closing_sync(EmptyListingClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
         assert any("nothing was removed here" in error for error in cut.errors)
         assert setup.sync().errors == []  # the refused ones are still known: not said again (D-348)
