@@ -3,7 +3,7 @@ import json
 import re
 import urllib.parse
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -55,9 +55,11 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.6.636"
+__version__ = "davsync.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: the client is given the copies here (attach_local: Google Tasks lays Google's version over them); a kind the server could not list
+#           this time is never taken for gone; a collection whose server keeps no colour keeps its colour here (B-14, D-370)
 # v4.6.636: An own item whose new name the server says is taken (412) is remembered and not asked again at every synchronisation (D-356)
 # v4.4.625: A rename made by another computer is followed: no delete, no conflict; such conflicts recorded by 4.4.624 go by themselves (D-356)
 # v4.4.624: A new item is never named with an @ on the server; an own item an older version named so is renamed once, on the server first (D-356)
@@ -308,8 +310,8 @@ def _follow(
     look = kept if kept is not None else (_first_look(local, remote, report) if local.server_value("followed") != "1" else CollectionLook(key))
     name, name_state, base_name, name_step = _settle(look.name, look.name_state, look.base_name, remote.name)
     colour, colour_state, base_colour, colour_step = _settle(look.colour, look.colour_state, look.base_colour, remote.colour)
-    if colour_step == "send" and remote.kind == "contacts":
-        colour_state, colour_step = LOOK_KEPT, ""  # an address book has no colour on the server: it is kept here
+    if colour_step == "send" and (remote.kind == "contacts" or not remote.keeps_colour):
+        colour_state, colour_step = LOOK_KEPT, ""  # an address book (or a Google task list) has no colour on the server: it is kept here
     shown = remote.name if name == GOOGLE_NAME_BACK else name  # Google's own name, waiting to come back: the server's name shows until it answers
     if name == GOOGLE_NAME_BACK and name_step == "clash":
         name_step, base_name = "send", remote.name  # the calendar's name changed meanwhile: Google's name back still holds, nothing to choose
@@ -368,6 +370,28 @@ def _look_conflict(
     report.conflicts += 1
 
 
+def local_reader(store: PimStore) -> Callable[[str, str], str | None]:
+    """The copy here of an item, by its collection's address on the server and its UID; None when there is none (D-370)."""
+
+    def read(href: str, uid: str) -> str | None:
+        wanted = canonical_href(href)
+        info = next((info for info in store.collections() if canonical_href(info.server_value("href")) == wanted), None)
+        found = store.index.find_uid(info.collection_id, uid) if info is not None and uid else None
+        if found is None or info is None:
+            return None
+        try:
+            return store.get(info.collection_id, found.item_id)
+        except StorageError:
+            return None
+
+    return read
+
+
+def remembered_place(state_path: Path) -> Path:
+    """Where a client keeps what it must remember of the server's items beside the account's synchronisation state (Google Tasks, D-370)."""
+    return state_path.with_name(state_path.stem + "-google-tasks.json")
+
+
 def sync_dav(
     client: DavClient, store: PimStore, state_path: Path, durable: bool = True, push: bool = True, left_out: frozenset[str] = frozenset(),
     looks: Mapping[str, CollectionLook] | None = None,
@@ -379,6 +403,7 @@ def sync_dav(
     push False is the first fill of a new account (D-300): only what the server has comes here; nothing is sent and nothing removed here."""
     report = DavReport()
     state = DavState(state_path, durable)
+    client.attach_local(local_reader(store), remembered_place(state_path))
     if push:
         _send_creates(client, store, report)  # made on the server first, so the listing below has them and their items go in this round
     remotes = client.all_collections()
@@ -418,6 +443,8 @@ def sync_dav(
                 store.delete_collection(info.collection_id)
                 state.collections.pop(info.collection_id, None)
             continue
+        if info.kind.value in client.unlisted:
+            continue  # the server could not list this kind this time (Google Tasks without its permission): nothing is taken for gone
         if href and (href, info.server_value("component")) not in wanted_keys:
             _gone_from_list(client, store, info, state, looks or {}, report)
     state.save()

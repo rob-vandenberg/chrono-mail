@@ -32,12 +32,13 @@ from chrono_mail.sync.davconflicts import (
     record,
     unfinished,
 )
-from chrono_mail.sync.davsync import CollectionState, DavState, ItemLink, address_for, digest_of, title_of, weigh
+from chrono_mail.sync.davsync import CollectionState, DavState, ItemLink, address_for, digest_of, local_reader, remembered_place, title_of, weigh
 
 # --- Version ------------------------------------------------------------
-__version__ = "davitems.py 4.4.555"
+__version__ = "davitems.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: the client is given the copies here, as the synchronisation gives them (Google Tasks, D-370)
 # v4.4.555: organizer_later: a waiting copy goes to the server without its organizer first, also a later write unless the server is to mail it; a delete drops that, a move takes it along (D-310)
 # v4.4.515: delete(before): the corrected copy still waiting, the delete waits behind it; hold: a copy kept here against what the server holds, with a sync conflict (D-310)
 # v4.3.498: a contact's change reads the server's version first: a server that ignores If-Match (Kerio) never has a change there written
@@ -109,6 +110,7 @@ class ItemGateway:
         self.client: DavClient = client
         self.store: PimStore = store
         self.state: DavState = DavState(state_path, durable)
+        client.attach_local(local_reader(store), remembered_place(state_path))
 
     def _linked(self, info: CollectionInfo, item: str, href: str, etag: str, text: str) -> None:
         self.state.get(info.collection_id).links[href] = ItemLink(item, etag or self.client.etag_of(href), digest_of(text))

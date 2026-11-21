@@ -1,6 +1,7 @@
 import json
 import tomllib
 import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -14,9 +15,10 @@ from chrono_mail.protocols.google import CALDAV_START, CARDDAV_START, GoogleClie
 from tests.live.account import SETTINGS_DIRECTORY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_gmail.py 4.4.608"
+__version__ = "test_live_gmail.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: Google Tasks: a task list of the test's own, a task made, changed, read back over the copy here, deleted (B-14, D-370)
 # v4.4.608: the person's name on Google read with a renewed access code (the profile permission, D-346)
 # v4.4.599: the labels of a Google calendar read with their names, one given to an event and taken off again, CalDAV carrying neither (D-338)
 # v4.4.598: an event made through CalDAV gets a colour through the Calendar API, a changed date of a series too, and CalDAV still carries none (D-337)
@@ -246,3 +248,58 @@ def test_the_person_s_name_on_google_is_read_with_a_renewed_access_code() -> Non
         pytest.skip("the Google client file or the test account's Google sign-in is missing")
     access, _ = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
     assert profile_name(access) == "Chrono Mail"  # the test account's name on Google
+
+
+TASK = """BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//Chrono Mail//Live test//EN\r
+BEGIN:VTODO\r
+UID:{uid}\r
+DTSTAMP:20301101T090000Z\r
+SUMMARY:{summary}\r
+DESCRIPTION:Made by the live test\r
+DUE:20301120T170000\r
+PRIORITY:1\r
+END:VTODO\r
+END:VCALENDAR\r
+"""
+
+
+def test_google_tasks_takes_a_task_in_a_list_of_its_own_and_lets_it_go_again(tmp_path: Path) -> None:
+    """B-14, D-370: a task list of the test's own on the test account, a task made, changed, read back laid over the copy here, deleted;
+    the list deleted again. Nothing else of the account is touched."""
+    from chrono_mail.protocols import google_tasks
+    from chrono_mail.protocols.dav import DavError, RemoteCollection
+    from chrono_mail.protocols.google_tasks import GoogleDavClient, list_place
+
+    user, _ = gmail_login()
+    codes = google_client_codes()
+    if codes is None or not GOOGLE_TOKEN_FILE.exists():
+        pytest.skip("the Google client file or the test account's Google sign-in is missing")
+    access, _ = refresh_access(GoogleClient(*codes), json.loads(GOOGLE_TOKEN_FILE.read_text())["refresh_token"])
+    try:
+        made = google_tasks.call(access, "POST", "/users/@me/lists", body={"title": "Chrono Mail live test"})
+    except DavError as error:
+        if error.status == 403:
+            pytest.skip(f"Google Tasks cannot be reached yet: {error}")
+        raise
+    list_id = str(made["id"])
+    try:
+        calendars_url = CALDAV_START.format(address=urllib.parse.quote(user))
+        local: dict[str, str] = {}
+        with GoogleDavClient(calendars_url, frozenset(), access, frozenset({"events", "tasks"})) as client:
+            client.attach_local(lambda href, uid: local.get(uid), tmp_path / "google-tasks.json")
+            assert any(collection.href == list_place(list_id) for collection in client.all_collections())
+            href = f"{list_place(list_id)}live-1.ics"
+            text = TASK.format(uid="live-1", summary="Chrono Mail live task")
+            etag = client.put(href, text, "tasks", create=True)
+            local["live-1"] = text
+            etag = client.put(href, text.replace("live task", "live task, changed"), "tasks", etag=etag)
+            local["live-1"] = text.replace("live task", "live task, changed")
+            back = client.read(RemoteCollection(list_place(list_id), "", "tasks", "VTODO", "", False, "", "google"), href)
+            assert back is not None and back[0] == etag and "live task, changed" in back[1]
+            assert "PRIORITY:1" in back[1] and "DUE:20301120T170000" in back[1]  # kept here, laid under Google's fields
+            client.delete(href, etag)
+            assert client.get(href) is None
+    finally:
+        google_tasks.call(access, "DELETE", f"/users/@me/lists/{urllib.parse.quote(list_id, safe='')}")

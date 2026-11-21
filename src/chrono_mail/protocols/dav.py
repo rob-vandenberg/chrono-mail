@@ -6,7 +6,8 @@ import threading
 import time
 import urllib.parse
 import xml.etree.ElementTree as ElementTree
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from types import TracebackType
 from dataclasses import dataclass, field
 
@@ -17,9 +18,11 @@ from chrono_mail.protocols.tls import NAME_NOT_FOUND, context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.6.650"
+__version__ = "dav.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: a collection may keep no colour on its server (keeps_colour: Google's task lists); attach_local and unlisted, which a client of
+#           Google's calendars uses for Google Tasks (B-14, D-370)
 # v4.6.650: a server name that could not be looked up (often no internet) is said in plain words (D-366)
 # v4.4.624: move: rename an item on the server, never over another (D-356)
 # v4.4.613: fetch tells the items the server refuses for good (refused) apart from those that failed only for now (D-348)
@@ -139,6 +142,7 @@ class RemoteCollection:
     sync_token: str
     public: bool = False  # one of the public folders next to the user's own (D-182)
     shared: bool = False  # someone else's: its DAV:owner is not this user (RFC 3744), also when the user may write in it
+    keeps_colour: bool = True  # the server keeps a colour for it (Google's task lists keep none: their colour stays here, D-370)
 
 
 def canonical_href(href: str) -> str:
@@ -290,6 +294,17 @@ class DavClient:
     def kinds(self) -> frozenset[str]:
         """The kinds of folder this client keeps (events, tasks, contacts); empty: every kind."""
         return self._kinds
+
+    @property
+    def unlisted(self) -> frozenset[str]:
+        """The kinds of folder the server could not list this time: those here are not taken for gone (Google Tasks while its permission or
+        API is missing, D-370). A plain server lists every kind or fails as a whole."""
+        return frozenset()
+
+    def attach_local(self, local: Callable[[str, str], str | None], place: Path | None) -> None:
+        """How to read the copy here of an item (collection address, UID: its text, or None), and where the client may keep what it must
+        remember of the server's items. A plain server needs neither (Google Tasks does, D-370)."""
+        return
 
     def close(self) -> None:
         """Close the connection kept open (the next request opens a new one)."""

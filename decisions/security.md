@@ -31,3 +31,4 @@ See also: [[storage]]
 - [[D-335]] Gmail: app password for mail, Google sign-in for calendar and contacts
 - [[D-364]] Each Google account keeps the client codes of the person's own Google project
 - [[D-365]] A stored password shows as 16 dots; the eye only while editing
+- [[D-370]] Google Tasks in the Tasks section

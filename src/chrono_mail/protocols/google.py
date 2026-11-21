@@ -17,9 +17,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "google.py 4.6.650"
+__version__ = "google.py 4.7.658"
 
 # --- Version history ----------------------------------------------------
+# v4.7.658: the sign-in also asks for the tasks permission, for Google Tasks (B-14, D-370)
 # v4.6.650: Google whose name could not be looked up (often no internet) says "Google could not be found (no internet connection?)" (D-366)
 # v4.6.646: Google refusing the client ID or client secret says so, and where they are changed (B-34, D-364)
 # v4.4.608: the profile permission: the person's name on Google, from the sign-in and read again with profile_name (D-346)
@@ -30,7 +31,7 @@ __version__ = "google.py 4.6.650"
 
 AUTHORIZE_URL: str = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL: str = "https://oauth2.googleapis.com/token"
-SCOPES: str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/carddav"  # never the mail scope (D-335)
+SCOPES: str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/carddav https://www.googleapis.com/auth/tasks"  # never the mail scope (D-335); tasks for Google Tasks (D-370)
 CALDAV_START: str = "https://apidata.googleusercontent.com/caldav/v2/{address}/user"  # Google's calendars, per Google address
 CARDDAV_START: str = "https://www.googleapis.com/.well-known/carddav"  # Google's contacts
 MAXIMUM_ANSWER_BYTES: int = 64 * 1024
