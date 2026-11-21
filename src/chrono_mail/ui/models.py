@@ -12,9 +12,11 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 4.4.596"
+__version__ = "models.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: a folder the person made can be picked up to move it (B-38, D-372); standard folders, parents that only hold folders
+#           and every other entry cannot
 # v4.4.596: a parent that exists only as part of a path (Gmail's [Gmail]) cannot be selected: it holds folders, never mail
 # v4.4.590: Favorites starts with All Messages, then All Inboxes; All Messages written with capitals as All Inboxes (the owner)
 # v4.4.586: Favorites > All messages after All Inboxes: every message there is (D-334)
@@ -259,7 +261,11 @@ class FolderTreeModel(QAbstractItemModel):
         if node is None:
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
-        return flags | Qt.ItemFlag.ItemIsSelectable if node.selectable else flags
+        if not node.selectable:
+            return flags
+        if node.values.get(KIND_ROLE) == "folder" and node.values.get(FOLDER_ROLE_ROLE) == "other":  # a folder the person made: it can be
+            flags |= Qt.ItemFlag.ItemIsDragEnabled  # moved (B-38); a standard folder is known by its role and never moves (OR-26)
+        return flags | Qt.ItemFlag.ItemIsSelectable
 
     def item(self, row: int) -> FolderNode | None:
         """The entry at this row of the top level (as QStandardItemModel.item)."""

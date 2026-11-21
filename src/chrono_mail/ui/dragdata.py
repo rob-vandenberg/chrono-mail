@@ -4,9 +4,10 @@ from PySide6.QtCore import QMimeData
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "dragdata.py 3.6.367"
+__version__ = "dragdata.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: drag data for a folder of the folder list (its account and path), never taken for messages (B-38, D-372)
 # v3.6.367: a drag of messages of several accounts names each message's account (sources); read_messages_accounts, read_messages_sources (D-272)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; a drag says when the rest of the
 #           selection follows (messages whose place the list did not know yet, RV-206)
@@ -17,6 +18,7 @@ __version__ = "dragdata.py 3.6.367"
 MESSAGES_MIME_TYPE: str = "application/x-chrono-mail-messages"
 MESSAGES_SUMMARY_TYPE: str = "application/x-chrono-mail-messages-summary"  # the account and the folders they come from: read at every move
 CONTACTS_MIME_TYPE: str = "application/x-chrono-mail-contacts"
+FOLDER_MIME_TYPE: str = "application/x-chrono-mail-folder"
 
 
 def messages_mime_data(
@@ -131,3 +133,22 @@ def read_contacts_mime_data(data: QMimeData) -> tuple[str, list[str]] | None:
     except (ValueError, KeyError, TypeError):
         return None
     return (collection, items) if isinstance(collection, str) and collection and items else None
+
+
+def folder_mime_data(account_id: str, folder: str) -> QMimeData:
+    """The drag data for a folder of the folder list: its account and its path. Nothing of its mail is in it (B-38)."""
+    data = QMimeData()
+    data.setData(FOLDER_MIME_TYPE, json.dumps({"account": account_id, "folder": folder}).encode("utf-8"))
+    return data
+
+
+def read_folder_mime_data(data: QMimeData) -> tuple[str, str] | None:
+    """The account and the path of a dragged folder, or None when it is not (valid) folder drag data."""
+    if not data.hasFormat(FOLDER_MIME_TYPE):
+        return None
+    try:
+        decoded = load_json(bytes(data.data(FOLDER_MIME_TYPE).data()).decode("utf-8"))
+        account, folder = decoded["account"], decoded["folder"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return (account, folder) if isinstance(account, str) and isinstance(folder, str) and account and folder else None

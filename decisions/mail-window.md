@@ -95,6 +95,7 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-240]] Undo and Redo on mail
 - [[D-368]] Undo and Redo in Calendar, Tasks and Contacts
 - [[D-369]] Undo and Redo of folders
+- [[D-372]] Dragging a folder
 - [[D-138]] Operations window
 - [[D-139]] When the Operations window opens
 - [[D-166]] Settings page order

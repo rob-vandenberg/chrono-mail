@@ -5,7 +5,7 @@ from typing import Literal
 
 from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, RebuildAborted, StorageError
 from chrono_mail.config import AccountSettings
-from chrono_mail.engine.changes import RENAMING_FOLDER, Change, RebuildStep
+from chrono_mail.engine.changes import MOVING_FOLDER, RENAMING_FOLDER, Change, RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters, account_label
 from chrono_mail.engine.folderundo import rules_on, switched_off
 from chrono_mail.engine.undohistory import UndoStep
@@ -19,9 +19,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.7.657"
+__version__ = "commands_folders.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: folder.rename to another parent is a move: "Moving folder…" while it runs, "Move folder" for Undo (B-38, D-372)
 # v4.7.657: folder.rename and folder.delete given with the number of the person's action (undo) can be undone and redone (B-18 step 2, D-369)
 # v4.4.615: a deleted folder's files are erased 30 days after the delete (the owner, D-072)
 # v4.4.539: the steps after an upgrade are counted from how many there were: the removal of the old rows is one of them (D-314)
@@ -103,11 +104,12 @@ class FolderRenameParameters:
 
 def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderResult:
     with open_mailbox(engine, parameters.account) as mailbox:
-        engine.report(Change("working", mailbox.store.account_id, parameters.folder, notes=(RENAMING_FOLDER,)))
         old, new = mailbox.folder(parameters.folder), parse_folder(parameters.new_name)
+        moved = old[:-1] != new[:-1]  # another parent: the folder moves (B-38), its name may stay
+        engine.report(Change("working", mailbox.store.account_id, parameters.folder, notes=(MOVING_FOLDER if moved else RENAMING_FOLDER,)))
         mailbox.rename_folder(old, new)
         if old != new:
-            engine.undo.record(parameters.undo, "Rename folder", [UndoStep(parameters.account, "", old, new, kind="folder_rename")], old[-1])
+            engine.undo.record(parameters.undo, "Move folder" if moved else "Rename folder", [UndoStep(parameters.account, "", old, new, kind="folder_rename")], old[-1])
         return FolderResult("/".join(new), tuple(mailbox.rule_notes))
 
 

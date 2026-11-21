@@ -41,9 +41,10 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.7.657"
+__version__ = "folderpane.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: a folder dropped on another folder of its account or on its account moves there, server first; Undo puts it back (B-38, D-372)
 # v4.7.657: Rename folder and Delete folder are actions of the person that Undo takes back; a folder an Undo or Redo brings back is
 #           selected (B-18 step 2, D-369)
 # v4.4.617: Show on startup changed to All Inboxes is saved through ui/prefs.py (D-211)
@@ -144,6 +145,7 @@ class FolderPane(QObject):
         self.tree.expanded.connect(self._opened)
         self.tree.collapsed.connect(self._closed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
+        self.tree.folder_dropped.connect(self.move_folder)
         self._delete_key: DeleteKey = DeleteKey(self.tree, self._delete_key_pressed)  # Delete in the folder list is the folder's, never the messages'
         tags.arrived.connect(self._tags_arrived)
         messages.unread_elsewhere = self.unread_in_another_folder
@@ -846,6 +848,16 @@ class FolderPane(QObject):
 
         done, failed = self._undoing.track(renamed, lambda error: self._status.report("Could not rename the folder", error))
         self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path, undo=self._undoing.new_action()), done, failed, owner=self)
+
+    def move_folder(self, account: str, folder: str, path: str) -> None:
+        """A folder dropped on another folder of its account or on its account (B-38): it moves there with everything below it, on the
+        server first (offline: here now, there at the next check, D-193); the list follows the engine's fact, Undo moves it back (D-369)."""
+
+        def moved(result: FolderResult) -> None:
+            self._status.show(with_rules("Folder moved", result.rules))
+
+        done, failed = self._undoing.track(moved, lambda error: self._status.report("Could not move the folder", error))
+        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(account, folder, path, undo=self._undoing.new_action()), done, failed, owner=self)
 
     def _folder_name_allowed(self, name: str) -> bool:
         """A folder's name is one name: "/" nests folders, so it would quietly make folders the person did not ask for."""

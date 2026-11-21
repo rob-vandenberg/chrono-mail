@@ -1,19 +1,27 @@
 from typing import override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFocusEvent, QFont, QFontMetrics, QIcon, QPainter, QPalette
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QCursor, QDrag, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFocusEvent, QFont, QFontMetrics, QIcon, QMouseEvent, QPainter, QPalette,
+)
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QWidget
 
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
-from chrono_mail.ui.dragdata import read_messages_accounts, read_messages_mime_data, read_messages_rest, read_messages_sources, read_messages_summary
+from chrono_mail.ui.dragdata import (
+    folder_mime_data, read_folder_mime_data, read_messages_accounts, read_messages_mime_data, read_messages_rest, read_messages_sources, read_messages_summary,
+)
 from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 4.4.612"
+__version__ = "foldertree.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: a folder the person made can be dragged onto another folder of its account or onto its account, and moves there (B-38,
+#           D-372): the folder that would take it gets the blue bar; never into itself, where it is already, where a folder of that name is,
+#           nor into Chrono Mail's own folders; a closed folder held under it opens after a moment
 # v4.4.612: the indent left of a folder has the dark list background (base), as the rest of the tree (the owner)
 # v4.4.596: an arrow or page key moves past a folder that only holds folders (Gmail's [Gmail]), opening it on the way down; nothing is
 #           dropped on it (D-335)
@@ -34,6 +42,8 @@ __version__ = "foldertree.py 4.4.612"
 
 COUNT_MARGIN: int = 8  # pixels between the number of unread messages and the right edge
 COUNT_GAP: int = 6  # pixels kept free between the name and the number
+OPEN_AFTER: int = 700  # milliseconds a dragged folder is held over a closed folder before that opens
+OWN_ROLES: frozenset[str] = frozenset(role.value for role in OWN_FOLDERS)  # Outbox, Scheduled, Snoozed, Recovered: no folder goes into them
 
 
 class FolderItemDelegate(QStyledItemDelegate):
@@ -110,7 +120,8 @@ def holds_only_folders(index: QModelIndex | QPersistentModelIndex) -> bool:
 
 
 class FolderTree(QTreeView):
-    """The folder tree. Messages dragged from the list can be dropped on a folder of their own account or of another (D-272)."""
+    """The folder tree. Messages dragged from the list can be dropped on a folder of their own account or of another (D-272); a folder the
+    person made can be dragged onto another folder of its account or onto its account (B-38)."""
 
     @override
     def moveCursor(self, cursorAction: QAbstractItemView.CursorAction, modifiers: Qt.KeyboardModifier) -> QModelIndex:  # noqa: N802, N803 - Qt's names
@@ -134,16 +145,19 @@ class FolderTree(QTreeView):
 
     messages_dropped = Signal(str, str, list, int, str)  # account id, target folder path, [(folder, message id)], the list's places_epoch when the
     # rest of the selection follows (-1: nothing follows)
+    folder_dropped = Signal(str, str, str)  # account id, the folder dragged, its new path (B-38)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDragEnabled(True)  # only a folder the person made can be picked up (FolderTreeModel.flags)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDropIndicatorShown(True)
         self.folder_delegate = FolderItemDelegate(self)
         self.setItemDelegate(self.folder_delegate)
         self.setProperty("focused", False)
-        self.drop_row: QPersistentModelIndex | None = None  # the folder under the pointer that can take the dragged messages
+        self.drop_row: QPersistentModelIndex | None = None  # the folder under the pointer that can take the dragged messages or folder
+        self._pressed: QPersistentModelIndex | None = None  # the entry the left button went down on: the one a drag picks up
 
     @override
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -208,14 +222,76 @@ class FolderTree(QTreeView):
         return account, folder
 
     @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        index = self.indexAt(event.position().toPoint()) if event.button() == Qt.MouseButton.LeftButton else QModelIndex()
+        self._pressed = QPersistentModelIndex(index) if index.isValid() else None
+        super().mousePressEvent(event)
+
+    @override
+    def startDrag(self, supportedActions: Qt.DropAction) -> None:  # noqa: N802, N803 - Qt's names
+        """The folder the button went down on is picked up, when it can move (FolderTreeModel.flags); its row goes along under the pointer."""
+        index = self._pressed
+        if index is None or not index.isValid() or not (index.flags() & Qt.ItemFlag.ItemIsDragEnabled):
+            return
+        drag = QDrag(self)
+        drag.setMimeData(folder_mime_data(str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE))))
+        row = self.visualRect(self.model().index(index.row(), 0, index.parent()))
+        if row.isValid():
+            drag.setPixmap(self.viewport().grab(row))
+            pointer = self.viewport().mapFromGlobal(QCursor.pos())
+            drag.setHotSpot(pointer - row.topLeft() if row.contains(pointer) else QPoint(0, 0))
+        drag.exec(Qt.DropAction.MoveAction)
+        self._set_drop_row(None)
+
+    def _folder_target(self, event: QDragMoveEvent | QDropEvent) -> tuple[str, str, str] | None:
+        """(account, the folder dragged, its new path) when the folder under the pointer, or the account's own row, may take the dragged
+        folder: only in its own account, never into itself or a folder inside it, where it is already, where a folder of its name is
+        (the engine would refuse it), into a folder that only holds folders (Gmail's [Gmail]) or into Chrono Mail's own folders."""
+        dragged = read_folder_mime_data(event.mimeData())
+        index = self.indexAt(event.position().toPoint())
+        if dragged is None or not index.isValid():
+            return None
+        account, folder = dragged
+        if str(index.data(ACCOUNT_ROLE) or "") != account or not self._movable(account, folder):
+            return None  # only a folder of this list that can move, into its own account
+        kind = str(index.data(KIND_ROLE))
+        if kind == "account":
+            parent = ""  # its account: to the top
+        elif kind == "folder" and not holds_only_folders(index) and str(index.data(FOLDER_ROLE_ROLE)) not in OWN_ROLES:
+            parent = str(index.data(FOLDER_PATH_ROLE))
+        else:
+            return None  # Favorites, groups, Unread, Flagged, a pinned folder: no place for a folder
+        if parent == folder or parent.startswith(folder + "/") or parent == folder.rpartition("/")[0]:
+            return None
+        name = folder.rpartition("/")[2]
+        new = f"{parent}/{name}" if parent else name
+        model = index.model()
+        if any(str(model.index(row, 0, index).data(FOLDER_PATH_ROLE) or "") == new for row in range(model.rowCount(index))):
+            return None
+        return account, folder, new
+
+    def _movable(self, account: str, folder: str) -> bool:
+        """Whether the dragged folder is a folder of this list that can move (another program's drag data, or a folder gone meanwhile: no)."""
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            return False
+        found = model.match(model.index(0, 0), FOLDER_PATH_ROLE, folder, -1, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive)
+        return any(str(index.data(ACCOUNT_ROLE)) == account and str(index.data(KIND_ROLE)) == "folder" and bool(index.flags() & Qt.ItemFlag.ItemIsDragEnabled) for index in found)
+
+    @override
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if read_messages_summary(event.mimeData()) is not None:
+        folder = read_folder_mime_data(event.mimeData()) is not None
+        if folder or read_messages_summary(event.mimeData()) is not None:
+            self.setAutoExpandDelay(OPEN_AFTER if folder else -1)  # a dragged folder opens a closed folder held under it; messages as before
             event.acceptProposedAction()
         else:
             event.ignore()
 
     @override
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if read_folder_mime_data(event.mimeData()) is not None:
+            self._drag_folder(event)
+            return
         if self._target(event) is not None:
             self._set_drop_row(self.indexAt(event.position().toPoint()))
             event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
@@ -223,6 +299,17 @@ class FolderTree(QTreeView):
         else:
             self._set_drop_row(None)
             event.ignore()
+
+    def _drag_folder(self, event: QDragMoveEvent) -> None:
+        if self._folder_target(event) is not None:
+            self._set_drop_row(self.indexAt(event.position().toPoint()))
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            self._set_drop_row(None)
+            event.ignore()
+        super().dragMoveEvent(event)  # Qt opens a closed folder held under the pointer (autoExpandDelay) and scrolls near the edges
+        event.setAccepted(self.drop_row is not None)  # Qt's own answer is about its model, never about the folder
 
     @override
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
@@ -237,6 +324,16 @@ class FolderTree(QTreeView):
     @override
     def dropEvent(self, event: QDropEvent) -> None:
         self._set_drop_row(None)
+        if read_folder_mime_data(event.mimeData()) is not None:
+            moving = self._folder_target(event)
+            if moving is None:
+                event.ignore()
+                return
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+            self.setExpanded(self.indexAt(event.position().toPoint()), True)  # the folder it went into opens, so it is seen there
+            self.folder_dropped.emit(*moving)
+            return
         target = self._target(event)
         dragged = read_messages_mime_data(event.mimeData())
         sources = read_messages_sources(event.mimeData())

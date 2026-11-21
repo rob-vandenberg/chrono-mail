@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.4.538"
+__version__ = "changes.py 4.8.661"
 
 # --- Version history ----------------------------------------------------
+# v4.8.661: MOVING_FOLDER: working while a folder moves into another folder or to the top (B-38, D-372)
 # v4.4.538: working: a step of a long job (renaming a folder, updating the rules that name it) that the status line shows
 # v4.4.519: INVITE_SENT
 # v4.4.517: The names of the answer marks
@@ -111,6 +112,7 @@ ChangeKind = Literal[
 ]
 
 RENAMING_FOLDER: str = "Renaming folder…"  # working: a folder is being renamed
+MOVING_FOLDER: str = "Moving folder…"  # working: a folder is being moved into another folder or to the top (B-38)
 RENAMING_RULES: str = "Renaming folder, updating mail rules…"  # working: the rules that name the renamed folder are being updated
 
 

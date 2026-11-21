@@ -32,7 +32,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12a | Drafts: save, autosave, resume, attachments kept, Outbox messages editable (0.0.16). | done |
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
 | 1.12c | Junk filter: the server's spam verdict and a learning filter on new mail, before the rules (2.1.308, D-238). The $Junk/$NotJunk marks on the server: B-19. | done |
-| 1.12d | Undo and Redo of the actions on mail: Ctrl+Z, Ctrl+Y (B-18 step 1, 2.2.313, D-240); step 2, Rename folder and Delete folder (4.7.657, D-369); step 3, Calendar, Tasks and Contacts (4.7.656, D-368). Moving a folder is B-38. | done |
+| 1.12d | Undo and Redo of the actions on mail: Ctrl+Z, Ctrl+Y (B-18 step 1, 2.2.313, D-240); step 2, Rename folder and Delete folder (4.7.657, D-369); step 3, Calendar, Tasks and Contacts (4.7.656, D-368). Moving a folder: B-38, 4.8.661, D-372. | done |
 | 1.12e | Delayed sending (a countdown with Send now and Cancel, or until the next refresh), the scheduled refresh sends and receives, the question on Quit with mail in the Outbox (B-21, B-20, 2.2.314, D-241); one Automatically row with Send only (2.3.315). | done |
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
@@ -299,6 +299,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | done (0.0.64) |
 | 3.10 | Settings > Calendar and the n weeks view: week numbers, short events as 30 minutes, past events less bright, Start week on, the weeks of the custom view, the days of Upcoming (D-352). | done (4.4.616) |
 | 3.11 | Dragging an appointment to another time or day, or by its end to another length, inside its view (B-36, D-371). | done (4.8.660) |
+| 3.12 | Dragging a folder onto another folder of its account or onto its account in Mail's folder list (B-38, D-372). | done (4.8.661) |
 | 3.9 | Tags for mail (D-128, five steps: engine, window, rules, importer, IMAP keywords); reminders and notifications. | tags done (0.5.134 to 0.5.138: engine, window, rules, importer, IMAP keywords); reminders and notifications open |
 
 ## Milestone 4: CalDAV and CardDAV (Kerio Connect test server, D-078)
