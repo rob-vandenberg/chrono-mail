@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QListWidget, QListWidgetI
 from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
+from chrono_mail.ui.calendardrag import EDGE_PIXELS, CalendarDrag, Grip, Place, cursor_for, midnight, paint_ghost
 from chrono_mail.ui import scale
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.syncmarks import CONFLICT, MARK_GAP, MARK_SIZE, MARK_TIPS, WAITING, mark_icon, paint_mark
@@ -21,9 +22,11 @@ from chrono_mail.ui.tagging import tag_path
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 4.6.654"
+__version__ = "calendarwidgets.py 4.8.660"
 
 # --- Version history ----------------------------------------------------
+# v4.8.660: an appointment is dragged to another time or day, or by its end, in the hours, the all-day row, Month and n weeks; where it would
+#           land is drawn while dragging; the clock while its new time waits for the server (B-36, D-371)
 # v4.6.654: the row of day names (weekday, day number, today's circle) at the Calendar's size; gutter: the column left of the days is never
 #           narrower than "Week 53", "All day" or "00:00" in the view's font (D-367)
 # v4.6.653: Month and n weeks: the weekday row, the day numbers, Week n, today's circle and the room before a day's events at the Calendar's
@@ -352,7 +355,10 @@ class EntryHits(QWidget):
         self._title_click.timeout.connect(self._title_click_ended)
         self._clicked_again: Entry | None = None
         self._ended_by_click: bool = False  # the press being handled just ended a title edit (its focus left first)
-        self.setMouseTracking(False)
+        self.drag: CalendarDrag | None = None  # the page's drag of an appointment (B-36)
+        self.edges: list[tuple[QRectF, Entry]] = []  # where the ends of the appointments were drawn that can be dragged to change their length
+        self.moving: dict[tuple[str, str], Entry] = {}  # appointments whose new time waits for the server: the clock (D-325); the page shares one
+        self.setMouseTracking(True)  # the cursor shows where the end of an appointment can be dragged
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # a click on an event gives the view the keyboard, so Delete acts on the event (D-217, RV-22)
 
     def note_title(self, rect: QRectF, entry: Entry, font: QFont, mark: str, dot: bool, colour: QColor, background: QColor, prefix: str = "") -> None:
@@ -462,7 +468,8 @@ class EntryHits(QWidget):
         """The mark before the title: the clock while its title waits for the server's answer (D-325), else its sync mark (D-194)."""
         own = self.mark_of(item_of(entry))
         pending = self.pending.get(event_key(entry))
-        return WAITING if own != CONFLICT and pending is not None and pending.waiting else own
+        waiting = pending is not None and pending.waiting or event_key(entry) in self.moving
+        return WAITING if own != CONFLICT and waiting else own
 
     def _title_click_ended(self) -> None:
         entry, self._clicked_again = self._clicked_again, None
@@ -471,6 +478,10 @@ class EntryHits(QWidget):
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape and self.drag is not None and self.drag.dragging:  # the drag ends, nothing changes
+            self.drag.cancel()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_F2 and event.modifiers() == Qt.KeyboardModifier.NoModifier and self.selected is not None:
             self.title_edit_wanted.emit(self.selected)
             event.accept()
@@ -545,7 +556,61 @@ class EntryHits(QWidget):
             self.entry_clicked.emit(entry)
         else:
             self.nothing_clicked.emit()
+        if self.drag is not None and event.button() == Qt.MouseButton.LeftButton:
+            self.drag.pressed(self, entry, event.position(), self.grip_at(event.position(), entry))
         super().mousePressEvent(event)
+
+    def grip_at(self, position: QPointF, entry: Entry | None) -> Grip:
+        """Whether a press here takes the end of this appointment (its bottom edge in the hours, the right end of an all-day bar) or all of it."""
+        if entry is not None and any(same_event(owner, entry) and area.contains(position) for area, owner in self.edges):
+            return Grip.END
+        return Grip.MOVE
+
+    def note_edge(self, rect: QRectF, entry: Entry, sideways: bool) -> None:
+        """The end of a drawn appointment that can be dragged: the right end of a bar (sideways), else the bottom edge of a block."""
+        if sideways:
+            self.edges.append((QRectF(rect.right() - EDGE_PIXELS, rect.top(), EDGE_PIXELS + 2, rect.height()), entry))
+        else:
+            self.edges.append((QRectF(rect.left(), rect.bottom() - EDGE_PIXELS, rect.width(), EDGE_PIXELS + 2), entry))
+
+    def place_at(self, position: QPointF) -> Place | None:
+        """The day under this point (the hours also give the moment there), for a drag (B-36)."""
+        slot = self.slot_at(position)
+        return Place(slot[0], None) if slot is not None else None
+
+    @override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        drag = self.drag
+        if drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if drag.moved(event.globalPosition().toPoint()):
+                self._title_click.stop()  # a drag is no click on the selected appointment: its title is not edited (D-324)
+                self._clicked_again = None
+                event.accept()
+                return
+        elif drag is not None and not event.buttons():
+            entry = self.entry_at(event.position())
+            cursor = cursor_for(self.grip_at(event.position(), entry), isinstance(self, GridCanvas)) if entry is not None and drag.allowed(entry) else None
+            if cursor is not None:
+                self.setCursor(cursor)
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self.drag is not None and event.button() == Qt.MouseButton.LeftButton and self.drag.released():
+            self._title_click.stop()
+            self._clicked_again = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def ghost(self) -> Entry | None:
+        """Where the appointment being dragged would land, when it is dragged in this view."""
+        drag = self.drag
+        if drag is None or drag.preview is None:
+            return None
+        return drag.preview.ghost()
 
     @override
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -626,6 +691,16 @@ class GridCanvas(EntryHits):
         return self.days[index], max(0, min(24 * 60 - SNAP_MINUTES, minute))
 
     @override
+    def place_at(self, position: QPointF) -> Place | None:
+        """The day and the exact moment under this point (a drag lands on the nearest quarter of an hour, B-36)."""
+        if not self.days or position.x() < gutter(self):
+            return None
+        index = min(len(self.days) - 1, int((position.x() - gutter(self)) // self.column_width()))
+        minutes = max(0.0, min(24 * 60 - 1.0, position.y() / self.hour_height * 60))
+        day = self.days[index]
+        return Place(day, midnight(day, self.zone) + timedelta(minutes=minutes))
+
+    @override
     def wheelEvent(self, event: QWheelEvent) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:  # Ctrl and the wheel: more or fewer hours on the screen
             self.set_hour_height(self.base_hour_height + (6 if event.angleDelta().y() > 0 else -6))
@@ -680,6 +755,7 @@ class GridCanvas(EntryHits):
         self.hits = []
         self.mark_hits = []
         self.titles = []
+        self.edges = []
         for index, day in enumerate(self.days):
             for segment in self.segments.get(day, []):
                 column_width = (width - 3) / segment.columns
@@ -699,7 +775,18 @@ class GridCanvas(EntryHits):
                 fill, text_colour = block_colours(entry, not entry.row.busy)
                 self.note_title(rect, entry, font, mark, False, text_colour, fill)
                 self.hits.append((rect, entry))
+                if not segment.continues_after:
+                    self.note_edge(rect, entry, sideways=False)
         self.follow_title()
+        ghost = self.ghost()
+        if ghost is not None and not ghost.all_day and self.zone is not None:
+            def draw() -> None:
+                for index, day in enumerate(self.days):
+                    for segment in layout.day_segments([ghost], day, self.zone, self.minimum_minutes) if self.zone is not None else []:
+                        top = segment.start / 60 * self.hour_height
+                        rect = QRectF(gutter(self) + index * width + 1, top, width - 4, max(14.0, (segment.end - segment.start) / 60 * self.hour_height - 1))
+                        paint_block(painter, rect, ghost, True, font, [ghost.summary, layout.time_text(ghost)])
+            paint_ghost(painter, draw)
         if self.now is not None and self.today in self.days:
             index = self.days.index(self.today)
             y = (self.now.hour * 60 + self.now.minute) / 60 * self.hour_height
@@ -795,6 +882,7 @@ class DayHeader(EntryHits):
         self.hits = []
         self.mark_hits = []
         self.titles = []
+        self.edges = []
         for bar in self.bars:
             left = gutter(self) + bar.first * width + 1
             rect = QRectF(left, _px(DAY_ROW) + 4 + bar.row * (_px(BAR_HEIGHT) + _px(BAR_GAP)), (bar.last - bar.first + 1) * width - 3, _px(BAR_HEIGHT))
@@ -804,7 +892,16 @@ class DayHeader(EntryHits):
             fill, text_colour = block_colours(bar.entry)
             self.note_title(rect, bar.entry, font, mark, False, text_colour, fill)
             self.hits.append((rect, bar.entry))
+            if bar.entry.all_day and not bar.continues_after:
+                self.note_edge(rect, bar.entry, sideways=True)
         self.follow_title()
+        ghost = self.ghost()
+        if ghost is not None and (ghost.all_day or ghost.last_day > ghost.first_day):
+            def draw() -> None:
+                for bar in layout.bars([ghost], self.days, include_timed_spanning=True):
+                    rect = QRectF(gutter(self) + bar.first * width + 1, _px(DAY_ROW) + 4, (bar.last - bar.first + 1) * width - 3, _px(BAR_HEIGHT))
+                    paint_block(painter, rect, ghost, True, font, [ghost.summary])
+            paint_ghost(painter, draw)
         painter.end()
 
 
@@ -887,6 +984,7 @@ class MonthView(EntryHits):
         self.hits = []
         self.mark_hits = []
         self.titles = []
+        self.edges = []
         self.more = []
         if self._weeks() < 1:
             self.follow_title()
@@ -935,6 +1033,8 @@ class MonthView(EntryHits):
                 fill, text_colour = block_colours(bar.entry)
                 self.note_title(rect, bar.entry, small, mark, False, text_colour, fill)
                 self.hits.append((rect, bar.entry))
+                if bar.entry.all_day and not bar.continues_after:
+                    self.note_edge(rect, bar.entry, sideways=True)
             single_ids = {id(bar.entry) for bar in week_bars}
             for column, day in enumerate(week_days):
                 left = column * width
@@ -991,7 +1091,22 @@ class MonthView(EntryHits):
                         self.more.append((rect, day))
             del used
         self.follow_title()
+        ghost = self.ghost()
+        if ghost is not None:
+            paint_ghost(painter, lambda: self._paint_ghost(painter, ghost, width, height, small, line_height))
         painter.end()
+
+    def _paint_ghost(self, painter: QPainter, ghost: Entry, width: float, height: float, font: QFont, line_height: int) -> None:
+        """Where the appointment would land, on the first line of its days: a bar over them, or one day with its time first."""
+        for week in range(self._weeks()):
+            week_days = self.days[week * 7 : week * 7 + 7]
+            top = _px(22) + week * height + _px(22)
+            spans = ghost.all_day or ghost.last_day > ghost.first_day
+            for bar in layout.bars([ghost], week_days, include_timed_spanning=True) if spans else []:
+                paint_block(painter, QRectF(bar.first * width + 2, top, (bar.last - bar.first + 1) * width - 4, line_height - 2), ghost, True, font, [ghost.summary])
+            if not spans and ghost.first_day in week_days:
+                column = week_days.index(ghost.first_day)
+                paint_block(painter, QRectF(column * width + 2, top, width - 4, line_height - 2), ghost, True, font, [f"{ghost.start.strftime('%H:%M')} {ghost.summary}"])
 
 
 class AgendaTags(QStyledItemDelegate):

@@ -298,6 +298,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 3.7 | Tasks section (lists, quick add, detail pane, status marks). | done (0.0.63) |
 | 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | done (0.0.64) |
 | 3.10 | Settings > Calendar and the n weeks view: week numbers, short events as 30 minutes, past events less bright, Start week on, the weeks of the custom view, the days of Upcoming (D-352). | done (4.4.616) |
+| 3.11 | Dragging an appointment to another time or day, or by its end to another length, inside its view (B-36, D-371). | done (4.8.660) |
 | 3.9 | Tags for mail (D-128, five steps: engine, window, rules, importer, IMAP keywords); reminders and notifications. | tags done (0.5.134 to 0.5.138: engine, window, rules, importer, IMAP keywords); reminders and notifications open |
 
 ## Milestone 4: CalDAV and CardDAV (Kerio Connect test server, D-078)

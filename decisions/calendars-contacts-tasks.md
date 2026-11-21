@@ -73,3 +73,4 @@ See also: [[sync-conflicts]]
 - [[D-356]] A server name never has an @
 - [[D-368]] Undo and Redo in Calendar, Tasks and Contacts
 - [[D-370]] Google Tasks in the Tasks section
+- [[D-371]] Dragging an appointment

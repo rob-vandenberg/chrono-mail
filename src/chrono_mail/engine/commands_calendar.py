@@ -19,15 +19,18 @@ from chrono_mail.engine.pimundohistory import UNDO_OPTION, undoable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
+from chrono_mail.pim.repeat import fitted, moved_by, series_first
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, cancelled_on, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
 from chrono_mail.pim.itip import attendee_addresses, cancelled_copy, cancelled_in, holds_occurrence, restored_copy, with_organizer, you_declined
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.7.656"
+__version__ = "commands_calendar.py 4.8.660"
 
 # --- Version history ----------------------------------------------------
+# v4.8.660: event.reschedule: an appointment dragged to another time or day, or its end dragged; one date or the whole series by as much, its rule
+#           naming the days it moved to (B-36, D-371)
 # v4.7.656: edit, delete, move, Cancel and Restore take the number of the person's action, so Undo can put them back (B-18 step 3, D-368)
 # v4.4.608: a calendar named only by an address is shown by a name (shown_collection_name, D-346)
 # v4.4.602: A Google colour is a tag of its own calendar (name|calendar id); a calendar tag given an appointment goes to Google, never into the event (D-341)
@@ -832,6 +835,77 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
         raise UsageError(str(error)) from None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RescheduleParameters:
+    item: str = field(metadata=option("The event id"))
+    start: str = field(metadata=option("The new start of the date dragged: 2026-10-12 (all day) or 2026-10-12T09:00 (this computer's time)"))
+    end: str = field(metadata=option("The new end of the date dragged (for all-day events: the day after the last day)"))
+    occurrence: str = field(default="", metadata=option("The date dragged (the 'occurrence' of event.list); empty for an event that does not repeat"))
+    series: bool = field(default=False, metadata=option("A repeating event: the whole series moves by as much as the date dragged; false: only that date"))
+    tell: bool = field(default=False, metadata=option("A meeting you organize: tell the attendees of this change"))
+    undo: int = field(default=0, metadata=option(UNDO_OPTION))
+
+
+def _seen_as(moment: Moment, reference: Moment) -> Moment:
+    """A time from this computer as the clock of the event reads it: in its zone, or on its wall clock when it floats; a day stays a day."""
+    if not isinstance(moment, datetime) or moment.tzinfo is None or not isinstance(reference, datetime):
+        return moment
+    if reference.tzinfo is None:
+        return moment.astimezone(local_zone()).replace(tzinfo=None)
+    return moment.astimezone(reference.tzinfo)
+
+
+def _series_moved(master: Moment, first_day: date, seen: Moment, start: Moment, end: Moment) -> tuple[Moment, Moment]:
+    """The whole series' first date on its new first day, at the new time of day of the date dropped (or all day), as long as that date lasts."""
+    if isinstance(seen, datetime):
+        zone = master.tzinfo if isinstance(master, datetime) else seen.tzinfo
+        first: Moment = datetime.combine(first_day, seen.time(), tzinfo=zone)
+    else:
+        first = first_day
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        return first, first + (end - start)
+    return first, first + ((end if not isinstance(end, datetime) else end.date()) - (start if not isinstance(start, datetime) else start.date()))
+
+
+def _wall_clock(moment: Moment) -> str:
+    return moment.replace(tzinfo=None).isoformat() if isinstance(moment, datetime) else moment.isoformat()
+
+
+def event_reschedule(engine: Engine, parameters: RescheduleParameters) -> EventInfo:
+    """An appointment dragged to another time or day, or its end dragged (B-36): the date dragged, or its whole series by as much. It is an
+    edit of its start and end: server first, refused where an edit is refused, the attendees told when the person says so."""
+    try:
+        start, end = parse_moment(parameters.start), parse_moment(parameters.end)
+    except ValueError as error:
+        raise UsageError(str(error)) from None
+    if isinstance(start, datetime) != isinstance(end, datetime):
+        raise UsageError("The start and the end must both be dates or both be times")
+    if (end <= start) if isinstance(start, datetime) and isinstance(end, datetime) else (_day_of(end) <= _day_of(start)):
+        raise UsageError("An event cannot end before it starts")
+    try:
+        with located(engine, parameters.item, CollectionKind.EVENTS) as found:
+            series = _series(found.store.get(found.item.collection, parameters.item))
+    except StorageError as error:
+        raise UsageError(str(error)) from None
+    master = series.master
+    dragged = _occurrence_event(series, _moment_of(parameters.occurrence, series)).start if parameters.occurrence and master.repeats else master.start
+    if parameters.series and master.repeats:
+        ruled = _moment_of(parameters.occurrence, series) if parameters.occurrence else master.start  # the date the rule gave the date dragged
+        seen = _seen_as(start, ruled)
+        rule = moved_by(master.rrule, _day_of(ruled), _day_of(seen))  # weekly on Monday dropped on a Thursday: on Thursday
+        first, last = _series_moved(master.start, series_first(rule, _day_of(master.start), _day_of(ruled), _day_of(seen)), seen, start, end)
+        if isinstance(first, datetime) != isinstance(master.start, datetime) and rule:
+            rule = fitted(rule, not isinstance(first, datetime), local_zone())
+        edit = EditParameters(item=parameters.item, start=_wall_clock(first), end=_wall_clock(last), time_zone=_zone_name(first) or None, rrule=rule if rule != master.rrule else None,
+                              tell=parameters.tell, undo=parameters.undo)
+    else:  # this date, or an event that does not repeat: at its new time on its own clock, in its own zone (an edit changes only what changed, D-257)
+        first, last = _seen_as(start, dragged), _seen_as(end, dragged)
+        zone = _zone_name(first) if isinstance(dragged, datetime) and dragged.tzinfo is not None else ""
+        edit = EditParameters(item=parameters.item, occurrence=parameters.occurrence, start=_wall_clock(first) if zone else parameters.start,
+                              end=_wall_clock(last) if zone else parameters.end, time_zone=zone or None, tell=parameters.tell, undo=parameters.undo)
+    return event_edit(engine, edit)
+
+
 @dataclass(frozen=True, slots=True)
 class DeleteParameters:
     item: str = field(metadata=option("The event id"))
@@ -1029,6 +1103,7 @@ EVENT_SHOW: TypedCommand[ItemParameters, EventInfo] = TypedCommand("event.show",
 EVENT_ADD: TypedCommand[AddParameters, EventInfo] = TypedCommand("event.add", AddParameters, EventInfo)
 EVENT_EDIT: TypedCommand[EditParameters, EventInfo] = TypedCommand("event.edit", EditParameters, EventInfo)
 EVENT_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("event.delete", DeleteParameters, DeleteResult)
+EVENT_RESCHEDULE: TypedCommand[RescheduleParameters, EventInfo] = TypedCommand("event.reschedule", RescheduleParameters, EventInfo)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1133,6 +1208,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
     registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
     registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, undoable(event_edit, "Edit", "appointment"), doing="Saving an event")
+    registry.register(EVENT_RESCHEDULE.id, "Move an event, or one occurrence, to another time or day, or change its end", RescheduleParameters, undoable(event_reschedule, "Change time", "appointment"), doing="Saving an event")
     registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, undoable(event_delete, "Delete", "appointment"), destructive=True, doing="Deleting an event")
     registry.register(EVENT_CANCEL.id, "Cancel an event, or one occurrence of a repeating event: it stays, greyed", StatusParameters, undoable(event_cancel, "Cancel", "appointment"), doing="Cancelling an event")
     registry.register(EVENT_RESTORE.id, "Take Cancelled off an event, or one occurrence of a repeating event", StatusParameters, undoable(event_restore, "Restore", "appointment"), doing="Restoring an event")

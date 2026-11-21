@@ -28,7 +28,8 @@ from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_calendarmail import EVENT_MAILING, MailingParameters, MailingResult
 from chrono_mail.ui.calendarmail import EXPLANATION, CalendarMailDialog, Choice
-from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_EDIT, EVENT_LIST, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
+from chrono_mail.engine.commands_calendar import EVENT_CANCEL, EVENT_DELETE, EVENT_EDIT, EVENT_LIST, EVENT_RESCHEDULE, EVENT_RESTORE, EVENT_SHOW, DeleteResult, EventInfo, EventList, StatusParameters
+from chrono_mail.engine.commands_calendar import RescheduleParameters as EventReschedule
 from chrono_mail.engine.commands_calendar import DeleteParameters as EventDelete
 from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
@@ -41,7 +42,8 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks
 from chrono_mail.ui.calendarlayout import Entry
 from chrono_mail.ui.dayheadings import DayWatch
-from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, GridCanvas, MonthView, PendingTitle, event_key, followed
+from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, EntryHits, GridCanvas, MonthView, PendingTitle, event_key, followed
+from chrono_mail.ui.calendardrag import CalendarDrag, Drop
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
@@ -56,9 +58,11 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.7.656"
+__version__ = "calendarview.py 4.8.660"
 
 # --- Version history ----------------------------------------------------
+# v4.8.660: an appointment dragged to another time or day, or by its end: this date or all of them, the attendees of your meeting told when you
+#           say so; it shows at its new place at once with the clock until the server answers, a refusal puts it back; Ctrl+Z takes it back (B-36, D-371)
 # v4.7.656: the title typed in place, Delete, Cancel, Restore and the appointment window's Save are actions Ctrl+Z undoes; what an Undo brought back is selected (B-18 step 3, D-368)
 # v4.6.655: the title keeps its share when the sizes change (scale.FONT_SHARE_PROPERTY, D-367)
 # v4.6.652: _size_changed: the title, the hours, the all-day row, Month and Agenda follow the Calendar's size (D-367)
@@ -240,6 +244,7 @@ class CalendarPage(PimPage):
         self._generation: int = 0
         self._fetches: int = 0  # how many fetches of events were asked: a title on its way counts only the ones after it (D-325)
         self._pending: dict[tuple[str, str], PendingTitle] = {}  # titles typed in place on their way to the server, shared with the views (D-325)
+        self._moving: dict[tuple[str, str], Entry] = {}  # appointments dragged, at their new place until the server answers, shared with the views (B-36)
         self._tags_known: list[TagInfo] = []
         self._tags_asked: int = 0  # requests for the tags: only the answer to the latest counts, an older one may come after it
         self._ticks_changed: bool = False  # a calendar was ticked or unticked since the tags were last asked (D-347)
@@ -357,7 +362,16 @@ class CalendarPage(PimPage):
             widget.title_edit_wanted.connect(self._title_edit_wanted)
             widget.title_edited.connect(self._title_edited)
             widget.pending = self._pending
+            widget.moving = self._moving
         self.agenda.pending = self._pending
+        self.drag = CalendarDrag(self)  # an appointment dragged inside the view it is in (B-36)
+        self.drag.zone = self.zone
+        self.drag.header, self.drag.canvas, self.drag.area, self.drag.month = self.grid.header, self.grid.canvas, self.grid.area, self.month
+        self.drag.allowed = self._may_drag
+        self.drag.place_of = lambda widget, position: widget.place_at(position) if isinstance(widget, EntryHits) else None
+        self.drag.dropped.connect(self._dropped)
+        for widget in (self.grid.header, self.grid.canvas, self.month):
+            widget.drag = self.drag
         self.panel.infos_changed.connect(self._recolour)
         self.month.day_activated.connect(self._day_activated)
         self.agenda.entry_clicked.connect(self._entry_clicked)
@@ -477,6 +491,7 @@ class CalendarPage(PimPage):
         self.reload(quiet=True)
 
     def set_view(self, name: str) -> None:
+        self.drag.cancel()
         self.view = name
         if name in (layout.UPCOMING, layout.WEEKS):
             self.anchor = self._today()  # they start at today when chosen; the arrows move them from there (D-352)
@@ -543,7 +558,7 @@ class CalendarPage(PimPage):
             if generation != self._generation:
                 return
             self._day_shown = today
-            self.entries = self._coloured(layout.entries_from(list(result.events), self.zone))
+            self.entries = self._with_moves(self._coloured(layout.entries_from(list(result.events), self.zone)))
             self._fetched(None, number)
             self._show_data(keep=quiet)
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
@@ -812,7 +827,7 @@ class CalendarPage(PimPage):
 
     def _title_waiting(self, entry: Entry) -> bool:
         pending = self._pending.get(event_key(entry))
-        return pending is not None and pending.waiting
+        return pending is not None and pending.waiting or event_key(entry) in self._moving  # a new time on its way: its clock shows too (B-36)
 
     def _repaint_views(self) -> None:
         """A title on its way changed: the views draw it again; the Agenda's lines are written when it is filled, so it is filled again."""
@@ -830,6 +845,93 @@ class CalendarPage(PimPage):
                 pending.fetched = True
                 if not pending.waiting:
                     del self._pending[key]
+
+    # --- dragging (B-36) -----------------------------------------------------------------------
+
+    def _may_drag(self, entry: Entry) -> bool:
+        """What Edit changes can be dragged: not in a read-only calendar, nor a Cancelled or declined appointment, nor one whose clock shows."""
+        row = entry.row
+        return not (row.read_only or row.cancelled or row.hidden or self._title_waiting(entry))
+
+    def _with_moves(self, entries: list[Entry]) -> list[Entry]:
+        """The appointments with each new time on its way where it was dropped (a reload meanwhile shows them there too, D-325)."""
+        if not self._moving:
+            return entries
+        placed = [self._moving.get(event_key(entry), entry) for entry in entries]
+        return sorted(placed, key=lambda entry: (entry.start, entry.summary.casefold()))
+
+    def _show_moved(self, key: tuple[str, str], entry: Entry, waiting: bool) -> None:
+        """The appointment drawn as given: at its new place with the clock (waiting), or back where it was."""
+        if waiting:
+            self._moving[key] = entry
+        else:
+            self._moving.pop(key, None)
+        self.entries = sorted((entry if event_key(each) == key else each for each in self.entries), key=lambda each: (each.start, each.summary.casefold()))
+        if self.selected is not None and event_key(self.selected) == key:
+            self.selected = entry
+        self._show_data(keep=True)
+        for widget in (self.grid.header, self.grid.canvas, self.month):
+            widget.select(self.selected)
+
+    def _dropped(self, drop: object) -> None:
+        """An appointment dropped at another time or day, or its end dragged: it shows there at once with the clock; a repeating one asks this
+        date or all of them, your meeting whether the attendees hear of it; then the server first (D-193). Closing a question puts it back."""
+        if not isinstance(drop, Drop):
+            return
+        entry = drop.entry
+        row = entry.row
+        key = event_key(entry)
+        self.selected = entry
+        self._show_moved(key, drop.ghost(), waiting=True)
+        start, end = (drop.start.date().isoformat(), drop.end.date().isoformat()) if drop.all_day else (drop.start.strftime("%Y-%m-%dT%H:%M"), drop.end.strftime("%Y-%m-%dT%H:%M"))
+        scope = self._ask_scope("Change") if row.repeats else "occurrence"
+        if not scope:
+            self._show_moved(key, entry, waiting=False)
+            return
+        values = EventReschedule(item=row.item, occurrence=row.occurrence, series=scope == "series", start=start, end=end)
+
+        def asked(result: EventInfo) -> None:
+            if result.yours:
+                self._backend.ask(EVENT_MAILING, MailingParameters(item=row.item), lambda mailing: self._reschedule_meeting(drop, values, mailing), refused, owner=self)
+            else:
+                self._reschedule(drop, values, "")
+
+        def refused(error: ChronoMailError) -> None:
+            self._show_moved(key, entry, waiting=False)
+            self._failed(error)
+
+        self._backend.ask(EVENT_SHOW, EventItem(row.item), asked, refused, owner=self)
+
+    def _reschedule_meeting(self, drop: Drop, values: EventReschedule, mailing: MailingResult) -> None:
+        """Your meeting at a new time: Chrono Mail would mail the attendees, so the person says so first; closing the question puts it back. The server mails: it is told to."""
+        note = ""
+        tell = True
+        if mailing.chrono:
+            dialog = CalendarMailDialog("Change meeting", "Send the attendees a mail about this change?", EXPLANATION, self.content)
+            choice = dialog.ask()
+            if choice is Choice.BACK:
+                self._show_moved(event_key(drop.entry), drop.entry, waiting=False)
+                return
+            tell, note = choice is Choice.SEND, dialog.note
+        self._reschedule(drop, dataclasses.replace(values, tell=tell), note)
+
+    def _reschedule(self, drop: Drop, values: EventReschedule, note: str) -> None:
+        """The new time to the server: its yes takes the clock away (its new version follows the fact), its no puts the appointment back and the
+        status line says why (D-325). Offline the engine keeps it here and says yes (D-194). Ctrl+Z takes it back (D-368)."""
+        key = event_key(drop.entry)
+
+        def done(result: EventInfo) -> None:
+            self._moving.pop(key, None)
+            self._repaint_views()
+            for draft in (result.draft, result.cancel_draft):
+                if draft.message:
+                    self.mail_ready.emit(draft.account, draft.folder, draft.message, note)
+
+        def refused(error: ChronoMailError) -> None:
+            self._show_moved(key, drop.entry, waiting=False)
+            self._failed(error)
+
+        self.undoing.ask(EVENT_RESCHEDULE, dataclasses.replace(values, undo=self.undoing.new_action()), done, refused, self)
 
     @override
     def delete_selected(self) -> None:

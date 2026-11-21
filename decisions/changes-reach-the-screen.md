@@ -31,4 +31,5 @@ See also: [[mail-window]] · [[look]]
 - [[D-324]] An appointment's title is edited in place
 - [[D-325]] An appointment stays selected and shows its change at once
 - [[D-368]] Undo and Redo in Calendar, Tasks and Contacts
+- [[D-371]] Dragging an appointment
 - [[D-369]] Undo and Redo of folders
