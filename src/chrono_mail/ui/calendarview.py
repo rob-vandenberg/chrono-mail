@@ -42,7 +42,7 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks
 from chrono_mail.ui.calendarlayout import Entry
 from chrono_mail.ui.dayheadings import DayWatch
-from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, EntryHits, GridCanvas, MonthView, PendingTitle, event_key, followed
+from chrono_mail.ui.calendarwidgets import AgendaView, DayHeader, EntryHits, GridCanvas, MonthView, PendingTitle, event_key, followed
 from chrono_mail.ui.calendardrag import CalendarDrag, Drop
 from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.icons import theme_icon
@@ -58,9 +58,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.8.660"
+__version__ = "calendarview.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: GUTTER no longer imported (unused)
 # v4.8.660: an appointment dragged to another time or day, or by its end: this date or all of them, the attendees of your meeting told when you
 #           say so; it shows at its new place at once with the clock until the server answers, a refusal puts it back; Ctrl+Z takes it back (B-36, D-371)
 # v4.7.656: the title typed in place, Delete, Cancel, Restore and the appointment window's Save are actions Ctrl+Z undoes; what an Undo brought back is selected (B-18 step 3, D-368)

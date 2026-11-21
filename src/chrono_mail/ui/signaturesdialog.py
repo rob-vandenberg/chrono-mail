@@ -66,9 +66,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "signaturesdialog.py 4.5.628"
+__version__ = "signaturesdialog.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: the texts that could not be read are named on a line of their own that stays while one of them is in the list; Save As is
+#           greyed on such a text and Export leaves such texts out, saying which (it wrote them empty)
 # v4.5.628: A text that cannot be read is named on the page (D-358)
 # v4.5.627: The account block as the owner drew it: a heading above the fields, the first field level with the account list, the tick under
 #           the account list, a larger gap above the block
@@ -205,6 +207,9 @@ class SignaturesPanel(QWidget):
         self.status = part(self.form, QLabel, "status")
         self.status.setStyleSheet(red_style())
         self.status.hide()
+        self.unreadable = part(self.form, QLabel, "unreadable")  # its own line: no later message replaces it
+        self.unreadable.setStyleSheet(red_style())
+        self.unreadable.hide()
         self.sent_from = part(self.form, QCheckBox, "sentFrom")
         self.sent_from.setChecked(sent_from_line)
         self.sent_from.setToolTip("Every message you send ends with this line")
@@ -243,9 +248,6 @@ class SignaturesPanel(QWidget):
         self._backend.ask(SNIPPET_ALL, NoParameters(), self._arrived, self._not_read, owner=self)
 
     def _arrived(self, found: tuple[SnippetText, ...]) -> None:
-        unreadable = [entry.name for entry in found if entry.problem]
-        if unreadable:  # left out of every message; the person can delete it or give it a new text with Edit
-            self._say("Could not be read, so left out of your messages: " + ", ".join(unreadable))
         self._loaded = True
         self._kept = found
         self.entries = list(found)
@@ -273,6 +275,13 @@ class SignaturesPanel(QWidget):
         self._say(f"The templates and signatures could not be read: {error}")
         self._buttons_follow()
 
+    def _name_unreadable(self) -> None:
+        """The texts in the list that could not be read, on a line of their own while there are any: left out of every message; the
+        person can delete such a text or give it a new one with Edit."""
+        unreadable = [entry.name for entry in self.entries if entry.problem]
+        self.unreadable.setText("Could not be read, so left out of your messages: " + ", ".join(unreadable) if unreadable else "")
+        self.unreadable.setVisible(bool(unreadable))
+
     def _say(self, text: str) -> None:
         self.status.setText(text)
         self.status.setVisible(bool(text))
@@ -291,6 +300,7 @@ class SignaturesPanel(QWidget):
         self.items.blockSignals(False)
         self._selection_changed()
         self._show_choices()
+        self._name_unreadable()
 
     def selected_index(self) -> int:
         row = self.items.currentItem()
@@ -310,9 +320,12 @@ class SignaturesPanel(QWidget):
         selected = self._loaded and 0 <= index < count
         for button in (self.new_button, self.open_button, self.import_button):
             button.setEnabled(self._loaded)
-        self.export_button.setEnabled(self._loaded and count > 0)
-        for button in (self.edit_button, self.delete_button, self.save_as_button):
+        self.export_button.setEnabled(self._loaded and any(not entry.problem for entry in self.entries))  # only texts that could be read are exported
+        for button in (self.edit_button, self.delete_button):
             button.setEnabled(selected)
+        readable = selected and not self.entries[index].problem
+        self.save_as_button.setEnabled(readable)  # a text that could not be read would be written empty
+        self.save_as_button.setToolTip("" if readable or not selected else "This text could not be read")
         self.up_button.setEnabled(selected and index > 0)
         self.down_button.setEnabled(selected and index < count - 1)
 
@@ -384,6 +397,8 @@ class SignaturesPanel(QWidget):
         if index < 0:
             return
         entry = self.entries[index]
+        if entry.problem:
+            return  # greyed: it would be written empty
         path, _ = QFileDialog.getSaveFileName(self, "Save as", f"{entry.name}.html", HTML_FILTER)
         if not path:
             return
@@ -418,9 +433,15 @@ class SignaturesPanel(QWidget):
         if not Path(path).suffix:
             path += ".json"
         self._say("")
-        shown = tuple(self.entries)
+        shown = tuple(entry for entry in self.entries if not entry.problem)  # one that could not be read would come back empty at Import
+        left_out = [entry.name for entry in self.entries if entry.problem]
         parameters = ExportParameters(path, tuple(entry.name for entry in shown), tuple(entry.html for entry in shown))
-        self._backend.ask(SNIPPET_EXPORT, parameters, self._written, lambda error: self._say(str(error)), owner=self)
+
+        def written(answer: WrittenFile) -> None:
+            if left_out:
+                self._say("Could not be read, so not exported: " + ", ".join(left_out))
+
+        self._backend.ask(SNIPPET_EXPORT, parameters, written, lambda error: self._say(str(error)), owner=self)
 
     # --- the accounts -----------------------------------------------------------------------------------------
 

@@ -18,9 +18,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.6.648"
+__version__ = "test_ui_dav.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: Link to leaves the server's address open to change (Q28, D-298)
 # v4.6.648: a separate account's password has the eye only once the person types in it (D-365)
 # v4.4.608: a calendars-only account in Settings > Accounts: its name, below it what it holds (D-346)
 # v4.4.605: Refresh in the sections is Send and Receive (D-344): no line of its own without a calendar server
@@ -257,7 +258,7 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         fields = dialog.calendar
         fields.target.setCurrentIndex(1)
         mail = world.call("account.list")[0]
-        assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))  # Link to: greyed (D-298)
+        assert not any(field.isEnabled() for field in (fields.account_name, fields.username, fields.password)) and fields.url.isEnabled()  # Link to: the login greyed, the address open to change (D-298, Q28)
         assert fields.url.text() == f"https://{mail.incoming_host}/" and fields.username.text() == mail.incoming_username
         assert fields.password.text() and not fields._eye.isVisible()  # dots only, never the stored password  # noqa: SLF001
         fields.target.setCurrentIndex(0)
@@ -296,7 +297,7 @@ def test_a_linked_account_s_fields_stay_greyed_after_a_failed_add(world: World, 
     fields.target.setCurrentIndex(1)
     fields.set_adding(True)
     fields.set_adding(False)  # what an Add that failed does
-    assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))
+    assert not any(field.isEnabled() for field in (fields.account_name, fields.username, fields.password)) and fields.url.isEnabled()  # the address open to change (Q28)
 
 
 def test_no_mail_account_brings_back_what_was_typed(world: World, qtbot: QtBot) -> None:

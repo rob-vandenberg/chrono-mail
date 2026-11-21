@@ -61,9 +61,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 4.7.656"
+__version__ = "contactsview.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: The answer about one changed contact, asked before the list was asked again, is not used (as Tasks since 4.4.581)
 # v4.7.656: tags, Delete, Move, the groups and the contact window's Save are actions Ctrl+Z undoes (B-18 step 3, D-368)
 # v4.6.652: the count, the rows, the circles and the details follow the Contacts size (D-367)
 # v4.4.615: _collection_of: the address book a selected contact is in (Delete says whether it goes to a server by the contact's own book)
@@ -627,10 +628,11 @@ class ContactsPage(PimListPage):
                 self.reload_groups(book, then=lambda rows, book=book: self._group_changed(book, wanted, item, groups_before, rows))
         if kind in ("item_added", "item_changed", "item_moved") and target in shown:
             parameters = ContactListParameters(collections=shown, text=self.search.text().strip(), tag=self._tag(), item=wanted, group=self._group())
+            generation = self._generation
 
             def arrived(result: ContactList) -> None:
-                if self._shown_books() != shown:
-                    return
+                if self._shown_books() != shown or generation != self._generation:
+                    return  # the list was asked again since (another tag, group or search): its answer has this contact as it is now
                 rows = result.contacts
                 if rows:
                     self.model.put(rows[0])
