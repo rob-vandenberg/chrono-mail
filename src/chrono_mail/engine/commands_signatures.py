@@ -36,9 +36,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_signatures.py 4.5.629"
+__version__ = "commands_signatures.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: Save As of a whole HTML page declares the character set it is written in (UTF-8), not the one the page came with
 # v4.5.629: add_texts: an import adds named texts; a name already in the library is skipped and its text left as it is (D-359)
 # v4.5.628: A text that cannot be read is given with its reason and never written over; the others still load (D-358)
 # v4.5.626: Initial version: snippet.all, .save-all, .open, .save-as, .import, .export, .account-texts, .set-account-texts,
@@ -289,10 +290,14 @@ class WrittenFile:
     file: str
 
 
+DECLARED_CHARSET: re.Pattern[str] = re.compile(r"""(<meta\b[^>]*?charset\s*=\s*["']?)\s*[A-Za-z0-9_.:-]+""", re.IGNORECASE)
+
+
 def snippet_save_as(engine: Engine, parameters: SaveAsParameters) -> WrittenFile:
-    """One text as an HTML file any program can open, its pictures inside it."""
+    """One text as an HTML file any program can open, its pictures inside it. A whole page keeps everything of its own, but says it is
+    UTF-8, as it is written: a page imported with "windows-1252" would otherwise be read in that character set and its accents garbled."""
     text = parameters.html
-    page = text if "<html" in text.lower() else f'<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>{html.escape(parameters.name)}</title></head><body>{text}</body></html>\n'
+    page = DECLARED_CHARSET.sub(r"\g<1>utf-8", text) if "<html" in text.lower() else f'<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>{html.escape(parameters.name)}</title></head><body>{text}</body></html>\n'
     try:
         write_atomically(Path(parameters.file), page.encode("utf-8", "surrogatepass"), "The file could not be saved")
     except ConfigurationError as error:

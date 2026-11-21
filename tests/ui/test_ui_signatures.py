@@ -14,9 +14,10 @@ from tests.ui.test_ui_settings import open_settings
 from tests.ui.world import Dialogs, World, add_window, answer_open_file, answer_save_file, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_signatures.py 4.6.639"
+__version__ = "test_ui_signatures.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a text that cannot be read is named on the page's own line for it (panel.unreadable)
 # v4.6.639: the signature is put in with the Signature button's list (pick_signature); Ctrl+1 to Ctrl+7 now add a text at the cursor (D-363)
 # v4.5.628: a swap replaces only the signature; a text that cannot be read is left out and named (D-358)
 # v4.5.627: the account block as the owner drew it: the fields' heading, the first field level with the account list, the tick under it
@@ -497,7 +498,7 @@ def test_a_text_that_cannot_be_read_is_left_out_and_named(world: World, qtbot: Q
     big, _ = keep(world, ("Huge", "<p>h</p>"), ("Work", "<p>Kind regards</p>"))
     (world.engine.directories.signatures_directory / f"{big}.html").write_bytes(b"x" * (MAXIMUM_HTML_BYTES + 1))
     dialog, panel = open_page(world, qtbot)
-    assert panel.status.isVisibleTo(panel) and "Huge" in panel.status.text() and panel.new_button.isEnabled()
+    assert panel.unreadable.isVisibleTo(panel) and "Huge" in panel.unreadable.text() and panel.new_button.isEnabled()  # its own line (4.8.662)
     ok(dialog, qtbot)
     assert (world.engine.directories.signatures_directory / f"{big}.html").stat().st_size == MAXIMUM_HTML_BYTES + 1  # its file left alone
     window = composer(world, qtbot)

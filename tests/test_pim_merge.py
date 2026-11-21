@@ -1,9 +1,10 @@
 from chrono_mail.pim.merge import BOTH, LOCAL, SERVER, copied, merge, reading
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.4.537"
+__version__ = "test_pim_merge.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a contact's FN is "Display name", as the contact window and the conflict window name it
 # v4.4.537: a placeholder alarm (ACTION:NONE) reads as no reminder
 # v4.3.498: a grouped line (item1.EMAIL) is its field: changed on both sides it clashes, chosen here it keeps its group, reading sees it;
 #           reading leaves out an attendee line for the organizer, which a server adds (Kerio); a grouped label stays tied to its entry,
@@ -263,7 +264,7 @@ def test_capitals_in_a_value_and_a_semicolon_inside_a_part_count() -> None:
     card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\n{}END:VCARD\r\n"
     base = card.format("FN:Ann\r\nORG:Smith\\; Sons\r\n")
     merged = merge(base, base.replace("FN:Ann", "FN:Ann Smith"), base.replace("\\;", ";"))  # a company and a department there
-    assert [clash.label for clash in merged.clashes] == ["Name", "Company"]
+    assert [clash.label for clash in merged.clashes] == ["Display name", "Company"]
     event = calendar("SUMMARY:x", "ATTENDEE;CN=ann smith:mailto:ann@example.com")
     theirs = calendar("SUMMARY:Theirs", "ATTENDEE;CN=Ann Smith:mailto:ann@example.com")
     clashes = merge(event, event.replace("SUMMARY:x", "SUMMARY:Ours"), theirs).clashes
@@ -275,7 +276,7 @@ def test_role_and_anniversary_are_seen_and_clash() -> None:
     card = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c1\r\n{}END:VCARD\r\n"
     base = card.format("FN:Ann\r\nROLE:Engineer\r\nANNIVERSARY:20100612\r\n")
     theirs = base.replace("Engineer", "Manager").replace("20100612", "20110612")
-    assert [clash.label for clash in merge(base, base.replace("FN:Ann", "FN:Ann Smith"), theirs).clashes] == ["Name", "Role", "Anniversary"]
+    assert [clash.label for clash in merge(base, base.replace("FN:Ann", "FN:Ann Smith"), theirs).clashes] == ["Display name", "Role", "Anniversary"]
 
 
 def test_one_number_of_two_kinds_stays_twice() -> None:
@@ -374,7 +375,7 @@ def test_an_empty_value_reads_as_no_line() -> None:  # Chrono Mail writes N:;;;;
     card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\n{}END:VCARD\r\n"
     base = card.format("N:;;;;\r\nFN:Anna\r\nNOTE:\r\n")
     merged = merge(base, card.format("N:;;;;\r\nFN:Anna B\r\nNOTE:\r\n"), card.format("FN:Ann\r\n"))
-    assert [clash.label for clash in merged.clashes] == ["Name"]  # FN only: no clash for the empty name parts or the empty note
+    assert [clash.label for clash in merged.clashes] == ["Display name"]  # FN only: no clash for the empty name parts or the empty note
     kept = merge(base, card.format("N:;;;;\r\nFN:Anna B\r\nNOTE:\r\n"), card.format("FN:Ann\r\n"), {"FN": "local"}).text or ""
     assert "N:;;;;" in kept and "FN:Anna B" in kept  # the empty line that exists stays: vCard 3.0 needs N
     assert "N:;;;;" in (merge(base, card.format("FN:Ann\r\n"), card.format("N:;;;;\r\nFN:Ann\r\n")).text or "")  # also from the server

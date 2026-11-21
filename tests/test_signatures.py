@@ -12,9 +12,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_signatures.py 4.5.626"
+__version__ = "test_signatures.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: Save As of a whole page that says windows-1252 says utf-8, as it is written
 # v4.5.626: Initial tests: the library of templates and signatures, an account's choice of texts, the snippet.* commands (B-24, D-358)
 
 PICTURE: bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
@@ -122,6 +123,16 @@ def test_save_as_writes_a_page_open_reads_back(engine: Engine, tmp_path: Path) -
     assert "<title>Work</title>" in target.read_text("utf-8")
     again = call(engine, "snippet.open", file=str(target))
     assert again.name == "Work copy" and "<p><b>Rob</b></p>" in again.html
+
+
+@pytest.mark.parametrize("declared", ['<meta charset="windows-1252">', '<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'], ids=["charset", "content type"])
+def test_save_as_of_a_whole_page_says_it_is_utf8(engine: Engine, tmp_path: Path, declared: str) -> None:
+    target = tmp_path / "Office.html"
+    page = f"<html><head>{declared}<title>Office</title></head><body><p>Groeten, Jos\u00e9</p></body></html>"
+    call(engine, "snippet.save-as", name="Office", html=page, file=str(target))
+    written = target.read_bytes()
+    assert b"windows-1252" not in written and b"utf-8" in written.lower() and "Jos\u00e9".encode("utf-8") in written
+    assert written.decode("utf-8") == page.replace("windows-1252", "utf-8")  # nothing else of the page changes
 
 
 def test_export_and_import_carry_every_text(engine: Engine, tmp_path: Path) -> None:

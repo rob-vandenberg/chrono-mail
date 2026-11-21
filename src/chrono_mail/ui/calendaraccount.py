@@ -21,9 +21,10 @@ from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.6.648"
+__version__ = "calendaraccount.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: Link to leaves the server's address open to change (filled in from the mail account), for a calendar server on its own port (Q28, D-298)
 # v4.6.648: the eye of a separate account's password only while the person edits it (D-365)
 # v4.4.608: For names each mail account by its name and address and what it holds, as Settings > Accounts does (D-346)
 # v4.4.603: One name per meaning: Shown as, Your name, E-mail address, Sign-in name (D-342)
@@ -104,8 +105,9 @@ class CalendarFields(QWidget):
         return str(self.target.currentData()) == NEW_ACCOUNT
 
     def _target_changed(self) -> None:
-        """Link to a mail account: the same server and the same login, filled in from it and greyed (the password only as dots, without the
-        eye); a separate account: all typed by the person (the owner, D-298)."""
+        """Link to a mail account: the same login, filled in from it and greyed (the password only as dots, without the eye); the server's
+        address filled in from it and open to change, for a calendar server on another port or path; a separate account: all typed by the
+        person (the owner, D-298)."""
         new = self._new()
         self._choices += 1
         linked = next((account for account in self._mail_accounts if account.account_id == str(self.target.currentData())), None)
@@ -113,8 +115,9 @@ class CalendarFields(QWidget):
             self._typed = (self.url.text(), self.username.text(), self.password.text())
         if not new and self.password.echoMode() != QLineEdit.EchoMode.Password:
             self._eye.trigger()  # only dots for a linked account, also when the eye showed what was typed before
-        for field in (self.account_name, self.url, self.username, self.password):
+        for field in (self.account_name, self.username, self.password):
             field.setEnabled(new)
+        self.url.setEnabled(True)  # a calendar server may answer on its own port or path (Q28)
         if new:
             url, username, password = self._typed if not self._was_new else (self.url.text(), self.username.text(), self.password.text())
         else:
@@ -270,6 +273,6 @@ class CalendarFields(QWidget):
         for widget in (self.find_button, self.target, self.account_name, self.url, self.username, self.password):
             widget.setEnabled(not adding)
         if not adding:
-            for field in (self.account_name, self.url, self.username, self.password):
-                field.setEnabled(self._new())  # a linked mail account's server and login stay greyed (D-298)
+            for field in (self.account_name, self.username, self.password):
+                field.setEnabled(self._new())  # a linked mail account's login stays greyed (D-298); its server's address can be changed (Q28)
             self._looking(self._finding)  # a Find still runs (started before a change of kind): Find waits for it

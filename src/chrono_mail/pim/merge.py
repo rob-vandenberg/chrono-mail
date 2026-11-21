@@ -7,7 +7,7 @@ stamps a program sets itself are not compared. Works on the text lines themselve
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from chrono_mail.core.words import digits as plain_digits
 from chrono_mail.pim.ical import NO_REMINDER
@@ -15,9 +15,10 @@ from chrono_mail.pim.times import zone_named
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.4.615"
+__version__ = "merge.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: one name per field, the same in the list of conflicts and the window of one (LABELS, TASK_LABELS); ends_before_start: whether a mix of the two sides would end before it starts (Q36)
 # v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.4.537: an alarm with ACTION:NONE is no reminder: only such an alarm reads as none, and it is never shown in a clash
 # v4.3.498: a grouped line (item1.EMAIL) is its field, its group label kept on the line; a grouped line no person sees (item1.X-ABLabel)
@@ -67,12 +68,13 @@ SEPARATOR: str = "\x1f"
 LABELS: dict[str, str] = {
     "SUMMARY": "Title", "LOCATION": "Location", "DESCRIPTION": "Description", "DTSTART": "Starts", "DTEND": "Ends", "DUE": "Due", "DURATION": "Duration",
     "RRULE": "Repeat", "EXDATE": "Skipped date", "RDATE": "Extra date", "CATEGORIES": "Tag", "ATTENDEE": "Attendee", "ORGANIZER": "Organizer",
-    "STATUS": "Status", "PRIORITY": "Priority", "PERCENT-COMPLETE": "Done (%)", "COMPLETED": "Completed", "TRANSP": "Show as", "CLASS": "Private",
+    "STATUS": "Status", "PRIORITY": "Priority", "PERCENT-COMPLETE": "Done", "COMPLETED": "Completed", "TRANSP": "Show as", "CLASS": "Private",
     "COLOR": "Colour (other programs)", "X-CHRONO-MAIL-COLOR-ID": "Colour", "URL": "Web address", "VALARM": "Reminder",
-    "FN": "Name", "N": "Name parts", "ORG": "Company", "TITLE": "Job title", "TEL": "Phone", "EMAIL": "E-mail", "ADR": "Address", "BDAY": "Birthday",
+    "FN": "Display name", "N": "Name", "ORG": "Company", "TITLE": "Job title", "TEL": "Phone", "EMAIL": "E-mail", "ADR": "Address", "BDAY": "Birthday",
     "NOTE": "Note", "NICKNAME": "Nickname", "PHOTO": "Photo", "ROLE": "Role", "MEMBER": "Group member", "X-ADDRESSBOOKSERVER-MEMBER": "Group member",
     "KIND": "Group", "X-ADDRESSBOOKSERVER-KIND": "Group", "ANNIVERSARY": "Anniversary", "item": "The whole item",
 }
+TASK_LABELS: dict[str, str] = {"SUMMARY": "Summary", "DESCRIPTION": "Note", "DTSTART": "Start"}  # as the task window names them
 VISIBLE: dict[str, frozenset[str]] = {  # what Chrono Mail's own windows let a person enter or see: only these can clash (D-308)
     "VEVENT": frozenset({
         "SUMMARY", "X-CHRONO-MAIL-COLOR-ID", "LOCATION", "DTSTART", "DTEND", "DURATION", "RRULE", "EXDATE", "RDATE", ALARMS, "TRANSP", "ATTENDEE",
@@ -410,7 +412,8 @@ def copy_of(recurrence: str) -> tuple[str, str]:
 
 def _label(key: str, unit_key: str) -> str:
     name = key.split(SEPARATOR, 1)[0]
-    words = LABELS.get(name, name.title() if not name.startswith("X-") else name)
+    task = unit_key.split(SEPARATOR, 1)[0] == "VTODO"
+    words = (TASK_LABELS.get(name) if task else None) or LABELS.get(name, name.title() if not name.startswith("X-") else name)
     recurrence, copy = copy_of(unit_key.split(SEPARATOR, 1)[1] if SEPARATOR in unit_key else "")
     copy_words = f" ({copy})" if copy else ""  # two changed occurrences of one start, or two of the item itself: told apart (OR-2)
     return f"{words} (the occurrence of {occurrence_words(recurrence)}{copy_words})" if recurrence else words + copy_words
@@ -846,6 +849,34 @@ def reading(text: str) -> str | None:
         # the organizer among the attendees by itself (Kerio, ROLE=CHAIR): no change a person made
         parts.append(key + PART_MARK + VALUE_MARK.join(f"{name}={value}" for name, value in said if value is not None))
     return "\n".join(parts)
+
+
+def _when_of(line: str | None) -> date | datetime | None:
+    """The date (VALUE=DATE) or the moment (with its zone, as UTC) of a DTSTART, DTEND or DUE line; None when it has neither or cannot be read
+    (a floating time names no zone, so it is never compared)."""
+    if not line:
+        return None
+    head, value = _head_and_value(line)
+    value = value.strip()
+    if len(value) == 8 and plain_digits(value):
+        try:
+            return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
+        except ValueError:
+            return None
+    zone = next((piece.split("=", 1)[1].strip('"') for piece in _pieces(head)[1:] if piece.split("=", 1)[0].strip().upper() == "TZID" and "=" in piece), "")
+    return _moment(value, zone)
+
+
+def ends_before_start(text: str | None) -> bool:
+    """Whether a unit of this item ends (DTEND, or DUE of a task) before it starts: a mix of the two sides that cannot be kept (Q36)."""
+    for _, fields in units_of(text).values():
+        start, end = _when_of(fields.get("DTSTART")), _when_of(fields.get("DTEND") or fields.get("DUE"))
+        if isinstance(start, datetime) and isinstance(end, datetime):
+            if end < start:
+                return True
+        elif isinstance(start, date) and isinstance(end, date) and not isinstance(start, datetime) and not isinstance(end, datetime) and end < start:
+            return True  # a date beside a moment is never compared
+    return False
 
 
 def merge(base: str | None, local: str, server: str, choices: Mapping[str, str] | None = None) -> Merged:

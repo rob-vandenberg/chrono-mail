@@ -80,6 +80,13 @@
     <widget class="QWidget" name="fields" />
    </item>
    <item>
+    <widget class="QLabel" name="orderProblem">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
     <spacer name="belowFields">
      <property name="orientation">
       <enum>Qt::Vertical</enum>

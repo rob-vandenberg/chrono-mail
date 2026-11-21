@@ -14,6 +14,7 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.conflictwords import member_uids
 from chrono_mail.pim.merge import BOTH, LOCAL, SERVER, merge
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, DavConflict, canonical_href, passing_failure
@@ -60,9 +61,10 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 4.4.615"
+__version__ = "commands_conflicts.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a group's conflict names its members' contacts (member_names), so the window shows each by name, not "A member"
 # v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.3.498: Keep both (B-30, B-31, the owner): side both makes Chrono Mail's version an item of its own (on the server first) in every group
 #           of the original, the original takes the server's; a field's choice both keeps the entry of each side; settled another way after
@@ -149,6 +151,7 @@ class ConflictSummary:
     local_text: str = ""
     server_text: str = ""
     colour_names: tuple[tuple[str, str], ...] = ()  # its calendar's colours: (id, name)
+    member_names: tuple[tuple[str, str], ...] = ()  # a group's members that are contacts of its address book: (uid, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,12 +193,21 @@ def _summary(engine: Engine, account: str, store: PimStore, conflict: SyncConfli
             local_text = store.get(conflict.collection, conflict.item)
         except ChronoMailError:
             local_text = ""
+    base_text = (base_of(store, conflict.collection, conflict.item) or "") if conflict.item else ""
+    member_names: list[tuple[str, str]] = []
+    for uid in sorted(member_uids(base_text, local_text, conflict.server_text)):  # a group: its members by the names of their contacts
+        try:
+            found = store.index.find_uid(conflict.collection, uid)
+        except ChronoMailError:
+            found = None
+        if found is not None and found.title:
+            member_names.append((uid, found.title))
     return ConflictSummary(
         conflict.conflict_id, account, account_name(engine, account), conflict.collection, collection_name, conflict.item, conflict.kind, conflict.reason,
         REASON_WORDS.get(conflict.reason, conflict.reason), conflict.name, conflict.detail, conflict.whole, conflict.reason not in (REFUSED, DELETE_REFUSED),
         conflict.when, tuple(ConflictField(c.key, c.label, c.local, c.server) for c in conflict.clashes),
-        retry_allowed=conflict.reason in (REFUSED, DELETE_REFUSED), base_text=(base_of(store, conflict.collection, conflict.item) or "") if conflict.item else "",
-        local_text=local_text, server_text=conflict.server_text, colour_names=colour_names, both_allowed=_both_allowed(conflict),
+        retry_allowed=conflict.reason in (REFUSED, DELETE_REFUSED), base_text=base_text,
+        local_text=local_text, server_text=conflict.server_text, colour_names=colour_names, both_allowed=_both_allowed(conflict), member_names=tuple(member_names),
     )
 
 

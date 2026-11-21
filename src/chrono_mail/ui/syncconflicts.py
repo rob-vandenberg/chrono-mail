@@ -39,10 +39,12 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.pim.conflictwords import Words, rows
+from chrono_mail.pim.contact import member_uid
+from chrono_mail.pim.merge import ends_before_start, merge
 from chrono_mail.engine.commands_conflicts import CONFLICT_SETTLE, ConflictSummary, SettleParameters, SettleResult
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.colours import css, red, theme
+from chrono_mail.ui.colours import css, red, red_style, theme
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.icons import keep_both_icon, split_icon
 from chrono_mail.ui.prefs import shortcuts
@@ -52,9 +54,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.4.615"
+__version__ = "syncconflicts.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a group member by its contact's name; Apply is greyed while the fields chosen would end the item before it starts, and a red line under the table says why (Q36)
 # v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.4.514: the reason of each getattr on its line (the owner's decision after 4.4.513)
 # v4.3.499: The list: What, Name, Fields, Where, together always the free width, never a horizontal scrollbar; a border dragged as a
@@ -305,7 +308,8 @@ def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tup
     def colour(colour_id: str) -> str:
         return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
 
-    found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour))
+    members = dict(conflict.member_names)
+    found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour, lambda reference: members.get(member_uid(reference), "")))
     return [(row.key, row.label, row.local, row.server, row.choice, row.keys, row.split) for row in found]
 
 
@@ -384,6 +388,9 @@ class ConflictDialog(QDialog):
         self.keep_both.clicked.connect(lambda: self._all(KEEP_BOTH))
         self.undo_split: QShortcut = QShortcut(QKeySequence(undo_key), self)  # the person's Undo key: the last split joined again (the owner)
         self.undo_split.activated.connect(self._join_last)
+        self.order_problem: QLabel = part(form, QLabel, "orderProblem")  # the fields chosen would end it before it starts (Q36)
+        self.order_problem.setStyleSheet(red_style())
+        self.order_problem.hide()
         box = part(form, QDialogButtonBox, "buttons")
         self.apply_button = box.addButton("Apply", QDialogButtonBox.ButtonRole.AcceptRole)  # an accepting button: Apply first, Cancel last (the owner)
         self.apply_button.clicked.connect(self._apply)
@@ -588,16 +595,31 @@ class ConflictDialog(QDialog):
             self.side = ""
         elif chosen and open_rows and not whole_way:  # the side is what the circles show, never held apart from them (the owner)
             self.side = LOCAL if all(ours.isChecked() for ours, _ in open_rows.values()) else SERVER
-        self.apply_button.setEnabled(chosen and (bool(self.side) or mixed))
+        backwards = mixed and chosen and self._ends_before_start()
+        self.order_problem.setText("The chosen end is before the chosen start: choose the start and the end from the same side" if backwards else "")
+        self.order_problem.setVisible(backwards)
+        self.apply_button.setEnabled(chosen and (bool(self.side) or mixed) and not backwards)
         whole = self.side in (LOCAL, SERVER) and not self.groups
         every = not whole_way and bool(open_rows)
         self.all_local.setChecked((whole and self.side == LOCAL) or (every and all(ours.isChecked() for ours, _ in open_rows.values())))
         self.all_server.setChecked((whole and self.side == SERVER) or (every and all(theirs.isChecked() for _, theirs in open_rows.values())))
 
+    def _chosen(self) -> dict[str, str]:
+        """Every field's choice as the circles and the split rows show it: a pair's side's entry kept, the other's left out; split: both."""
+        return {each: (KEEP_BOTH if key in self.split else LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()
+                for each in self.settles.get(key, (key,))}
+
+    def _ends_before_start(self) -> bool:
+        """Whether the item as the fields are chosen now would end before it starts (Starts from one side, Ends from the other, Q36)."""
+        conflict = self.conflict
+        if not conflict.local_text or not conflict.server_text:
+            return False
+        merged = merge(conflict.base_text or None, conflict.local_text, conflict.server_text, self._chosen())
+        return merged.text is not None and ends_before_start(merged.text)
+
     def _apply(self) -> None:
         if not self.side:
-            self.choices = {each: (KEEP_BOTH if key in self.split else LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()
-                            for each in self.settles.get(key, (key,))}  # a pair: its side's entry kept, the other's left out; split: both
+            self.choices = self._chosen()
         self.accept()
 
 

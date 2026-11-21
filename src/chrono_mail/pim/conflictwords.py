@@ -7,13 +7,16 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from chrono_mail.core.words import counted, digits
+from chrono_mail.pim.contact import member_address, member_uid
 from chrono_mail.pim.merge import (
     ALARMS,
+    LABELS,
     LOCAL,
     MONTHS,
     MULTIPLE,
     SEPARATOR,
     SERVER,
+    TASK_LABELS,
     choice_key,
     copy_of,
     jar,
@@ -22,15 +25,18 @@ from chrono_mail.pim.merge import (
     real_alarms,
     repeats,
     same,
+    units_of,
     units_together,
     visible,
 )
 from chrono_mail.pim.times import in_local_zone, zone_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "conflictwords.py 4.4.537"
+__version__ = "conflictwords.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a group member by its contact's name (Words.member) or its address, "A member" only when neither is known (member_uids);
+#           the fields' names come from pim.merge, so the list of conflicts and the window of one name a field alike
 # v4.4.537: a placeholder alarm (ACTION:NONE) is left out of the reminders in words
 # v4.3.498: a row that pairs two entries of a field that holds several values can be split: both kept (Row.split, B-31, the owner);
 #           the fields whose entries pair up are merge.MULTIPLE, the one list of them
@@ -53,15 +59,6 @@ ORDER: tuple[str, ...] = (
     "DTSTART", "DTEND", "DUE", "DURATION", "RRULE", "EXDATE", "RDATE", ALARMS, "TRANSP", "ATTENDEE", "EMAIL", "TEL", "URL", "ADR", "BDAY",
     "ANNIVERSARY", "CATEGORIES", "DESCRIPTION", "NOTE", "PHOTO", "MEMBER", "X-ADDRESSBOOKSERVER-MEMBER",
 )
-LABELS: dict[str, str] = {
-    "SUMMARY": "Title", "N": "Name", "FN": "Display name", "NICKNAME": "Nickname", "ORG": "Company", "TITLE": "Job title", "ROLE": "Role",
-    "X-CHRONO-MAIL-COLOR-ID": "Colour", "PRIORITY": "Priority", "STATUS": "Status", "PERCENT-COMPLETE": "Done", "LOCATION": "Location",
-    "DTSTART": "Starts", "DTEND": "Ends", "DUE": "Due", "DURATION": "Duration", "RRULE": "Repeat", "EXDATE": "Skipped date", "RDATE": "Extra date",
-    ALARMS: "Reminder", "TRANSP": "Show as", "ATTENDEE": "Attendee", "EMAIL": "E-mail", "TEL": "Phone", "URL": "Web address", "ADR": "Address",
-    "BDAY": "Birthday", "ANNIVERSARY": "Anniversary", "CATEGORIES": "Tag", "DESCRIPTION": "Description", "NOTE": "Note", "PHOTO": "Photo",
-    "MEMBER": "Group member", "X-ADDRESSBOOKSERVER-MEMBER": "Group member",
-}
-TASK_LABELS: dict[str, str] = {"SUMMARY": "Summary", "DESCRIPTION": "Note", "DTSTART": "Start"}  # as the task window names them
 DAYS: dict[str, str] = {"MO": "Monday", "TU": "Tuesday", "WE": "Wednesday", "TH": "Thursday", "FR": "Friday", "SA": "Saturday", "SU": "Sunday"}
 ORDINALS: dict[int, str] = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", -1: "last", -2: "second last"}
 FREQUENCIES: dict[str, str] = {"YEARLY": "year", "MONTHLY": "month", "WEEKLY": "week", "DAILY": "day", "HOURLY": "hour", "MINUTELY": "minute",
@@ -81,6 +78,7 @@ class Words:
 
     when: Callable[[date | datetime], str]
     colour: Callable[[str], str]
+    member: Callable[[str], str] = lambda reference: ""  # a group member's name by its reference ("": not known here)
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +297,19 @@ def _birthday(value: str, parameters: dict[str, str], words: Words) -> str:
     return _when(text[:10], parameters, words)
 
 
+def member_uids(*texts: str) -> set[str]:
+    """The uids of the contacts the group members of these versions of a group name (a member given as an address has none)."""
+    found: set[str] = set()
+    for text in texts:
+        for _, fields in units_of(text).values():
+            for key, line in fields.items():
+                if key.split(SEPARATOR, 1)[0] in ("MEMBER", "X-ADDRESSBOOKSERVER-MEMBER"):
+                    uid = member_uid(_head_and_value(line)[1])
+                    if uid:
+                        found.add(uid)
+    return found
+
+
 def value_words(name: str, field: str, key: str, task: bool, words: Words) -> str:
     """One field's text (a whole line, a value of a comma list as a line of its own, or all reminders) in words."""
     if name == ALARMS:
@@ -336,7 +347,7 @@ def value_words(name: str, field: str, key: str, task: bool, words: Words) -> st
     if name == "PHOTO":
         return "A photo"
     if name in ("MEMBER", "X-ADDRESSBOOKSERVER-MEMBER"):
-        return "A member"
+        return words.member(value.strip()) or member_address(value) or "A member"  # a contact not in this address book has no name here
     return _unescaped(value) or ABSENT
 
 

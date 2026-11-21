@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_keys.py 4.7.659"
+__version__ = "test_ui_keys.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: the Contacts sidebar test waits until every load of the sidebar is in (a later load built it again under the test)
 # v4.7.659: Pyrefly-clean (the Contacts sidebar test: typed stand-in, no unchecked headings)
 # v4.7.657: Ctrl+Shift+O (Operations, 4.6.649) acts anywhere in the main window, also in the folder list, as D-366 says
 # v4.2.399: F2 on the Inbox renames nothing: a standard folder's Rename folder is greyed (D-269)
@@ -150,6 +151,7 @@ def test_delete_in_a_sections_sidebar_is_the_calendar_or_address_books(world: Wo
 
     monkeypatch.setattr(page.panel, "delete_collection", deleted)
     wait(qtbot, lambda: page.panel.tree.topLevelItemCount() > 0)
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - every load of the sidebar in: a later one builds it again (a fact, the page's own load)
     tree = page.panel.tree
     headings = [heading for heading in (tree.topLevelItem(row) for row in range(tree.topLevelItemCount())) if heading is not None]
     entry = next((heading.child(column) for heading in headings for column in range(heading.childCount())), None)

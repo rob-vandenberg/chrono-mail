@@ -1,19 +1,20 @@
 import os
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, override
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt
+from PySide6.QtGui import QCursor, QFont
+from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
 from chrono_mail.ui import prefs, scale
 from chrono_mail.ui.prefs import COLOR_SCHEMES, read_preferences
 from chrono_mail.ui.colours import menu_palette_of, palette_of, set_accents, theme_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 4.6.655"
+__version__ = "appearance.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a tooltip takes the size of the window the mouse is over, also while another window is active (TooltipSize, D-367)
 # v4.6.655: while the program gets a new style no part of the main window is given a font (scale.ScaledStyle.switching, D-367)
 # v4.4.623: compose_family and compose_points: the default font of new messages, chosen or the program's own (D-354)
 # v1.2.253: The colour scheme and the accents come from the one settings object (R-12)
@@ -123,6 +124,27 @@ def _apply_font_size(app: QApplication) -> None:
 def main_font(app: QApplication) -> QFont:
     """The text of the main window and of the menus and popups opened from it: the system's size times its factor."""
     return _font_at(app, scale.interface())
+
+
+def tooltip_font_for(widget: QWidget | None) -> None:
+    """Qt has one tooltip font for the whole program: the size of the window this widget is in, the main window's or the other windows'."""
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        QToolTip.setFont(main_font(app) if scale.in_main_window(widget) else app.font())
+
+
+class TooltipSize(QObject):
+    """Watches the main window only (a filter on the whole program crashed PySide6 while it wrapped objects still being made): when the
+    mouse comes in, the tooltips take the main window's size; when it leaves, the size of the window it went to (D-367). The active window
+    alone said it wrongly: over the main window while another window was active, a tooltip took that window's size."""
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Enter and isinstance(watched, QWidget):
+            tooltip_font_for(watched)
+        elif event.type() == QEvent.Type.Leave:
+            tooltip_font_for(QApplication.widgetAt(QCursor.pos()))  # another window, a menu of the main window, or nothing of this program
+        return False  # the window goes on as before
 
 
 def apply(app: QApplication, settings: QSettings, interface_factor: float | None = None, windows_factor: float | None = None) -> None:

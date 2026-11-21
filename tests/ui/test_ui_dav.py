@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit
+from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import commands_dav
@@ -18,9 +18,11 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.6.648"
+__version__ = "test_ui_dav.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: Link to leaves the server's address open to change (Q28, D-298); Pyrefly-clean: typed helpers for a form row and a
+#           tree's rows, a typed stand-in for the New calendar window
 # v4.6.648: a separate account's password has the eye only once the person types in it (D-365)
 # v4.4.608: a calendars-only account in Settings > Accounts: its name, below it what it holds (D-346)
 # v4.4.605: Refresh in the sections is Send and Receive (D-344): no line of its own without a calendar server
@@ -93,13 +95,29 @@ def linked_editor(world: World, qtbot: QtBot, server: FakeDav) -> AccountEditDia
     return dialog
 
 
+def form_row(form: QFormLayout, widget: QLineEdit | FolderTicks) -> int:
+    position = form.getWidgetPosition(widget)
+    assert isinstance(position, tuple)
+    row = position[0]
+    assert isinstance(row, int)
+    return row
+
+
+def top_rows(tree: QTreeWidget) -> list[QTreeWidgetItem]:
+    return [item for n in range(tree.topLevelItemCount()) if (item := tree.topLevelItem(n)) is not None]
+
+
+def child_rows(item: QTreeWidgetItem) -> list[QTreeWidgetItem]:
+    return [child for n in range(item.childCount()) if (child := item.child(n)) is not None]
+
+
 def test_the_folders_are_listed_when_the_editor_opens_and_cancel_changes_nothing(world: World, qtbot: QtBot) -> None:
     with FakeDav() as server:
         dialog = linked_editor(world, qtbot, server)
         form = next(item for item in dialog.findChildren(QFormLayout) if item.indexOf(dialog.dav_folders) >= 0)
-        row, _ = form.getWidgetPosition(dialog.dav_folders)
-        label = form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
-        assert isinstance(label, QLabel) and label.text() == "Folders" and form.getWidgetPosition(dialog.dav_password)[0] == row - 1
+        row = form_row(form, dialog.dav_folders)
+        label = form.labelForField(dialog.dav_folders)
+        assert isinstance(label, QLabel) and label.text() == "Folders" and form_row(form, dialog.dav_password) == row - 1
         assert all(tick.isChecked() for _, tick in dialog.dav_folders.ticks)
         untick(dialog.dav_folders, "events")
         dialog.reject()
@@ -257,7 +275,7 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         fields = dialog.calendar
         fields.target.setCurrentIndex(1)
         mail = world.call("account.list")[0]
-        assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))  # Link to: greyed (D-298)
+        assert not any(field.isEnabled() for field in (fields.account_name, fields.username, fields.password)) and fields.url.isEnabled()  # Link to: the login greyed, the address open to change (D-298, Q28)
         assert fields.url.text() == f"https://{mail.incoming_host}/" and fields.username.text() == mail.incoming_username
         assert fields.password.text() and not fields._eye.isVisible()  # dots only, never the stored password  # noqa: SLF001
         fields.target.setCurrentIndex(0)
@@ -296,7 +314,7 @@ def test_a_linked_account_s_fields_stay_greyed_after_a_failed_add(world: World, 
     fields.target.setCurrentIndex(1)
     fields.set_adding(True)
     fields.set_adding(False)  # what an Add that failed does
-    assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))
+    assert not any(field.isEnabled() for field in (fields.account_name, fields.username, fields.password)) and fields.url.isEnabled()  # the address open to change (Q28)
 
 
 def test_no_mail_account_brings_back_what_was_typed(world: World, qtbot: QtBot) -> None:
@@ -408,8 +426,8 @@ def test_new_calendar_is_made_in_the_account_right_clicked(world: World, qtbot: 
         world.call("dav.sync", account=account_id)
         panel = world.window.pages["calendar"].panel
         panel.reload()
-        wait(qtbot, lambda: any(str(panel.tree.topLevelItem(n).data(0, ROLE_ACCOUNT)) == account_id for n in range(panel.tree.topLevelItemCount())))
-        heading = next(panel.tree.topLevelItem(n) for n in range(panel.tree.topLevelItemCount()) if str(panel.tree.topLevelItem(n).data(0, ROLE_ACCOUNT)) == account_id)
+        wait(qtbot, lambda: any(str(item.data(0, ROLE_ACCOUNT)) == account_id for item in top_rows(panel.tree)))
+        heading = next(item for item in top_rows(panel.tree) if str(item.data(0, ROLE_ACCOUNT)) == account_id)
         shown: list[str] = []
 
         def fill(dialog: NewCollectionDialog) -> int:
@@ -424,7 +442,13 @@ def test_new_calendar_is_made_in_the_account_right_clicked(world: World, qtbot: 
         next(action for action in menu.actions() if action.text() == "New calendar…").trigger()
         wait(qtbot, lambda: any(c.name == "Work" for c in server.collections.values()))
         assert shown == [account_id]
-        wait(qtbot, lambda: any(item.text(0) == "Work" and item.parent() is heading for item in [heading.child(n) for n in range(heading.childCount())]))
-        monkeypatch.setattr(NewCollectionDialog, "exec", lambda dialog: (wait(qtbot, lambda: dialog.account_field.isEnabled()), shown.append(dialog.account), QDialog.DialogCode.Rejected.value)[-1])
+        wait(qtbot, lambda: any(item.text(0) == "Work" and item.parent() is heading for item in child_rows(heading)))
+
+        def cancel(dialog: NewCollectionDialog) -> int:
+            wait(qtbot, lambda: dialog.account_field.isEnabled())
+            shown.append(dialog.account)
+            return QDialog.DialogCode.Rejected.value
+
+        monkeypatch.setattr(NewCollectionDialog, "exec", cancel)
         panel.new_collection()  # opened from no account (the empty area, the New button of the section)
         assert shown[-1] == LOCAL_ACCOUNT_ID

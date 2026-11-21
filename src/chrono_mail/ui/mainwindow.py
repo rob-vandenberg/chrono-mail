@@ -4,9 +4,9 @@ from dataclasses import replace as changed
 from typing import override
 
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QCursor, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QLayout, QMainWindow, QMenu, QSizePolicy, QStackedWidget, QToolButton, QToolTip, QVBoxLayout, QWidget,
+    QApplication, QLabel, QLayout, QMainWindow, QMenu, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from chrono_mail.core import ChronoMailError
@@ -76,9 +76,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.7.657"
+__version__ = "mainwindow.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: a tooltip at the size of the window the mouse is over (appearance.TooltipSize, D-367)
 # v4.7.657: the folder list gets the mail's Undo: Rename folder and Delete folder are undone (B-18 step 2, D-369)
 # v4.7.656: Ctrl+Z, Ctrl+Y and the menu's Undo and Redo act on the section shown: Calendar, Tasks and Contacts have their own (B-18 step 3, D-368)
 # v4.6.655: every part of this window at the Main window size (scale.follow_fonts), never the other windows'; a tooltip at the size of the
@@ -405,6 +406,8 @@ class MainWindow(QMainWindow):
         self._for_update: bool = False  # closing after an update: no questions (quit_for_update)
         self.out_of_sight: bool = False  # started minimized at login and not opened since (D-284): Wayland never says a window is minimized
         self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
+        self._tooltip_size: appearance.TooltipSize = appearance.TooltipSize(self)
+        self.installEventFilter(self._tooltip_size)  # the mouse in or out of this window: the tooltips at the size of the window it is over (D-367)
         app_now = QApplication.instance()
         if isinstance(app_now, QApplication):
             app_now.focusChanged.connect(self._tooltip_font)  # another window active: the tooltips at its size (D-367)
@@ -1441,13 +1444,11 @@ class MainWindow(QMainWindow):
         self._tooltip_font()
 
     def _tooltip_font(self, _old: QWidget | None = None, _new: QWidget | None = None) -> None:
-        """A tooltip at the size of the window that is active: this window's over this window, the other windows' over another (D-367).
-        Qt has one tooltip font for the whole program, so it changes when another window becomes active."""
+        """Another window became active: the tooltips at the size of the window the mouse is over, else of the active one (D-367). Qt has
+        one tooltip font for the whole program; the mouse coming into this window or leaving it sets it too (appearance.TooltipSize)."""
         app = QApplication.instance()
-        if not isinstance(app, QApplication):
-            return
-        active = app.activeWindow()
-        QToolTip.setFont(appearance.main_font(app) if active is None or active is self else app.font())
+        if isinstance(app, QApplication):
+            appearance.tooltip_font_for(QApplication.widgetAt(QCursor.pos()) or app.activeWindow() or self)
 
     def _fix_minimum_width(self) -> None:
         """One minimum width for every section: 768 px, or what the contents need at a larger size factor (they need

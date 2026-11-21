@@ -15,9 +15,10 @@ from chrono_mail.ui.tasksview import TasksPage
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_view_sizes.py 4.6.655"
+__version__ = "test_ui_view_sizes.py 4.8.662"
 
 # --- Version history ----------------------------------------------------
+# v4.8.662: the active window sets the tooltips' size only while the mouse is over no window of the program
 # v4.6.655: the Main window slider sizes every part of the main window and nothing else; Other windows leaves the main window alone;
 #           the shares stay; a plain text message follows Text of messages only; tooltips follow the active window
 # v4.6.654: the row of day names and the column left of the days follow the Calendar size
@@ -304,6 +305,10 @@ def test_a_tooltip_takes_the_size_of_the_window_that_is_active(world: World, qtb
     try:
         window.try_interface_scale(2.0)
         window.try_windows_scale(0.75)
+        def nowhere(*where: object) -> QWidget | None:
+            return None  # the mouse over no window of the program: the active one says (4.8.662)
+
+        monkeypatch.setattr(QApplication, "widgetAt", staticmethod(nowhere))
         monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: window))
         window._tooltip_font()  # noqa: SLF001
         assert QToolTip.font().pointSizeF() == round(_system_points() * 2.0, 2)
