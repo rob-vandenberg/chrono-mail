@@ -54,9 +54,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.8.662"
+__version__ = "syncconflicts.py 4.8.663"
 
 # --- Version history ----------------------------------------------------
+# v4.8.663: an item deleted on one side shows every field of the version that remains, "(deleted)" beside it (the owner)
 # v4.8.662: a group member by its contact's name; Apply is greyed while the fields chosen would end the item before it starts, and a red line under the table says why (Q36)
 # v4.4.615: the docstring names the Sync conflicts window (Menu > Sync conflicts…)
 # v4.4.514: the reason of each getattr on its line (the owner's decision after 4.4.513)
@@ -122,6 +123,8 @@ LOCAL: str = "local"
 SERVER: str = "server"
 KEEP: str = "keep"
 RETRY: str = "retry"
+DELETED_REASONS: tuple[str, ...] = ("changed_on_server", "deleted_on_server")  # deleted here, or deleted on the server
+DELETED: str = "(deleted)"  # the side where an item was deleted, beside the fields of the version that remains
 KEEP_BOTH: str = "both"  # the whole item kept as two (B-30); a field's choice of this keeps the entry of each side (B-31)
 WHOLE_WAYS: tuple[str, ...] = (KEEP, RETRY, KEEP_BOTH)  # ways that settle the item as a whole: they set every circle and split aside
 UNDO_KEY: str = "Ctrl+Z"  # the main window's Undo key when the person chose none of their own
@@ -299,9 +302,12 @@ def _when(moment: date | datetime) -> str:
 
 def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...], bool]]:  # differs: the person chooses it
     """The item's fields in words (key, label, Chrono Mail's, the server's, differs, the entries its choice settles, whether it can be split into
-    both); none for a conflict without both versions (mail, a whole collection, an item deleted on a side)."""
-    if not conflict.local_text or not conflict.server_text:
+    both). An item deleted on one side: every field of the version that remains, "(deleted)" on the other side, for reading only (the choice
+    is a whole side; the owner: "We show what we know!"). None for a conflict without an item's text (mail, a whole collection)."""
+    if not conflict.local_text and not conflict.server_text:
         return []
+    if (not conflict.local_text or not conflict.server_text) and conflict.reason not in DELETED_REASONS:
+        return []  # a side that could not be read is never called deleted
     names = dict(conflict.colour_names)
     own = conflict.colour_names[0][1] if conflict.colour_names else "Calendar colour"
 
@@ -309,7 +315,14 @@ def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tup
         return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
 
     members = dict(conflict.member_names)
-    found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour, lambda reference: members.get(member_uid(reference), "")))
+    words = Words(_when, colour, lambda reference: members.get(member_uid(reference), ""))
+    if not conflict.local_text or not conflict.server_text:  # deleted on one side: what remains, beside "(deleted)"
+        remaining = conflict.local_text or conflict.server_text
+        kept = rows(None, remaining, remaining, words)
+        if conflict.local_text:
+            return [(row.key, row.label, row.local, DELETED, False, row.keys, False) for row in kept]
+        return [(row.key, row.label, DELETED, row.server, False, row.keys, False) for row in kept]
+    found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, words)
     return [(row.key, row.label, row.local, row.server, row.choice, row.keys, row.split) for row in found]
 
 
